@@ -15,7 +15,11 @@ func TestResolveExecutableAndBuildArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := resolveExecutable(d)
-	if err != nil || got != exe {
+	wantExecutable, canonicalErr := filepath.EvalSymlinks(exe)
+	if canonicalErr != nil {
+		t.Fatal(canonicalErr)
+	}
+	if err != nil || got != wantExecutable {
 		t.Fatalf("got=%q err=%v", got, err)
 	}
 	cfg := &config.Config{Jellyfin: config.JellyfinConfig{DataDir: "/d", ConfigDir: "/c", CacheDir: "/k", LogDir: "/l", Parameters: map[string]any{"hostwebclient": true}}}

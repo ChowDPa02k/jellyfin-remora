@@ -48,7 +48,10 @@ func New(cfg *config.Config, backend platform.Backend, stdout, stderr io.Writer)
 func resolveExecutable(path string) (string, error) {
 	st, err := os.Stat(path)
 	if err == nil && !st.IsDir() {
-		return filepath.Abs(path)
+		if runtime.GOOS != "windows" && st.Mode()&0111 == 0 {
+			return "", fmt.Errorf("Jellyfin executable is not executable: %s", path)
+		}
+		return canonicalExecutable(path)
 	}
 	for _, name := range []string{"Jellyfin", "jellyfin", "jellyfin.exe"} {
 		p := filepath.Join(path, name)
@@ -56,10 +59,22 @@ func resolveExecutable(path string) (string, error) {
 			if runtime.GOOS != "windows" && st.Mode()&0111 == 0 {
 				return "", fmt.Errorf("Jellyfin executable is not executable: %s", p)
 			}
-			return filepath.Abs(p)
+			return canonicalExecutable(p)
 		}
 	}
 	return "", fmt.Errorf("Jellyfin executable not found under %s", path)
+}
+
+func canonicalExecutable(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve Jellyfin executable path: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve Jellyfin executable symlinks: %w", err)
+	}
+	return resolved, nil
 }
 
 func resolveWebDir(executable, configured string) (string, error) {
