@@ -53,16 +53,39 @@ func resolveExecutable(path string) (string, error) {
 		}
 		return canonicalExecutable(path)
 	}
-	for _, name := range []string{"Jellyfin", "jellyfin", "jellyfin.exe"} {
-		p := filepath.Join(path, name)
-		if st, e := os.Stat(p); e == nil && !st.IsDir() {
-			if runtime.GOOS != "windows" && st.Mode()&0111 == 0 {
-				return "", fmt.Errorf("Jellyfin executable is not executable: %s", p)
+	entries, readErr := os.ReadDir(path)
+	if readErr == nil {
+		candidates := []string{"Jellyfin", "jellyfin", "jellyfin.exe"}
+		for _, exact := range []bool{true, false} {
+			for _, name := range candidates {
+				for _, entry := range entries {
+					matches := entry.Name() == name
+					if !exact {
+						matches = strings.EqualFold(entry.Name(), name)
+					}
+					if matches {
+						candidate := filepath.Join(path, entry.Name())
+						if st, err := os.Stat(candidate); err != nil || st.IsDir() {
+							continue
+						}
+						return validateExecutable(candidate)
+					}
+				}
 			}
-			return canonicalExecutable(p)
 		}
 	}
 	return "", fmt.Errorf("Jellyfin executable not found under %s", path)
+}
+
+func validateExecutable(path string) (string, error) {
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() {
+		return "", fmt.Errorf("Jellyfin executable not found: %s", path)
+	}
+	if runtime.GOOS != "windows" && st.Mode()&0111 == 0 {
+		return "", fmt.Errorf("Jellyfin executable is not executable: %s", path)
+	}
+	return canonicalExecutable(path)
 }
 
 func canonicalExecutable(path string) (string, error) {

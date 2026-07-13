@@ -54,6 +54,24 @@ clients are active; otherwise its rows distinguish `playing`, `paused`, and
 `remoractl status --json` for the additive, machine-readable `/v1/status`
 document. Older clients safely ignore the new status fields.
 
+### macOS tarball installations
+
+Remora also supports the portable macOS Jellyfin archive layout, where the
+lowercase `jellyfin` executable and `jellyfin-web` directory are siblings. Set
+`jellyfin.path` to the extracted directory and `jellyfin.web-dir` to its
+`jellyfin-web` child. Preserve the executable bit when extracting. On current
+macOS releases, a downloaded, unsigned archive may additionally require local
+ad-hoc signing after its checksum has been verified:
+
+```sh
+xattr -dr com.apple.quarantine /absolute/path/to/jellyfin-10.10.7
+codesign --force --sign - /absolute/path/to/jellyfin-10.10.7/jellyfin
+```
+
+Command-line parameters are Jellyfin-version-specific. Jellyfin 10.10.7 hosts
+the configured `--webdir` by default and rejects `--hostwebclient`; a compatible
+optional parameter is `package-name: jellyfin-remora-tar`.
+
 The REST listener accepts loopback addresses only. `remoractl` uses `/tmp/jellyfin-remora.sock` by default and accepts `--host http://127.0.0.1:8095` as a fallback.
 
 ## launchd

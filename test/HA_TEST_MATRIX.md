@@ -1,10 +1,13 @@
 # High-availability test matrix
 
-Baselines: `test/test.yaml`, Jellyfin 10.11.11 and 12.0.0, macOS arm64. Destructive runs use only `/Users/zhoudingpeng/Appdata/jellyfin` for Jellyfin data and restore every temporary permission, credential, and mount change.
+Baselines: `test/test.yaml`, Jellyfin 10.10.7 tarball, 10.11.11 app bundle,
+and 12.0.0 app bundle on macOS arm64. Destructive runs use only
+`/Users/zhoudingpeng/Appdata/jellyfin` for Jellyfin data and restore every
+temporary permission, credential, and mount change.
 
 ## Automated coverage
 
-The repository currently contains 69 top-level tests. HA-specific coverage includes:
+The repository currently contains 70 top-level tests. HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, transient startup-wizard rejection, five-crash circuit breaker, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, executable/argument identity, and macOS environment preservation.
@@ -75,6 +78,25 @@ directory and Remora correctly remained fenced because it could not recreate a
 directory under `/Volumes`. The share was restored through macOS's user mount
 service, after which the configured recovery streak started exactly one new
 Jellyfin PID. The documented root LaunchDaemon can recreate that target directly.
+
+## Real Jellyfin 10.10.7 tarball compatibility and fault run
+
+The arm64 archive (local SHA-256
+`f3cfdb7ac9600dd85936274250ca3e0ffa594b2cc9938719812270e7222b5958`) was
+extracted to a sibling `jellyfin`/`jellyfin-web` layout on 2026-07-14. After the
+unsigned main Mach-O was locally ad-hoc signed, Remora completed a clean setup
+and reached `RUNNING`.
+All configured system, branding, encoding, and networking XML values were
+reconciled; administrator, watchdog user, and API key provisioning passed.
+
+Ordinary restart replaced the PID. A forced Remora exit left Jellyfin alive and
+the replacement Remora adopted the same PID. Write-permission loss fenced and
+stopped Jellyfin, and the three-check recovery streak launched one replacement.
+API-key revocation returned 204 and Remora atomically replaced the key without a
+Jellyfin outage. Live SMB disappearance fenced the service; restoring the user
+mount returned one process to `RUNNING`. Foreground non-root automatic mount
+could not recreate the deleted `/Volumes` target, matching the documented
+LaunchDaemon privilege requirement.
 
 ## Deliberately non-destructive substitutions
 
