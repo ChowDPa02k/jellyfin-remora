@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
+	"github.com/jedib0t/go-pretty/v6/text"
 )
 
 func TestRenderStatusAlignsUnicodeTablesAndSanitizesCells(t *testing.T) {
@@ -32,12 +33,22 @@ func TestRenderStatusAlignsUnicodeTablesAndSanitizesCells(t *testing.T) {
 	}
 	for _, block := range strings.Split(strings.TrimSpace(output), "\n\n") {
 		lines := strings.Split(block, "\n")
-		wantWidth := displayWidth(lines[0])
+		wantWidth := text.StringWidth(lines[0])
 		for _, line := range lines[1:] {
-			if got := displayWidth(line); got != wantWidth {
+			if got := text.StringWidth(line); got != wantWidth {
 				t.Fatalf("misaligned table width=%d want=%d line=%q\n%s", got, wantWidth, line, block)
 			}
 		}
+	}
+}
+
+func TestRenderStatusOmitsActiveSessionsWhenEmpty(t *testing.T) {
+	output := renderStatus(model.Status{State: model.StateStopped})
+	if strings.Contains(output, "Active Sessions") {
+		t.Fatalf("empty sessions table should be omitted:\n%s", output)
+	}
+	if !strings.Contains(output, "Jellyfin Status") || !strings.Contains(output, "Storage Volumes") {
+		t.Fatalf("required status tables were omitted:\n%s", output)
 	}
 }
 

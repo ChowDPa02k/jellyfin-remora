@@ -4,7 +4,7 @@ Baselines: `test/test.yaml`, Jellyfin 10.11.11 and 12.0.0, macOS arm64. Destruct
 
 ## Automated coverage
 
-The repository currently contains 68 top-level tests. HA-specific coverage includes:
+The repository currently contains 69 top-level tests. HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, transient startup-wizard rejection, five-crash circuit breaker, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, executable/argument identity, and macOS environment preservation.

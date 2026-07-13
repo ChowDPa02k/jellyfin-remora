@@ -47,9 +47,10 @@ Run in the foreground during initial validation:
 ```
 
 `remoractl status` and the converged results of lifecycle commands use
-Unicode-aware tables for process identity, Jellyfin server metadata, storage,
-and active sessions. Session rows distinguish `playing`, `paused`, and `idle`
-clients without exposing access tokens. Use either `remoractl --json status` or
+go-pretty Unicode-aware tables for process identity, Jellyfin server metadata,
+storage, and active sessions. The active-sessions table is omitted when no
+clients are active; otherwise its rows distinguish `playing`, `paused`, and
+`idle` clients without exposing access tokens. Use either `remoractl --json status` or
 `remoractl status --json` for the additive, machine-readable `/v1/status`
 document. Older clients safely ignore the new status fields.
 

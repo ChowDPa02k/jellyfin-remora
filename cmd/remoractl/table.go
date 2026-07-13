@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,15 +8,11 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 )
-
-type columnWidth struct {
-	min int
-	max int
-}
 
 func writeStatus(w io.Writer, status model.Status, jsonOutput bool) error {
 	if jsonOutput {
@@ -30,7 +25,14 @@ func writeStatus(w io.Writer, status model.Status, jsonOutput bool) error {
 }
 
 func renderStatus(status model.Status) string {
-	var output strings.Builder
+	tables := []string{renderSummary(status), renderStorage(status)}
+	if len(status.Sessions) > 0 {
+		tables = append(tables, renderSessions(status.Sessions))
+	}
+	return strings.Join(tables, "\n\n") + "\n"
+}
+
+func renderSummary(status model.Status) string {
 	uid := "-"
 	if status.Username != "" {
 		uid = status.Username
@@ -52,7 +54,8 @@ func renderStatus(status model.Status) string {
 		}
 		ports = strings.Join(values, ", ")
 	}
-	summary := [][]string{
+
+	rows := []table.Row{
 		{"UID", uid},
 		{"PID", pid},
 		{"Executable Path", fallback(status.Executable)},
@@ -64,116 +67,104 @@ func renderStatus(status model.Status) string {
 		{"Uptime", formatUptime(status.UptimeSeconds)},
 	}
 	if status.LastError != "" {
-		summary = append(summary, []string{"Detail", status.LastError})
+		rows = append(rows, table.Row{"Detail", status.LastError})
 	}
-	output.WriteString(renderTable("Jellyfin Status", nil, summary, []columnWidth{{min: 25, max: 25}, {min: 52, max: 80}}))
-	output.WriteByte('\n')
 
-	hasStorageDetail := false
+	tw := newTable("Jellyfin Status", []table.ColumnConfig{
+		column(1, 25, 25),
+		column(2, 52, 80),
+	})
+	appendSanitizedRows(tw, rows)
+	return tw.Render()
+}
+
+func renderStorage(status model.Status) string {
+	hasDetail := false
 	for _, storage := range status.Storage {
-		hasStorageDetail = hasStorageDetail || storage.Message != ""
+		hasDetail = hasDetail || storage.Message != ""
 	}
-	storageHeaders := []string{"#", "healthy", "type", "target"}
-	storageWidths := []columnWidth{{min: 1, max: 4}, {min: 7, max: 7}, {min: 8, max: 10}, {min: 52, max: 72}}
-	if hasStorageDetail {
-		storageHeaders = append(storageHeaders, "detail")
-		storageWidths = append(storageWidths, columnWidth{min: 20, max: 52})
+
+	headings := table.Row{"#", "healthy", "type", "target"}
+	columns := []table.ColumnConfig{
+		column(1, 1, 4),
+		column(2, 7, 7),
+		column(3, 8, 10),
+		column(4, 52, 72),
 	}
-	storageRows := make([][]string, 0, len(status.Storage))
+	if hasDetail {
+		headings = append(headings, "detail")
+		columns = append(columns, column(5, 20, 52))
+	}
+
+	tw := newTable("Storage Volumes", columns)
+	tw.AppendHeader(sanitizeRow(headings))
 	for _, storage := range status.Storage {
 		typeName := storage.Type
 		if typeName == "smb" {
 			typeName = "samba"
 		}
-		row := []string{strconv.Itoa(storage.Index), strconv.FormatBool(storage.Healthy), typeName, storage.Target}
-		if hasStorageDetail {
+		row := table.Row{storage.Index, storage.Healthy, typeName, storage.Target}
+		if hasDetail {
 			row = append(row, storage.Message)
 		}
-		storageRows = append(storageRows, row)
+		tw.AppendRow(sanitizeRow(row))
 	}
-	output.WriteString(renderTable("Storage Volumes", storageHeaders, storageRows, storageWidths))
-	output.WriteByte('\n')
-
-	sessionRows := make([][]string, 0, len(status.Sessions))
-	for _, session := range status.Sessions {
-		sessionRows = append(sessionRows, []string{shortID(session.ID), session.Status, session.User, session.Device, session.Media})
-	}
-	output.WriteString(renderTable("Active Sessions", []string{"#", "status", "user", "device", "media"}, sessionRows, []columnWidth{{min: 8, max: 8}, {min: 7, max: 8}, {min: 10, max: 24}, {min: 25, max: 36}, {min: 28, max: 48}}))
-	return output.String()
+	return tw.Render()
 }
 
-func renderTable(title string, headers []string, rows [][]string, specs []columnWidth) string {
-	widths := make([]int, len(specs))
-	for i, spec := range specs {
-		widths[i] = spec.min
-		if i < len(headers) {
-			widths[i] = clamp(displayWidth(sanitizeCell(headers[i])), spec.min, spec.max)
-		}
+func renderSessions(sessions []model.Session) string {
+	tw := newTable("Active Sessions", []table.ColumnConfig{
+		column(1, 8, 8),
+		column(2, 7, 8),
+		column(3, 10, 24),
+		column(4, 25, 36),
+		column(5, 28, 48),
+	})
+	tw.AppendHeader(table.Row{"#", "status", "user", "device", "media"})
+	for _, session := range sessions {
+		tw.AppendRow(sanitizeRow(table.Row{shortID(session.ID), session.Status, session.User, session.Device, session.Media}))
 	}
+	return tw.Render()
+}
+
+func newTable(title string, columns []table.ColumnConfig) table.Writer {
+	tw := table.NewWriter()
+	style := table.StyleDefault
+	style.Format.Header = text.FormatDefault
+	style.Format.Footer = text.FormatDefault
+	style.Format.Row = text.FormatDefault
+	style.Title.Format = text.FormatDefault
+	tw.SetStyle(style)
+	tw.SetTitle(title)
+	tw.SetColumnConfigs(columns)
+	return tw
+}
+
+func column(number, minimum, maximum int) table.ColumnConfig {
+	return table.ColumnConfig{
+		Number:           number,
+		WidthMin:         minimum,
+		WidthMax:         maximum,
+		WidthMaxEnforcer: snipCell,
+	}
+}
+
+func snipCell(value string, width int) string {
+	return text.Snip(value, width, "…")
+}
+
+func appendSanitizedRows(tw table.Writer, rows []table.Row) {
 	for _, row := range rows {
-		for i := range widths {
-			if i < len(row) {
-				widths[i] = max(widths[i], clamp(displayWidth(sanitizeCell(row[i])), specs[i].min, specs[i].max))
-			}
-		}
+		tw.AppendRow(sanitizeRow(row))
 	}
-	totalWidth := 1
-	for _, width := range widths {
-		totalWidth += width + 3
-	}
-	if required := displayWidth(sanitizeCell(title)) + 4; required > totalWidth && len(widths) > 0 {
-		widths[len(widths)-1] += required - totalWidth
-		totalWidth = required
-	}
-	titleLine := strings.Repeat("-", totalWidth-2)
-	line := tableLine(widths)
-	var output strings.Builder
-	output.WriteByte('+')
-	output.WriteString(titleLine)
-	output.WriteString("+\n")
-	output.WriteString("| ")
-	output.WriteString(padCell(truncateCell(title, totalWidth-4), totalWidth-4))
-	output.WriteString(" |\n")
-	output.WriteByte('+')
-	output.WriteString(titleLine)
-	output.WriteString("+\n")
-	if len(headers) > 0 {
-		output.WriteString(tableRow(headers, widths))
-		output.WriteString(line)
-	}
-	for _, row := range rows {
-		output.WriteString(tableRow(row, widths))
-	}
-	output.WriteString(line)
-	return output.String()
 }
 
-func tableLine(widths []int) string {
-	var line strings.Builder
-	line.WriteByte('+')
-	for _, width := range widths {
-		line.WriteString(strings.Repeat("-", width+2))
-		line.WriteString("+")
+func sanitizeRow(row table.Row) table.Row {
+	clean := make(table.Row, len(row))
+	for i, value := range row {
+		clean[i] = sanitizeCell(fmt.Sprint(value))
 	}
-	line.WriteByte('\n')
-	return line.String()
-}
-
-func tableRow(row []string, widths []int) string {
-	var output strings.Builder
-	output.WriteByte('|')
-	for i, width := range widths {
-		value := ""
-		if i < len(row) {
-			value = row[i]
-		}
-		value = truncateCell(value, width)
-		output.WriteByte(' ')
-		output.WriteString(padCell(value, width))
-		output.WriteString(" |")
-	}
-	output.WriteByte('\n')
-	return output.String()
+	return clean
 }
 
 func sanitizeCell(value string) string {
@@ -189,60 +180,6 @@ func sanitizeCell(value string) string {
 		}
 	}
 	return strings.TrimSpace(output.String())
-}
-
-func displayWidth(value string) int {
-	width := 0
-	for _, r := range value {
-		width += runeWidth(r)
-	}
-	return width
-}
-
-func runeWidth(r rune) int {
-	if r == 0 || unicode.IsControl(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) || unicode.Is(unicode.Cf, r) {
-		return 0
-	}
-	if r >= 0x1100 && (r <= 0x115f || r == 0x2329 || r == 0x232a ||
-		(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) || (r >= 0xac00 && r <= 0xd7a3) ||
-		(r >= 0xf900 && r <= 0xfaff) || (r >= 0xfe10 && r <= 0xfe19) ||
-		(r >= 0xfe30 && r <= 0xfe6f) || (r >= 0xff00 && r <= 0xff60) ||
-		(r >= 0xffe0 && r <= 0xffe6) || (r >= 0x1f300 && r <= 0x1faff) ||
-		(r >= 0x20000 && r <= 0x3fffd)) {
-		return 2
-	}
-	return 1
-}
-
-func truncateCell(value string, width int) string {
-	value = sanitizeCell(value)
-	if displayWidth(value) <= width {
-		return value
-	}
-	if width <= 0 {
-		return ""
-	}
-	if width == 1 {
-		return "…"
-	}
-	var output bytes.Buffer
-	used := 0
-	for len(value) > 0 {
-		r, size := utf8.DecodeRuneInString(value)
-		rw := runeWidth(r)
-		if used+rw > width-1 {
-			break
-		}
-		output.WriteRune(r)
-		used += rw
-		value = value[size:]
-	}
-	output.WriteRune('…')
-	return output.String()
-}
-
-func padCell(value string, width int) string {
-	return value + strings.Repeat(" ", max(0, width-displayWidth(value)))
 }
 
 func shortID(value string) string {
@@ -265,8 +202,4 @@ func formatUptime(seconds int64) string {
 		seconds = 0
 	}
 	return (time.Duration(seconds) * time.Second).String()
-}
-
-func clamp(value, minimum, maximum int) int {
-	return min(maximum, max(minimum, value))
 }
