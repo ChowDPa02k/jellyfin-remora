@@ -357,6 +357,9 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		} else {
 			s.wasRunning = true
 			s.apiFailures = 0
+			s.mu.Lock()
+			s.status.Jellyfin = model.HealthResult{}
+			s.mu.Unlock()
 			s.transition(model.StateStarting, "")
 			if err := s.process.WritePIDFile(); err != nil {
 				s.log.Warn("cannot write PID file", "error", err)

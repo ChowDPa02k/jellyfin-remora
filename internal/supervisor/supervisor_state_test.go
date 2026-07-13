@@ -100,3 +100,21 @@ func TestConfigurationFailurePreventsJellyfinStart(t *testing.T) {
 		t.Fatalf("running=%v processFailed=%v state=%s", p.running, s.processFailed, s.Status().State)
 	}
 }
+
+func TestNewProcessDoesNotInheritPreviousPIDHealth(t *testing.T) {
+	p := &stateProcess{}
+	s := stateSupervisor(t, p)
+	s.status.Jellyfin = model.HealthResult{Healthy: true, StatusCode: 200, CheckedAt: time.Now()}
+	s.crashes = []time.Time{time.Now()}
+	s.reconcile(context.Background())
+	status := s.Status()
+	if !p.running || status.State != model.StateStarting {
+		t.Fatalf("running=%v state=%s", p.running, status.State)
+	}
+	if status.Jellyfin.Healthy || !status.Jellyfin.CheckedAt.IsZero() {
+		t.Fatalf("new process inherited stale health: %+v", status.Jellyfin)
+	}
+	if len(s.crashes) != 1 {
+		t.Fatalf("startup cleared crash history before a new health check: %d", len(s.crashes))
+	}
+}

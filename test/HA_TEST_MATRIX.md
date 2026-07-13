@@ -1,10 +1,10 @@
 # High-availability test matrix
 
-Baseline: `test/test.yaml`, Jellyfin 12.0.0, macOS arm64. The destructive run uses only `/Users/zhoudingpeng/Appdata/jellyfin` for Jellyfin data and restores every temporary permission or credential change.
+Baselines: `test/test.yaml`, Jellyfin 10.11.11 and 12.0.0, macOS arm64. Destructive runs use only `/Users/zhoudingpeng/Appdata/jellyfin` for Jellyfin data and restore every temporary permission, credential, and mount change.
 
 ## Automated coverage
 
-The repository currently contains 64 top-level tests. HA-specific coverage includes:
+The repository currently contains 65 top-level tests. HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, transient startup-wizard rejection, five-crash circuit breaker, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, executable/argument identity, and macOS environment preservation.
@@ -13,6 +13,7 @@ The repository currently contains 64 top-level tests. HA-specific coverage inclu
 - Fenced start rejection, force-stop routing, socket-file safety, duplicate Remora instance locking, and CLI convergence across `PROCESS_FAILED`, `STORAGE_FENCED`, and restart PID replacement.
 - Jellyfin health success/failure, first-run sequence, bootstrap-user rename, API-key creation/validation, revoked-key rejection, watchdog creation/login/logout, and wrong-password failure propagation.
 - Jellyfin 10.11/12 API contract fixtures; setup-wizard XML suppression; configured/unconfigured ownership precedence; atomic backup, idempotence, asset prevalidation, multi-file rollback, and fail-closed process start.
+- A new PID cannot inherit the prior PID's healthy result or clear crash history before receiving its own health check.
 
 Run with:
 
@@ -49,6 +50,30 @@ All items below passed on 2026-07-13:
 The live SMB run used `diskutil unmount` without force and affected only `/Volumes/nas_STORAGE_公共空间`; the other two SMB mounts remained mounted. The old Jellyfin PID exited before recovery and one replacement PID reached `RUNNING`. This run also exposed that Disk Arbitration deletes the mount-point directory. Remora now recreates a missing mount target before SMB/NFS/APFS mount attempts; the LaunchDaemon must run with the documented root privilege to recreate targets under `/Volumes`.
 
 The configured APFS source and live Unicode SMB mount were otherwise validated healthy before every destructive run. Hardware discovery continued to report VideoToolbox, OpenCL, arm64, and all ten CPU cores.
+
+## Real Jellyfin 10.11.11 compatibility and fault run
+
+The full matrix above was repeated on 2026-07-13 after a clean 10.11.11
+installation. Clean setup, bootstrap-user rename, API-key/watchdog provisioning,
+pre-start XML reconciliation, key revocation replacement, sticky watchdog
+degradation/recovery, healthy-process crash replacement, Remora crash adoption,
+duplicate-instance rejection, write-permission fencing/recovery, manual-stop
+precedence, ordinary restart, and live SMB unmount/recovery passed. The same
+process environment exposed VideoToolbox, OpenCL, arm64, ten CPU cores, and
+Jellyfin's bundled FFmpeg without Remora-specific overrides.
+
+The first real startup-crash circuit run exposed stale health inheritance: a
+replacement PID could briefly reuse the preceding PID's healthy sample and clear
+the crash window. Remora now clears process-scoped health on every successful
+spawn. The corrected five-startup-crash run entered `PROCESS_FAILED`, and an
+administrative start reset the circuit and returned exactly one process to
+`RUNNING`.
+
+During the foreground non-root test, Disk Arbitration removed the SMB mount
+directory and Remora correctly remained fenced because it could not recreate a
+directory under `/Volumes`. The share was restored through macOS's user mount
+service, after which the configured recovery streak started exactly one new
+Jellyfin PID. The documented root LaunchDaemon can recreate that target directly.
 
 ## Deliberately non-destructive substitutions
 

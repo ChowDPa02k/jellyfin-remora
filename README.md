@@ -15,7 +15,7 @@ go build -o build/remoractl ./cmd/remoractl
 
 Copy `config.example.yml`, replace its volume UUID and macOS user, and create all four Jellyfin directories with ownership and write permission for that user. Remora deliberately does not create missing data directories because doing so beneath a lost `/Volumes` mount could create a false local data tree. When Remora runs as root, `jellyfin.run-as-user` is mandatory and Jellyfin is started with that account.
 
-For a new Jellyfin data directory, configure `init.user` and `init.password`. Remora completes the setup wizard, handles Jellyfin 12's OS-account bootstrap user, renames it to the configured administrator, creates a `Jellyfin Remora` API key with mode `0600`, creates the optional login-watchdog user, and performs a controlled restart. Existing initialized servers are not sent through the setup wizard.
+For a new Jellyfin data directory, configure `init.user` and `init.password`. Remora completes the setup wizard, handles the macOS package's OS-account bootstrap user on Jellyfin 10.11 and 12, renames it to the configured administrator, creates a `Jellyfin Remora` API key with mode `0600`, creates the optional login-watchdog user, and performs a controlled restart. Existing initialized servers are not sent through the setup wizard.
 
 Configured `jellyfin.general`, `branding`, `playback.transcoding`, and
 `networking` fields are reconciled into Jellyfin's XML immediately before each
@@ -27,6 +27,13 @@ be absolute (or `default`). Existing XML files are backed up as
 failure rolls back every file already changed. Remora never writes XML while the
 setup wizard is incomplete. Custom CSS and splash images are validated before
 any configuration file is changed.
+
+The currently validated Jellyfin release lines are 10.11.x and 12.x. Real
+clean-install and destructive HA runs have passed on macOS arm64 with Jellyfin
+10.11.11 and 12.0.0; versioned API fixtures keep both response shapes under
+test. Jellyfin data directories are not downgrade-compatible, so use a clean
+data directory or a backup created by the target Jellyfin release when moving
+from 12.x back to 10.11.x.
 
 Run in the foreground during initial validation:
 
