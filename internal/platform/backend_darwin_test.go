@@ -47,3 +47,25 @@ func TestEnsureMountTargetRejectsSymlink(t *testing.T) {
 		t.Fatal("ensureMountTarget() succeeded for symlink, want error")
 	}
 }
+
+func TestSameExecutableAcceptsSymlinkAndRejectsDifferentFile(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "jellyfin")
+	other := filepath.Join(root, "other")
+	if err := os.WriteFile(executable, []byte("jellyfin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "jellyfin-link")
+	if err := os.Symlink(executable, link); err != nil {
+		t.Fatal(err)
+	}
+	if !sameExecutable(link, executable) {
+		t.Fatal("sameExecutable() rejected a symlink to the same file")
+	}
+	if sameExecutable(other, executable) {
+		t.Fatal("sameExecutable() accepted a different file")
+	}
+}

@@ -289,9 +289,6 @@ func (d *darwinBackend) FindProcesses(ctx context.Context, executable string, re
 			continue
 		}
 		cmdline := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
-		if !strings.HasPrefix(cmdline, executable) {
-			continue
-		}
 		matched := true
 		for _, arg := range requiredArgs {
 			if !hasRequiredArg(cmdline, arg) {
@@ -302,12 +299,48 @@ func (d *darwinBackend) FindProcesses(ctx context.Context, executable string, re
 		if !matched {
 			continue
 		}
+		actualExecutable, err := d.executablePath(ctx, pid)
+		if err != nil || !sameExecutable(actualExecutable, executable) {
+			continue
+		}
 		pi, err := d.ProcessInfo(ctx, pid)
 		if err == nil {
 			out = append(out, pi)
 		}
 	}
 	return out, nil
+}
+
+func (d *darwinBackend) executablePath(ctx context.Context, pid int) (string, error) {
+	b, err := run(ctx, "/usr/sbin/lsof", "-nP", "-a", "-p", strconv.Itoa(pid), "-d", "txt", "-Fn")
+	if err != nil {
+		return "", err
+	}
+	expectName := false
+	for _, line := range strings.Split(string(b), "\n") {
+		switch {
+		case line == "ftxt":
+			expectName = true
+		case expectName && strings.HasPrefix(line, "n"):
+			path := strings.TrimPrefix(line, "n")
+			if filepath.IsAbs(path) {
+				return path, nil
+			}
+			expectName = false
+		}
+	}
+	return "", fmt.Errorf("executable path not found for process %d", pid)
+}
+
+func sameExecutable(actual, expected string) bool {
+	actualInfo, actualErr := os.Stat(actual)
+	expectedInfo, expectedErr := os.Stat(expected)
+	if actualErr == nil && expectedErr == nil {
+		return os.SameFile(actualInfo, expectedInfo)
+	}
+	actualResolved, actualErr := filepath.EvalSymlinks(actual)
+	expectedResolved, expectedErr := filepath.EvalSymlinks(expected)
+	return actualErr == nil && expectedErr == nil && actualResolved == expectedResolved
 }
 
 func (d *darwinBackend) ports(ctx context.Context, pid int) []int {
