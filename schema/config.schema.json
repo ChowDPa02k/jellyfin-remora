@@ -189,11 +189,11 @@
       "required": ["user", "password"],
       "properties": {
         "server-name": { "type": "string" },
-        "display-language": { "type": "string" },
+        "display-language": { "type": "string", "description": "Exact visible label from the Jellyfin Web display-language selection, not an API code" },
         "user": { "type": "string", "minLength": 1 },
         "password": { "type": "string", "minLength": 1 },
-        "preferred-metadata-language": { "type": "string" },
-        "preferred-metadata-region": { "type": "string" },
+        "preferred-metadata-language": { "type": "string", "description": "Exact visible label from the Jellyfin Web metadata-language selection, not an ISO code" },
+        "preferred-metadata-region": { "type": "string", "description": "Exact visible label from the Jellyfin Web country/region selection, not a region code" },
         "allow-remote-connections": { "type": "boolean" }
       }
     }

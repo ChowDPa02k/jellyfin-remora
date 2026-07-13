@@ -174,15 +174,18 @@ jellyfin:
 init:
   # Initial server name; managed general.settings.server-name wins thereafter.
   server-name: Jellyfin
-  # Setup wizard display language.
+  # Setup wizard display language. Use the exact visible Jellyfin Web option
+  # label (for example English, Deutsch, 한국어, or العربية), not en/de/ko/ar.
   display-language: English
   # Administrator to create or rename from a package bootstrap account.
   user: admin
   # Initial administrator password; protect this file with mode 0600.
   password: REPLACE-WITH-ADMINISTRATOR-PASSWORD
-  # Default metadata language.
+  # Default metadata language. Use the exact visible option label, such as
+  # English, German, Korean, or Arabic; do not use an ISO/API code.
   preferred-metadata-language: English
-  # Default metadata country/region.
+  # Default metadata country/region. Use the exact visible option label, such
+  # as United States, Germany, Korea, or Saudi Arabia; do not use a region code.
   preferred-metadata-region: United States
   # Permit Jellyfin clients outside the host.
   allow-remote-connections: true

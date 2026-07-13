@@ -122,7 +122,7 @@ func TestHealthFailure(t *testing.T) {
 }
 
 func TestCompleteStartupSequence(t *testing.T) {
-	wantPaths := []string{"/Startup/User", "/Startup/Configuration", "/Startup/User", "/Startup/RemoteAccess", "/Startup/Complete"}
+	wantPaths := []string{"/Startup/User", "/Startup/Configuration", "/Localization/Options", "/Localization/Cultures", "/Localization/Countries", "/Startup/Configuration", "/Startup/User", "/Startup/RemoteAccess", "/Startup/Complete"}
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
@@ -133,12 +133,25 @@ func TestCompleteStartupSequence(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(StartupUser{Name: "mac-user"})
 			return
 		}
+		if r.Method == http.MethodGet {
+			switch r.URL.Path {
+			case "/Startup/Configuration":
+				_ = json.NewEncoder(w).Encode(map[string]any{"ServerName": "Default", "UICulture": "en-US", "MetadataCountryCode": "GB", "PreferredMetadataLanguage": "en"})
+			case "/Localization/Options":
+				_ = json.NewEncoder(w).Encode([]localizationOption{{Name: "English", Value: "en-US"}})
+			case "/Localization/Cultures":
+				_ = json.NewEncoder(w).Encode([]cultureOption{{DisplayName: "Chinese", TwoLetterISOLanguageName: "zh"}})
+			case "/Localization/Countries":
+				_ = json.NewEncoder(w).Encode([]countryOption{{DisplayName: "United States", TwoLetterISORegionName: "US"}})
+			}
+			return
+		}
 		if r.URL.Path == "/Startup/Configuration" {
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body["UICulture"] != "en-US" || body["MetadataCountryCode"] != "US" || body["PreferredMetadataLanguage"] != "zh-CN" {
+			if body["UICulture"] != "en-US" || body["MetadataCountryCode"] != "US" || body["PreferredMetadataLanguage"] != "zh" || body["ServerName"] != "Jellyfin" {
 				t.Errorf("mapped configuration=%v", body)
 			}
 		}
@@ -155,6 +168,65 @@ func TestCompleteStartupSequence(t *testing.T) {
 	}
 	if strings.Join(paths, ",") != strings.Join(wantPaths, ",") {
 		t.Fatalf("paths=%v", paths)
+	}
+}
+
+func TestStartupConfigurationUsesJellyfinWebSelectionLabels(t *testing.T) {
+	display := []localizationOption{{Name: "العربية", Value: "ar"}, {Name: "한국어", Value: "ko"}, {Name: "Deutsch", Value: "de"}}
+	languages := []cultureOption{{DisplayName: "Arabic", TwoLetterISOLanguageName: "ar"}, {DisplayName: "Korean", TwoLetterISOLanguageName: "ko"}, {DisplayName: "German", TwoLetterISOLanguageName: "de"}}
+	regions := []countryOption{{DisplayName: "Saudi Arabia", TwoLetterISORegionName: "SA"}, {DisplayName: "Korea", TwoLetterISORegionName: "KR"}, {DisplayName: "Germany", TwoLetterISORegionName: "DE"}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Startup/Configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{"UICulture": "en-US", "PreferredMetadataLanguage": "en", "MetadataCountryCode": "US"})
+		case "/Localization/Options":
+			_ = json.NewEncoder(w).Encode(display)
+		case "/Localization/Cultures":
+			_ = json.NewEncoder(w).Encode(languages)
+		case "/Localization/Countries":
+			_ = json.NewEncoder(w).Encode(regions)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	for _, test := range []struct {
+		name, display, language, region, wantDisplay, wantLanguage, wantRegion string
+	}{
+		{name: "Arabic", display: "العربية", language: "Arabic", region: "Saudi Arabia", wantDisplay: "ar", wantLanguage: "ar", wantRegion: "SA"},
+		{name: "Korean", display: "한국어", language: "Korean", region: "Korea", wantDisplay: "ko", wantLanguage: "ko", wantRegion: "KR"},
+		{name: "German", display: "Deutsch", language: "German", region: "Germany", wantDisplay: "de", wantLanguage: "de", wantRegion: "DE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.InitConfig{DisplayLanguage: test.display, PreferredMetadataLanguage: test.language, PreferredMetadataRegion: test.region}
+			got, err := New(srv.URL, time.Second).startupConfiguration(context.Background(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got["UICulture"] != test.wantDisplay || got["PreferredMetadataLanguage"] != test.wantLanguage || got["MetadataCountryCode"] != test.wantRegion {
+				t.Fatalf("resolved configuration = %#v", got)
+			}
+		})
+	}
+}
+
+func TestStartupConfigurationRejectsInternalSelectionValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Startup/Configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		case "/Localization/Options":
+			_ = json.NewEncoder(w).Encode([]localizationOption{{Name: "Deutsch", Value: "de"}})
+		case "/Localization/Cultures", "/Localization/Countries":
+			_ = json.NewEncoder(w).Encode([]any{})
+		}
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, time.Second).startupConfiguration(context.Background(), config.InitConfig{DisplayLanguage: "de"})
+	if err == nil || !strings.Contains(err.Error(), "not a label offered") {
+		t.Fatalf("internal selection value error = %v", err)
 	}
 }
 

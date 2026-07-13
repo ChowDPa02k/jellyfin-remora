@@ -7,7 +7,7 @@ temporary permission, credential, and mount change.
 
 ## Automated coverage
 
-The repository currently contains 78 top-level tests. HA-specific coverage includes:
+The repository currently contains 81 top-level tests. HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, transient startup-wizard rejection, five-crash circuit breaker, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, executable/argument identity, and macOS environment preservation.
@@ -17,6 +17,7 @@ The repository currently contains 78 top-level tests. HA-specific coverage inclu
 - Fenced start rejection, force-stop routing, socket-file safety, duplicate Remora instance locking, and CLI convergence across `PROCESS_FAILED`, `STORAGE_FENCED`, and restart PID replacement.
 - Versioned configuration migration preserves legacy heartbeat timing; `remoractl init` rejects invalid edits without replacing an existing configuration, uses owner-only file mode, rejects symlink destinations, and emits a path-correct Darwin launchd plist.
 - Jellyfin health success/failure, first-run sequence, bootstrap-user rename, API-key creation/validation, revoked-key rejection, watchdog creation/login/logout, and wrong-password failure propagation.
+- Setup selection values are resolved from the same display-language, metadata-language, and country catalogs used by Jellyfin Web; API codes entered as configuration labels fail closed, while omitted selections preserve server defaults.
 - Jellyfin 10.11/12 API contract fixtures; setup-wizard XML suppression; configured/unconfigured ownership precedence; atomic backup, idempotence, asset prevalidation, multi-file rollback, and fail-closed process start.
 - A new PID cannot inherit the prior PID's healthy result or clear crash history before receiving its own health check.
 - Unicode table rendering rejects terminal control characters and aligns CJK paths; structured JSON preserves UID/server/session fields, and Jellyfin 10.11/12 session fixtures cover playing, paused, idle, anonymous, and inactive clients.
@@ -56,6 +57,18 @@ All items below passed on 2026-07-13:
 The live SMB run used `diskutil unmount` without force and affected only `/Volumes/nas_STORAGE_公共空间`; the other two SMB mounts remained mounted. The old Jellyfin PID exited before recovery and one replacement PID reached `RUNNING`. This run also exposed that Disk Arbitration deletes the mount-point directory. Remora now recreates a missing mount target before SMB/NFS/APFS mount attempts; the LaunchDaemon must run with the documented root privilege to recreate targets under `/Volumes`.
 
 The configured APFS source and live Unicode SMB mount were otherwise validated healthy before every destructive run. Hardware discovery continued to report VideoToolbox, OpenCL, arm64, and all ten CPU cores.
+
+An opt-in clean-install integration test was also run against Jellyfin 10.11.11
+on 2026-07-14. Three isolated servers were initialized with the exact Web UI
+labels `العربية`/`Arabic`/`Saudi Arabia`, `한국어`/`Korean`/`Korea`, and
+`Deutsch`/`German`/`Germany`. All three completed setup and persisted the
+expected `ar`/`SA`, `ko`/`KR`, and `de`/`DE` internal values. Run it with:
+
+```sh
+JELLYFIN_INTEGRATION_BIN=/Applications/Jellyfin.app/Contents/MacOS/jellyfin \
+JELLYFIN_INTEGRATION_WEB=/Applications/Jellyfin.app/Contents/Resources/jellyfin-web \
+go test -run '^TestInstalledJellyfinWebSelectionLabels$' -v ./internal/jellyfin
+```
 
 ## Real Jellyfin 10.11.11 compatibility and fault run
 

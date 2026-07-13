@@ -33,6 +33,14 @@ started with that account.
 
 For a new Jellyfin data directory, configure `init.user` and `init.password`. Remora completes the setup wizard, handles the macOS package's OS-account bootstrap user on Jellyfin 10.11 and 12, renames it to the configured administrator, creates a `Jellyfin Remora` API key with mode `0600`, creates the optional login-watchdog user, and performs a controlled restart. Existing initialized servers are not sent through the setup wizard.
 
+Configuration fields backed by a Jellyfin Web selection use the exact visible
+option label, never its internal API value. For example, initial display
+languages use `العربية`, `한국어`, or `Deutsch`, metadata languages use `Arabic`,
+`Korean`, or `German`, and regions use `Saudi Arabia`, `Korea`, or `Germany`.
+During first-run setup Remora reads the same public option catalogs as Jellyfin
+Web, rejects labels absent from the installed server version, and preserves the
+server default for omitted selections.
+
 Configured `jellyfin.general`, `branding`, `playback.transcoding`, and
 `networking` fields are reconciled into Jellyfin's XML immediately before each
 start. Remora owns only fields explicitly present in YAML; omitted fields remain

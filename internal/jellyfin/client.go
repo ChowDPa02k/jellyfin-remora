@@ -34,6 +34,22 @@ type AuthenticationResult struct {
 type StartupUser struct {
 	Name string `json:"Name"`
 }
+type localizationOption struct {
+	Name  string `json:"Name"`
+	Value string `json:"Value"`
+}
+type cultureOption struct {
+	DisplayName              string `json:"DisplayName"`
+	TwoLetterISOLanguageName string `json:"TwoLetterISOLanguageName"`
+}
+type countryOption struct {
+	DisplayName            string `json:"DisplayName"`
+	TwoLetterISORegionName string `json:"TwoLetterISORegionName"`
+}
+type selectionOption struct {
+	label string
+	value string
+}
 type AuthenticationInfo struct {
 	AccessToken string `json:"AccessToken"`
 	AppName     string `json:"AppName"`
@@ -88,7 +104,10 @@ func (c *Client) CompleteStartup(ctx context.Context, cfg config.InitConfig) (st
 	if bootstrapUser == "" {
 		bootstrapUser = cfg.User
 	}
-	initial := map[string]any{"ServerName": cfg.ServerName, "UICulture": languageCode(cfg.DisplayLanguage), "MetadataCountryCode": regionCode(cfg.PreferredMetadataRegion), "PreferredMetadataLanguage": languageCode(cfg.PreferredMetadataLanguage)}
+	initial, err := c.startupConfiguration(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
 	if err := c.do(ctx, http.MethodPost, "/Startup/Configuration", "", initial, nil, http.StatusNoContent); err != nil {
 		return "", err
 	}
@@ -104,6 +123,73 @@ func (c *Client) CompleteStartup(ctx context.Context, cfg config.InitConfig) (st
 		return "", err
 	}
 	return bootstrapUser, nil
+}
+
+func (c *Client) startupConfiguration(ctx context.Context, cfg config.InitConfig) (map[string]any, error) {
+	initial := make(map[string]any)
+	if err := c.do(ctx, http.MethodGet, "/Startup/Configuration", "", nil, &initial, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var displayLanguages []localizationOption
+	if err := c.do(ctx, http.MethodGet, "/Localization/Options", "", nil, &displayLanguages, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var metadataLanguages []cultureOption
+	if err := c.do(ctx, http.MethodGet, "/Localization/Cultures", "", nil, &metadataLanguages, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var regions []countryOption
+	if err := c.do(ctx, http.MethodGet, "/Localization/Countries", "", nil, &regions, http.StatusOK); err != nil {
+		return nil, err
+	}
+
+	if cfg.ServerName != "" {
+		initial["ServerName"] = cfg.ServerName
+	}
+	if cfg.DisplayLanguage != "" {
+		options := make([]selectionOption, len(displayLanguages))
+		for i, option := range displayLanguages {
+			options[i] = selectionOption{label: option.Name, value: option.Value}
+		}
+		value, err := selectedValue("init.display-language", cfg.DisplayLanguage, options)
+		if err != nil {
+			return nil, err
+		}
+		initial["UICulture"] = value
+	}
+	if cfg.PreferredMetadataLanguage != "" {
+		options := make([]selectionOption, len(metadataLanguages))
+		for i, option := range metadataLanguages {
+			options[i] = selectionOption{label: option.DisplayName, value: option.TwoLetterISOLanguageName}
+		}
+		value, err := selectedValue("init.preferred-metadata-language", cfg.PreferredMetadataLanguage, options)
+		if err != nil {
+			return nil, err
+		}
+		initial["PreferredMetadataLanguage"] = value
+	}
+	if cfg.PreferredMetadataRegion != "" {
+		options := make([]selectionOption, len(regions))
+		for i, option := range regions {
+			options[i] = selectionOption{label: option.DisplayName, value: option.TwoLetterISORegionName}
+		}
+		value, err := selectedValue("init.preferred-metadata-region", cfg.PreferredMetadataRegion, options)
+		if err != nil {
+			return nil, err
+		}
+		initial["MetadataCountryCode"] = value
+	}
+	return initial, nil
+}
+
+func selectedValue(field, configured string, options []selectionOption) (string, error) {
+	want := strings.TrimSpace(configured)
+	for _, option := range options {
+		if option.label == want {
+			return option.value, nil
+		}
+	}
+	return "", fmt.Errorf("%s %q is not a label offered by the Jellyfin web selection", field, configured)
 }
 
 func (c *Client) UpdateUsername(ctx context.Context, token string, user map[string]any, name string) error {
@@ -266,27 +352,6 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil
-}
-
-func languageCode(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "english", "en", "en-us":
-		return "en-US"
-	case "chinese", "简体中文", "zh", "zh-cn":
-		return "zh-CN"
-	default:
-		return value
-	}
-}
-func regionCode(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "united states", "us", "usa":
-		return "US"
-	case "china", "cn":
-		return "CN"
-	default:
-		return value
-	}
 }
 
 func (c *Client) Health(ctx context.Context) model.HealthResult {
