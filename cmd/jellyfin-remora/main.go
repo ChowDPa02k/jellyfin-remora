@@ -75,6 +75,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	warnExecutableProvenance(logger, backend, pm.Executable())
 	sc, err := storage.New(cfg, backend)
 	if err != nil {
 		return err
@@ -130,6 +131,11 @@ func runValidateConfig(args []string) error {
 		return err
 	}
 	report.Executable = pm.Executable()
+	if found, inspectErr := backend.ExecutableProvenance(pm.Executable()); inspectErr != nil {
+		report.Warnings = append(report.Warnings, "cannot inspect Jellyfin executable provenance: "+inspectErr.Error())
+	} else if found {
+		report.Warnings = append(report.Warnings, provenanceWarning)
+	}
 	checker, err := storage.New(cfg, backend)
 	if err != nil {
 		return err
@@ -188,6 +194,23 @@ func runValidateConfig(args []string) error {
 		return validationFailed{}
 	}
 	return nil
+}
+
+const provenanceWarning = "Jellyfin executable has com.apple.provenance metadata; Gatekeeper may block an unsigned tarball executable"
+
+type provenanceInspector interface {
+	ExecutableProvenance(string) (bool, error)
+}
+
+func warnExecutableProvenance(logger *slog.Logger, inspector provenanceInspector, executable string) {
+	found, err := inspector.ExecutableProvenance(executable)
+	if err != nil {
+		logger.Warn("cannot inspect Jellyfin executable provenance", "executable", executable, "error", err)
+		return
+	}
+	if found {
+		logger.Warn(provenanceWarning, "executable", executable, "xattr", "com.apple.provenance")
+	}
 }
 
 func prepareJellyfinPaths(cfg *config.Config, disks []model.StorageResult) ([]string, error) {

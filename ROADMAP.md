@@ -24,7 +24,7 @@ Completed with the first real configuration iteration:
 - Clean-directory setup against Jellyfin 12.0.0: OS-account bootstrap-user handling, configured administrator rename, setup completion, owner-only API-key persistence, watchdog-user creation, controlled restart, and periodic login/logout all passed.
 - Normal-restart regression coverage confirms Jellyfin 12's transient setup-listener state is ignored until core health and a stable incomplete-wizard streak agree; existing installations no longer flash into `FIRST_START`.
 - Destructive local fault test using `test/test.yaml`: write-permission loss fenced and stopped Jellyfin; restoring permission required the configured recovery streak and launched exactly one replacement process. Explicit restart and manual stop also passed.
-- The repository now covers 70 top-level tests plus real Jellyfin fault injection: crash-loop circuit breaking, Remora crash adoption, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, `D`/`U` timeout branches, fail-closed XML reconciliation, stale-health isolation, and Unicode-safe status/session rendering. See `test/HA_TEST_MATRIX.md`.
+- The repository now covers 72 top-level tests plus real Jellyfin fault injection: crash-loop circuit breaking, Remora crash adoption, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, `D`/`U` timeout branches, fail-closed XML reconciliation, stale-health isolation, Darwin provenance warnings, and Unicode-safe status/session rendering. See `test/HA_TEST_MATRIX.md`.
 - Semantic build metadata (`version`, commit, build date, Go version, target) is injected into both commands.
 - GitHub Actions definitions cover formatting, unit/race tests, vet, native macOS/Windows tests, all target cross-builds, dependency review, vulnerability scanning, and launchd plist validation.
 - The module requires a patched Go toolchain and the local `govulncheck` gate reports no reachable vulnerabilities.
@@ -58,7 +58,7 @@ Exit gate:
 - A 7-day soak test covers media playback/transcoding, sleep/wake, network interruption, Remora restarts, log rotation, and repeated Jellyfin crashes.
 - Signed development artifacts install, upgrade, and uninstall cleanly through launchd on arm64 and amd64 macOS.
 
-## Phase 2 — Jellyfin lifecycle and configuration management (`v0.3.0-alpha.4`)
+## Phase 2 — Jellyfin lifecycle and configuration management (`v0.3.0-alpha.5`)
 
 Completed in the `test/test.yaml` iterations:
 

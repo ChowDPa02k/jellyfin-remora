@@ -68,6 +68,10 @@ xattr -dr com.apple.quarantine /absolute/path/to/jellyfin-10.10.7
 codesign --force --sign - /absolute/path/to/jellyfin-10.10.7/jellyfin
 ```
 
+On Darwin, `validate-config` reports this attribute and the daemon emits a WARN
+record with the executable path before supervision begins. Detection is
+advisory: Remora does not remove metadata, bypass Gatekeeper, or refuse startup.
+
 Command-line parameters are Jellyfin-version-specific. Jellyfin 10.10.7 hosts
 the configured `--webdir` by default and rejects `--hostwebclient`; a compatible
 optional parameter is `package-name: jellyfin-remora-tar`.

@@ -19,6 +19,7 @@ func (*unsupportedBackend) Mount(context.Context, config.DiskConfig) error { ret
 func (*unsupportedBackend) ResolvePhysical(context.Context, config.DiskConfig) (string, error) {
 	return "", errUnsupported
 }
+func (*unsupportedBackend) ExecutableProvenance(string) (bool, error)        { return false, nil }
 func (*unsupportedBackend) ConfigureProcess(*exec.Cmd, string, string) error { return errUnsupported }
 func (*unsupportedBackend) SignalGroup(int, bool) error                      { return errUnsupported }
 func (*unsupportedBackend) ProcessInfo(context.Context, int) (ProcessInfo, error) {

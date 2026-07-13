@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"golang.org/x/sys/unix"
 	"howett.net/plist"
 )
 
@@ -85,6 +86,17 @@ func (d *darwinBackend) ResolvePhysical(ctx context.Context, disk config.DiskCon
 		return "", errors.New("diskutil did not return a device node")
 	}
 	return info.DeviceNode, nil
+}
+
+func (d *darwinBackend) ExecutableProvenance(path string) (bool, error) {
+	_, err := unix.Getxattr(path, "com.apple.provenance", nil)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, unix.ENOATTR) {
+		return false, nil
+	}
+	return false, fmt.Errorf("read com.apple.provenance from %s: %w", path, err)
 }
 
 func (d *darwinBackend) Mount(ctx context.Context, disk config.DiskConfig) error {

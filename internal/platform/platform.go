@@ -18,6 +18,7 @@ type Backend interface {
 	Mounts(context.Context) ([]MountInfo, error)
 	Mount(context.Context, config.DiskConfig) error
 	ResolvePhysical(context.Context, config.DiskConfig) (string, error)
+	ExecutableProvenance(string) (bool, error)
 	ConfigureProcess(*exec.Cmd, string, string) error
 	SignalGroup(pid int, force bool) error
 	ProcessInfo(context.Context, int) (ProcessInfo, error)

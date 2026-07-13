@@ -1,12 +1,31 @@
 package main
 
 import (
+	"bytes"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+type provenanceStub struct {
+	found bool
+	err   error
+}
+
+func (s provenanceStub) ExecutableProvenance(string) (bool, error) { return s.found, s.err }
+
+func TestWarnExecutableProvenance(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	warnExecutableProvenance(logger, provenanceStub{found: true}, "/soft/jellyfin")
+	if got := output.String(); !strings.Contains(got, provenanceWarning) || !strings.Contains(got, "/soft/jellyfin") || !strings.Contains(got, `"level":"WARN"`) {
+		t.Fatalf("warning log = %s", got)
+	}
+}
 
 func TestPrepareJellyfinPathsOnlyOnVerifiedStorage(t *testing.T) {
 	old := effectiveUID

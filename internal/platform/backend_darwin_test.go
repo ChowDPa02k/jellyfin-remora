@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestEnsureMountTargetCreatesMissingDirectory(t *testing.T) {
@@ -67,5 +69,23 @@ func TestSameExecutableAcceptsSymlinkAndRejectsDifferentFile(t *testing.T) {
 	}
 	if sameExecutable(other, executable) {
 		t.Fatal("sameExecutable() accepted a different file")
+	}
+}
+
+func TestExecutableProvenanceDetectsDarwinXattr(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jellyfin")
+	if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	backend := &darwinBackend{}
+	if err := unix.Setxattr(path, "com.apple.provenance", []byte{1, 2}, 0); err != nil {
+		t.Fatal(err)
+	}
+	found, err := backend.ExecutableProvenance(path)
+	if err != nil || !found {
+		t.Fatalf("marked executable: found=%t err=%v", found, err)
+	}
+	if _, err := backend.ExecutableProvenance(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("missing executable provenance inspection succeeded")
 	}
 }
