@@ -15,6 +15,7 @@ import (
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfinconfig"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
 )
@@ -52,12 +53,17 @@ type ProcessManager interface {
 	RemovePIDFile() error
 }
 
+type ConfigurationReconciler interface {
+	Reconcile() (jellyfinconfig.Result, error)
+}
+
 type Supervisor struct {
 	mu                   sync.RWMutex
 	cfg                  *config.Config
 	process              ProcessManager
 	storage              StorageChecker
 	client               *jellyfin.Client
+	configuration        ConfigurationReconciler
 	log                  *slog.Logger
 	status               model.Status
 	actions              chan Request
@@ -81,7 +87,7 @@ type Supervisor struct {
 
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
 	now := time.Now()
-	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, log: log, actions: make(chan Request, 32)}
+	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32)}
 	if b, err := os.ReadFile(filepath.Join(cfg.Remora.DataDir, ".remora_api_key")); err == nil {
 		s.apiKey = strings.TrimSpace(string(b))
 	}
@@ -331,6 +337,17 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.clearOneShots()
 			_ = s.persist()
 			return
+		}
+		configurationResult, configurationErr := s.configuration.Reconcile()
+		if configurationErr != nil {
+			s.processFailed = true
+			s.transition(model.StateProcessFailed, "Jellyfin configuration reconciliation failed: "+configurationErr.Error())
+			s.clearOneShots()
+			_ = s.persist()
+			return
+		}
+		if len(configurationResult.ChangedFiles) > 0 {
+			s.log.Info("reconciled Jellyfin XML configuration", "files", configurationResult.ChangedFiles, "backups", configurationResult.BackupFiles)
 		}
 		if err := s.process.Start(ctx); err != nil {
 			s.setError(err.Error())

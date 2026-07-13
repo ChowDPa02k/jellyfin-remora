@@ -86,9 +86,58 @@
         "log-dir": { "type": "string" },
         "web-dir": { "type": "string" },
         "parameters": { "type": "object", "additionalProperties": true },
-        "general": { "type": "object", "additionalProperties": true },
-        "branding": { "type": "object", "additionalProperties": true },
-        "playback": { "type": "object", "additionalProperties": true },
+        "general": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "settings": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "server-name": { "type": ["string", "null"] } }
+            },
+            "paths": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cache-path": { "type": ["string", "null"] },
+                "metadata-path": { "type": ["string", "null"] }
+              }
+            },
+            "performance": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "parallel-library-scan-tasks-limit": { "type": ["integer", "null"], "minimum": 0 },
+                "parallel-image-encoding-limit": { "type": ["integer", "null"], "minimum": 0 }
+              }
+            }
+          }
+        },
+        "branding": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enable-splash-screen": { "type": ["boolean", "null"] },
+            "splash-screen-image": { "type": ["string", "null"] },
+            "login-disclaimer": { "type": ["string", "null"] },
+            "custom-css-code": { "type": ["string", "null"] }
+          }
+        },
+        "playback": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "transcoding": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "transcode-path": { "type": ["string", "null"] },
+                "enable-fallback-fonts": { "type": ["boolean", "null"] },
+                "fallback-font-folder-path": { "type": ["string", "null"] }
+              }
+            }
+          }
+        },
         "networking": {
           "type": "object",
           "additionalProperties": false,
@@ -100,7 +149,22 @@
                 "local-http-port-number": { "type": "integer", "minimum": 1, "maximum": 65535 },
                 "local-https-port-number": { "type": "integer", "minimum": 1, "maximum": 65535 },
                 "enable-https": { "type": "boolean" },
-                "base-url": { "type": ["string", "null"] }
+                "base-url": { "type": ["string", "null"] },
+                "bind-to-local-network-address": {
+                  "oneOf": [
+                    { "type": "string" },
+                    { "type": "array", "items": { "type": "string" } },
+                    { "type": "null" }
+                  ]
+                }
+              }
+            },
+            "ip-protocols": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enable-ipv4": { "type": ["boolean", "null"] },
+                "enable-ipv6": { "type": ["boolean", "null"] }
               }
             }
           }

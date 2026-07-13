@@ -70,9 +70,6 @@ func run() error {
 	if st, statErr := os.Stat(*configPath); statErr == nil && st.Mode().Perm()&0077 != 0 {
 		logger.Warn("configuration file is readable by group or others; use chmod 0600 when it contains credentials", "mode", st.Mode().Perm())
 	}
-	if hasFutureSettings(cfg) {
-		logger.Warn("Jellyfin XML settings reconciliation is deferred in this milestone")
-	}
 	backend := platform.New()
 	pm, err := procmanager.New(cfg, backend, loggerWriter{logger, "jellyfin_stdout"}, loggerWriter{logger, "jellyfin_stderr"})
 	if err != nil {
@@ -126,9 +123,6 @@ func runValidateConfig(args []string) error {
 	}
 	if st, statErr := os.Stat(*configPath); statErr == nil && st.Mode().Perm()&0077 != 0 {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("configuration mode %04o exposes credentials to group or others; use 0600", st.Mode().Perm()))
-	}
-	if hasFutureSettings(cfg) {
-		report.Warnings = append(report.Warnings, "Jellyfin settings reconciliation is not implemented yet")
 	}
 	backend := platform.New()
 	pm, err := procmanager.New(cfg, backend, io.Discard, io.Discard)
@@ -287,7 +281,4 @@ type loggerWriter struct {
 func (w loggerWriter) Write(p []byte) (int, error) {
 	w.log.Info(w.stream, "message", string(p))
 	return len(p), nil
-}
-func hasFutureSettings(c *config.Config) bool {
-	return len(c.Jellyfin.General) > 0 || len(c.Jellyfin.Branding) > 0 || len(c.Jellyfin.Playback) > 0
 }

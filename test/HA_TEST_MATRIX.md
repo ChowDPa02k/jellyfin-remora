@@ -4,7 +4,7 @@ Baseline: `test/test.yaml`, Jellyfin 12.0.0, macOS arm64. The destructive run us
 
 ## Automated coverage
 
-The repository currently contains 56 top-level tests. HA-specific coverage includes:
+The repository currently contains 64 top-level tests. HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, transient startup-wizard rejection, five-crash circuit breaker, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, executable/argument identity, and macOS environment preservation.
@@ -12,6 +12,7 @@ The repository currently contains 56 top-level tests. HA-specific coverage inclu
 - macOS mount-target recreation after Disk Arbitration removes `/Volumes/<share>`, including unsafe-path and symlink rejection.
 - Fenced start rejection, force-stop routing, socket-file safety, duplicate Remora instance locking, and CLI convergence across `PROCESS_FAILED`, `STORAGE_FENCED`, and restart PID replacement.
 - Jellyfin health success/failure, first-run sequence, bootstrap-user rename, API-key creation/validation, revoked-key rejection, watchdog creation/login/logout, and wrong-password failure propagation.
+- Jellyfin 10.11/12 API contract fixtures; setup-wizard XML suppression; configured/unconfigured ownership precedence; atomic backup, idempotence, asset prevalidation, multi-file rollback, and fail-closed process start.
 
 Run with:
 
@@ -40,6 +41,7 @@ All items below passed on 2026-07-13:
 | Stop while fenced, then restore permission | Manual stop wins; Jellyfin remains stopped | Pass |
 | Administrative start after storage recovery | Recovery streak completes and one new PID starts | Pass |
 | Ordinary restart | PID changes and no false `FIRST_START` transition occurs | Pass |
+| Enable Phase 2 performance/branding values in `test/test.yaml` | Reconcile before start, preserve Jellyfin-owned XML, create backup, reach healthy, and retain values after restart/stop | Pass |
 | Normal Disk Arbitration unmount of live Unicode SMB share | Enter `STORAGE_FENCED`, stop the old PID, never restart against a missing mount | Pass |
 | Restore the same live SMB share | Healthy recovery completes and exactly one replacement PID starts | Pass |
 | Final stop | PID is zero; no Jellyfin/Remora process or control socket remains | Pass |

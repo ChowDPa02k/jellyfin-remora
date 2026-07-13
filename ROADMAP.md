@@ -24,7 +24,7 @@ Completed with the first real configuration iteration:
 - Clean-directory setup against Jellyfin 12.0.0: OS-account bootstrap-user handling, configured administrator rename, setup completion, owner-only API-key persistence, watchdog-user creation, controlled restart, and periodic login/logout all passed.
 - Normal-restart regression coverage confirms Jellyfin 12's transient setup-listener state is ignored until core health and a stable incomplete-wizard streak agree; existing installations no longer flash into `FIRST_START`.
 - Destructive local fault test using `test/test.yaml`: write-permission loss fenced and stopped Jellyfin; restoring permission required the configured recovery streak and launched exactly one replacement process. Explicit restart and manual stop also passed.
-- The repository now covers 56 top-level tests plus real Jellyfin fault injection: crash-loop circuit breaking, Remora crash adoption, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, and `D`/`U` timeout branches. See `test/HA_TEST_MATRIX.md`.
+- The repository now covers 64 top-level tests plus real Jellyfin fault injection: crash-loop circuit breaking, Remora crash adoption, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, `D`/`U` timeout branches, and fail-closed XML reconciliation. See `test/HA_TEST_MATRIX.md`.
 - Semantic build metadata (`version`, commit, build date, Go version, target) is injected into both commands.
 - GitHub Actions definitions cover formatting, unit/race tests, vet, native macOS/Windows tests, all target cross-builds, dependency review, vulnerability scanning, and launchd plist validation.
 - The module requires a patched Go toolchain and the local `govulncheck` gate reports no reachable vulnerabilities.
@@ -60,25 +60,27 @@ Exit gate:
 
 ## Phase 2 — Jellyfin lifecycle and configuration management (`v0.3.0-alpha`)
 
-Completed in the `test/test.yaml` iteration:
+Completed in the `test/test.yaml` iterations:
 
 - Typed Jellyfin API client foundations with public version/setup discovery, structured API errors, Jellyfin authorization headers, and `httptest` contract coverage.
 - First-run detection and complete setup sequence: initial configuration, Jellyfin 12 bootstrap user, remote access, completion, configured administrator rename/login, and Remora API-key creation.
 - Atomic API-key persistence with owner-only permissions and idempotent reuse of an existing `Jellyfin Remora` key.
 - Optional login watchdog that creates a missing configured user and performs periodic real login, `/Users/Me`, and logout checks without logging credentials.
-
-Remaining work:
-
-- Add versioned API contract fixtures for every supported Jellyfin release line; revoked API-key detection and automatic replacement are implemented.
-- Add atomic, backup-first XML configuration updates for supported general, branding, playback, transcoding, and networking settings. Never modify XML during the setup wizard.
-- Detect dashboard-side changes and define precedence: configured Remora fields are reconciled before start; unspecified fields remain owned by Jellyfin.
-- Validate custom CSS/image paths and restore the previous XML/configuration if a pre-start update fails.
+- Versioned public-info, setup-user, authentication-result, and API-key contract fixtures for Jellyfin 10.11.x and 12.x; revoked API-key detection and automatic replacement.
+- Typed, atomic, backup-first XML reconciliation for supported general, branding, playback/transcoding, and networking fields before every process start.
+- Explicit ownership precedence: configured Remora fields win before startup, while unspecified fields and dashboard-managed data remain byte-for-byte untouched.
+- Setup-wizard write suppression, custom CSS/image validation before the first write, XML mode/ownership preservation, idempotence, and multi-file rollback on failure.
+- Real Jellyfin 12.0.0 validation using `test/test.yaml`: configured performance and branding values were applied before start, `/health` reached `RUNNING`, one-instance restart passed, and graceful stop preserved the values.
 
 Exit gate:
 
 - Clean-directory tests automatically initialize Jellyfin, create an API key, restart, and become healthy without manual web setup.
 - Existing-server tests prove unspecified settings and user-managed data remain unchanged.
 - Contract tests pass against supported 10.11.x and 12.x server fixtures.
+
+Phase 2 exit gate passed on macOS arm64 on 2026-07-13. Native Intel macOS
+coverage remains part of the Phase 1 platform release gate rather than this
+feature milestone.
 
 ## Phase 3 — Complete control plane and observability (`v0.4.0-alpha`)
 

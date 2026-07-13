@@ -11,6 +11,7 @@ import (
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfinconfig"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
 )
@@ -52,6 +53,12 @@ func (*stateProcess) RemovePIDFile() error { return nil }
 
 type stateStorage struct{}
 
+type failingConfiguration struct{ err error }
+
+func (f failingConfiguration) Reconcile() (jellyfinconfig.Result, error) {
+	return jellyfinconfig.Result{}, f.err
+}
+
 func (stateStorage) CheckDisk(context.Context, int) model.StorageResult {
 	return model.StorageResult{Healthy: true}
 }
@@ -81,5 +88,15 @@ func TestUninterruptibleProcessKillFailureOpensProcessFailed(t *testing.T) {
 	s.reconcile(context.Background())
 	if !p.forceStop || !s.processFailed || s.Status().State != model.StateProcessFailed {
 		t.Fatalf("force=%v processFailed=%v state=%s", p.forceStop, s.processFailed, s.Status().State)
+	}
+}
+
+func TestConfigurationFailurePreventsJellyfinStart(t *testing.T) {
+	p := &stateProcess{}
+	s := stateSupervisor(t, p)
+	s.configuration = failingConfiguration{err: errors.New("invalid XML")}
+	s.reconcile(context.Background())
+	if p.running || !s.processFailed || s.Status().State != model.StateProcessFailed {
+		t.Fatalf("running=%v processFailed=%v state=%s", p.running, s.processFailed, s.Status().State)
 	}
 }

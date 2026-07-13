@@ -103,3 +103,55 @@ func TestRejectsIncompleteInitAndWatchdog(t *testing.T) {
 		t.Fatal("expected incomplete watchdog error")
 	}
 }
+
+func TestLoadManagedJellyfinSettingsTracksNullAndConfiguredValues(t *testing.T) {
+	root := filepath.ToSlash(t.TempDir())
+	body := fmt.Sprintf(`config-version: 1
+restapi:
+  listen: 127.0.0.1
+jellyfin:
+  path: /app
+  run-as-user: nobody
+  data-dir: %s/data
+  config-dir: %s/config
+  cache-dir: %s/cache
+  log-dir: %s/log
+  general:
+    paths:
+      cache-path: null
+      metadata-path: default
+    performance:
+      parallel-library-scan-tasks-limit: 1
+      parallel-image-encoding-limit: null
+  branding:
+    login-disclaimer: Welcome
+  networking:
+    server-address-settings:
+      local-http-port-number: 8097
+      base-url: null
+      bind-to-local-network-address: [127.0.0.1]
+    ip-protocols:
+      enable-ipv6: true
+`, root, root, root, root)
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Jellyfin.HasManagedSettings() || !cfg.Jellyfin.General.Paths.CachePath.Null {
+		t.Fatalf("managed settings not retained: %#v", cfg.Jellyfin.General)
+	}
+	if limit := cfg.Jellyfin.General.Performance.ParallelImageEncodingLimit; !limit.Set || !limit.Null {
+		t.Fatalf("null performance limit not retained: %#v", limit)
+	}
+	address := cfg.Jellyfin.Networking.ServerAddressSettings
+	if !address.LocalHTTPPortConfigured || address.LocalHTTPPort != 8097 || !address.BaseURLConfigured || !address.BaseURLNull {
+		t.Fatalf("address settings = %#v", address)
+	}
+	if !address.BindToLocalNetworkAddress.Set || len(address.BindToLocalNetworkAddress.Value) != 1 {
+		t.Fatalf("bind settings = %#v", address.BindToLocalNetworkAddress)
+	}
+}

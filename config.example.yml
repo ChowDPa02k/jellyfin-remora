@@ -54,11 +54,32 @@ jellyfin:
   log-dir: /Volumes/AppData/Jellyfin/log
   web-dir: default
   parameters: {}
+  general:
+    paths:
+      cache-path: null # null/default restores Jellyfin's default
+      metadata-path: default
+    performance:
+      parallel-library-scan-tasks-limit: 1
+      parallel-image-encoding-limit: null
+  branding:
+    login-disclaimer: "Welcome to Jellyfin"
+    # custom-css-code: /absolute/path/to/custom.css
+    # enable-splash-screen: true
+    # splash-screen-image: /absolute/path/to/splash.png
+  # playback:
+  #   transcoding:
+  #     transcode-path: /Volumes/AppData/Jellyfin/cache/transcodes
+  #     enable-fallback-fonts: true
+  #     fallback-font-folder-path: /Volumes/AppData/Jellyfin/config/fonts
   networking:
     server-address-settings:
       local-http-port-number: 8096
       enable-https: false
       base-url: null
+      bind-to-local-network-address: null
+    ip-protocols:
+      enable-ipv4: true
+      enable-ipv6: false
 
 # Used only when Jellyfin reports that its startup wizard is incomplete.
 init:

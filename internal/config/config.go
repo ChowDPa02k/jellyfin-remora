@@ -17,6 +17,75 @@ import (
 
 type Duration struct{ time.Duration }
 
+type Optional[T any] struct {
+	Set   bool
+	Null  bool
+	Value T
+}
+
+func (o *Optional[T]) UnmarshalYAML(n *yaml.Node) error {
+	o.Set = true
+	if n.Tag == "!!null" {
+		o.Null = true
+		var zero T
+		o.Value = zero
+		return nil
+	}
+	return n.Decode(&o.Value)
+}
+
+type OptionalStrings struct {
+	Set   bool
+	Null  bool
+	Value []string
+}
+
+func decodeOptional[T any](n *yaml.Node, out *Optional[T]) error {
+	out.Set = true
+	if n.Tag == "!!null" {
+		out.Null = true
+		var zero T
+		out.Value = zero
+		return nil
+	}
+	return n.Decode(&out.Value)
+}
+
+func decodeOptionalMapping(n *yaml.Node, fields map[string]func(*yaml.Node) error) error {
+	if n.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected a mapping, got %s", n.ShortTag())
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		name := n.Content[i].Value
+		decode, ok := fields[name]
+		if !ok {
+			return fmt.Errorf("unknown field %q", name)
+		}
+		if err := decode(n.Content[i+1]); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func (o *OptionalStrings) UnmarshalYAML(n *yaml.Node) error {
+	o.Set = true
+	if n.Tag == "!!null" {
+		o.Null = true
+		o.Value = nil
+		return nil
+	}
+	if n.Kind == yaml.ScalarNode {
+		var value string
+		if err := n.Decode(&value); err != nil {
+			return err
+		}
+		o.Value = []string{value}
+		return nil
+	}
+	return n.Decode(&o.Value)
+}
+
 func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind == yaml.ScalarNode && n.Tag == "!!int" {
 		var seconds int64
@@ -126,21 +195,146 @@ type JellyfinConfig struct {
 	LogDir     string           `yaml:"log-dir"`
 	WebDir     string           `yaml:"web-dir"`
 	Parameters map[string]any   `yaml:"parameters"`
-	General    map[string]any   `yaml:"general,omitempty"`
-	Branding   map[string]any   `yaml:"branding,omitempty"`
-	Playback   map[string]any   `yaml:"playback,omitempty"`
+	General    GeneralConfig    `yaml:"general,omitempty"`
+	Branding   BrandingConfig   `yaml:"branding,omitempty"`
+	Playback   PlaybackConfig   `yaml:"playback,omitempty"`
 	Networking NetworkingConfig `yaml:"networking,omitempty"`
+}
+
+type GeneralConfig struct {
+	Settings    GeneralSettings    `yaml:"settings,omitempty"`
+	Paths       GeneralPaths       `yaml:"paths,omitempty"`
+	Performance GeneralPerformance `yaml:"performance,omitempty"`
+}
+
+type GeneralSettings struct {
+	ServerName Optional[string] `yaml:"server-name,omitempty"`
+}
+
+func (c *GeneralSettings) UnmarshalYAML(n *yaml.Node) error {
+	return decodeOptionalMapping(n, map[string]func(*yaml.Node) error{
+		"server-name": func(v *yaml.Node) error { return decodeOptional(v, &c.ServerName) },
+	})
+}
+
+type GeneralPaths struct {
+	CachePath    Optional[string] `yaml:"cache-path,omitempty"`
+	MetadataPath Optional[string] `yaml:"metadata-path,omitempty"`
+}
+
+func (c *GeneralPaths) UnmarshalYAML(n *yaml.Node) error {
+	return decodeOptionalMapping(n, map[string]func(*yaml.Node) error{
+		"cache-path":    func(v *yaml.Node) error { return decodeOptional(v, &c.CachePath) },
+		"metadata-path": func(v *yaml.Node) error { return decodeOptional(v, &c.MetadataPath) },
+	})
+}
+
+type GeneralPerformance struct {
+	ParallelLibraryScanTasksLimit Optional[int] `yaml:"parallel-library-scan-tasks-limit,omitempty"`
+	ParallelImageEncodingLimit    Optional[int] `yaml:"parallel-image-encoding-limit,omitempty"`
+}
+
+func (c *GeneralPerformance) UnmarshalYAML(n *yaml.Node) error {
+	return decodeOptionalMapping(n, map[string]func(*yaml.Node) error{
+		"parallel-library-scan-tasks-limit": func(v *yaml.Node) error {
+			return decodeOptional(v, &c.ParallelLibraryScanTasksLimit)
+		},
+		"parallel-image-encoding-limit": func(v *yaml.Node) error {
+			return decodeOptional(v, &c.ParallelImageEncodingLimit)
+		},
+	})
+}
+
+type BrandingConfig struct {
+	EnableSplashScreen Optional[bool]   `yaml:"enable-splash-screen,omitempty"`
+	SplashScreenImage  Optional[string] `yaml:"splash-screen-image,omitempty"`
+	LoginDisclaimer    Optional[string] `yaml:"login-disclaimer,omitempty"`
+	CustomCSSCode      Optional[string] `yaml:"custom-css-code,omitempty"`
+}
+
+func (c *BrandingConfig) UnmarshalYAML(n *yaml.Node) error {
+	return decodeOptionalMapping(n, map[string]func(*yaml.Node) error{
+		"enable-splash-screen": func(v *yaml.Node) error { return decodeOptional(v, &c.EnableSplashScreen) },
+		"splash-screen-image":  func(v *yaml.Node) error { return decodeOptional(v, &c.SplashScreenImage) },
+		"login-disclaimer":     func(v *yaml.Node) error { return decodeOptional(v, &c.LoginDisclaimer) },
+		"custom-css-code":      func(v *yaml.Node) error { return decodeOptional(v, &c.CustomCSSCode) },
+	})
+}
+
+type PlaybackConfig struct {
+	Transcoding TranscodingConfig `yaml:"transcoding,omitempty"`
+}
+
+type TranscodingConfig struct {
+	TranscodePath          Optional[string] `yaml:"transcode-path,omitempty"`
+	EnableFallbackFonts    Optional[bool]   `yaml:"enable-fallback-fonts,omitempty"`
+	FallbackFontFolderPath Optional[string] `yaml:"fallback-font-folder-path,omitempty"`
+}
+
+func (c *TranscodingConfig) UnmarshalYAML(n *yaml.Node) error {
+	return decodeOptionalMapping(n, map[string]func(*yaml.Node) error{
+		"transcode-path":            func(v *yaml.Node) error { return decodeOptional(v, &c.TranscodePath) },
+		"enable-fallback-fonts":     func(v *yaml.Node) error { return decodeOptional(v, &c.EnableFallbackFonts) },
+		"fallback-font-folder-path": func(v *yaml.Node) error { return decodeOptional(v, &c.FallbackFontFolderPath) },
+	})
 }
 
 type NetworkingConfig struct {
 	ServerAddressSettings ServerAddressSettings `yaml:"server-address-settings"`
+	IPProtocols           IPProtocols           `yaml:"ip-protocols,omitempty"`
 }
 
 type ServerAddressSettings struct {
-	LocalHTTPPort  int    `yaml:"local-http-port-number"`
-	LocalHTTPSPort int    `yaml:"local-https-port-number"`
-	EnableHTTPS    bool   `yaml:"enable-https"`
-	BaseURL        string `yaml:"base-url"`
+	LocalHTTPPort             int             `yaml:"-"`
+	LocalHTTPSPort            int             `yaml:"-"`
+	EnableHTTPS               bool            `yaml:"-"`
+	BaseURL                   string          `yaml:"-"`
+	LocalHTTPPortConfigured   bool            `yaml:"-"`
+	LocalHTTPSPortConfigured  bool            `yaml:"-"`
+	EnableHTTPSConfigured     bool            `yaml:"-"`
+	BaseURLConfigured         bool            `yaml:"-"`
+	BaseURLNull               bool            `yaml:"-"`
+	BindToLocalNetworkAddress OptionalStrings `yaml:"bind-to-local-network-address,omitempty"`
+}
+
+func (s *ServerAddressSettings) UnmarshalYAML(n *yaml.Node) error {
+	return decodeOptionalMapping(n, map[string]func(*yaml.Node) error{
+		"local-http-port-number": func(v *yaml.Node) error {
+			s.LocalHTTPPortConfigured = true
+			return v.Decode(&s.LocalHTTPPort)
+		},
+		"local-https-port-number": func(v *yaml.Node) error {
+			s.LocalHTTPSPortConfigured = true
+			return v.Decode(&s.LocalHTTPSPort)
+		},
+		"enable-https": func(v *yaml.Node) error {
+			s.EnableHTTPSConfigured = true
+			return v.Decode(&s.EnableHTTPS)
+		},
+		"base-url": func(v *yaml.Node) error {
+			var value Optional[string]
+			if err := decodeOptional(v, &value); err != nil {
+				return err
+			}
+			s.BaseURL, s.BaseURLConfigured, s.BaseURLNull = value.Value, true, value.Null
+			return nil
+		},
+		"bind-to-local-network-address": func(v *yaml.Node) error {
+			return s.BindToLocalNetworkAddress.UnmarshalYAML(v)
+		},
+	})
+}
+
+type IPProtocols struct {
+	EnableIPv4 Optional[bool] `yaml:"enable-ipv4,omitempty"`
+	EnableIPv6 Optional[bool] `yaml:"enable-ipv6,omitempty"`
+}
+
+func (c *IPProtocols) UnmarshalYAML(n *yaml.Node) error {
+	return decodeOptionalMapping(n, map[string]func(*yaml.Node) error{
+		"enable-ipv4": func(v *yaml.Node) error { return decodeOptional(v, &c.EnableIPv4) },
+		"enable-ipv6": func(v *yaml.Node) error { return decodeOptional(v, &c.EnableIPv6) },
+	})
 }
 
 func Load(path string) (*Config, error) {
@@ -298,6 +492,19 @@ func (c *Config) Validate() error {
 	if runtime.GOOS == "darwin" && c.Jellyfin.RunAsUser == "root" {
 		return errors.New("refusing to run Jellyfin as root")
 	}
+	network := c.Jellyfin.Networking.ServerAddressSettings
+	if network.LocalHTTPPortConfigured && (network.LocalHTTPPort < 1 || network.LocalHTTPPort > 65535) {
+		return errors.New("jellyfin.networking.server-address-settings.local-http-port-number must be between 1 and 65535")
+	}
+	if network.LocalHTTPSPortConfigured && (network.LocalHTTPSPort < 1 || network.LocalHTTPSPort > 65535) {
+		return errors.New("jellyfin.networking.server-address-settings.local-https-port-number must be between 1 and 65535")
+	}
+	if value := c.Jellyfin.General.Performance.ParallelLibraryScanTasksLimit; value.Set && !value.Null && value.Value < 0 {
+		return errors.New("jellyfin.general.performance.parallel-library-scan-tasks-limit cannot be negative")
+	}
+	if value := c.Jellyfin.General.Performance.ParallelImageEncodingLimit; value.Set && !value.Null && value.Value < 0 {
+		return errors.New("jellyfin.general.performance.parallel-image-encoding-limit cannot be negative")
+	}
 	initConfigured := c.Init.User != "" || c.Init.Password != "" || c.Init.ServerName != "" || c.Init.DisplayLanguage != "" || c.Init.PreferredMetadataLanguage != "" || c.Init.PreferredMetadataRegion != ""
 	if initConfigured && (c.Init.User == "" || c.Init.Password == "") {
 		return errors.New("init.user and init.password are required when init is configured")
@@ -320,4 +527,18 @@ func (c *Config) JellyfinURL() string {
 		url += "/" + base
 	}
 	return url
+}
+
+func (c JellyfinConfig) HasManagedSettings() bool {
+	g := c.General
+	b := c.Branding
+	t := c.Playback.Transcoding
+	n := c.Networking
+	s := n.ServerAddressSettings
+	return g.Settings.ServerName.Set || g.Paths.CachePath.Set || g.Paths.MetadataPath.Set ||
+		g.Performance.ParallelLibraryScanTasksLimit.Set || g.Performance.ParallelImageEncodingLimit.Set ||
+		b.EnableSplashScreen.Set || b.SplashScreenImage.Set || b.LoginDisclaimer.Set || b.CustomCSSCode.Set ||
+		t.TranscodePath.Set || t.EnableFallbackFonts.Set || t.FallbackFontFolderPath.Set ||
+		s.LocalHTTPPortConfigured || s.LocalHTTPSPortConfigured || s.EnableHTTPSConfigured || s.BaseURLConfigured ||
+		s.BindToLocalNetworkAddress.Set || n.IPProtocols.EnableIPv4.Set || n.IPProtocols.EnableIPv6.Set
 }

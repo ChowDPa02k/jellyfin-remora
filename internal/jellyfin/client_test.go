@@ -6,12 +6,53 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 )
+
+func TestSupportedReleaseContractFixtures(t *testing.T) {
+	for _, release := range []struct {
+		dir, versionPrefix string
+	}{{"v10.11", "10.11."}, {"v12", "12."}} {
+		t.Run(release.dir, func(t *testing.T) {
+			decode := func(name string, out any) {
+				t.Helper()
+				data, err := os.ReadFile(filepath.Join("testdata", release.dir, name+".json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(data, out); err != nil {
+					t.Fatalf("decode %s: %v", name, err)
+				}
+			}
+			var info PublicInfo
+			decode("public-info", &info)
+			if !strings.HasPrefix(info.Version, release.versionPrefix) || info.StartupWizardCompleted == nil || !*info.StartupWizardCompleted {
+				t.Fatalf("public info = %#v", info)
+			}
+			var startup StartupUser
+			decode("startup-user", &startup)
+			if startup.Name == "" {
+				t.Fatal("startup fixture omitted bootstrap user")
+			}
+			var auth AuthenticationResult
+			decode("authentication-result", &auth)
+			if auth.AccessToken == "" || auth.ServerID == "" || auth.User["Id"] == nil {
+				t.Fatalf("authentication result = %#v", auth)
+			}
+			var keys authenticationInfoQuery
+			decode("auth-keys", &keys)
+			if len(keys.Items) != 1 || keys.Items[0].AppName != "Jellyfin Remora" || keys.Items[0].AccessToken == "" {
+				t.Fatalf("API keys = %#v", keys)
+			}
+		})
+	}
+}
 
 func TestHealth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

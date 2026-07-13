@@ -1,6 +1,6 @@
 # Jellyfin Remora
 
-Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS milestone supports storage fencing, process supervision, first-run setup, API-key provisioning, login watchdog checks, health checks, and local control.
+Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS milestone supports storage fencing, process supervision, first-run setup, pre-start XML configuration reconciliation, API-key provisioning, login watchdog checks, health checks, and local control.
 
 Development milestones through the cross-platform stable release are tracked in [ROADMAP.md](ROADMAP.md).
 The repeatable and real-fault high-availability coverage is recorded in [test/HA_TEST_MATRIX.md](test/HA_TEST_MATRIX.md).
@@ -16,6 +16,17 @@ go build -o build/remoractl ./cmd/remoractl
 Copy `config.example.yml`, replace its volume UUID and macOS user, and create all four Jellyfin directories with ownership and write permission for that user. Remora deliberately does not create missing data directories because doing so beneath a lost `/Volumes` mount could create a false local data tree. When Remora runs as root, `jellyfin.run-as-user` is mandatory and Jellyfin is started with that account.
 
 For a new Jellyfin data directory, configure `init.user` and `init.password`. Remora completes the setup wizard, handles Jellyfin 12's OS-account bootstrap user, renames it to the configured administrator, creates a `Jellyfin Remora` API key with mode `0600`, creates the optional login-watchdog user, and performs a controlled restart. Existing initialized servers are not sent through the setup wizard.
+
+Configured `jellyfin.general`, `branding`, `playback.transcoding`, and
+`networking` fields are reconciled into Jellyfin's XML immediately before each
+start. Remora owns only fields explicitly present in YAML; omitted fields remain
+owned by Jellyfin and dashboard changes to them are preserved. A YAML `null`
+restores the corresponding Jellyfin default, while configured path values must
+be absolute (or `default`). Existing XML files are backed up as
+`*.remora.bak`, writes are atomic and preserve ownership/mode, and a multi-file
+failure rolls back every file already changed. Remora never writes XML while the
+setup wizard is incomplete. Custom CSS and splash images are validated before
+any configuration file is changed.
 
 Run in the foreground during initial validation:
 
@@ -51,7 +62,7 @@ SMB passwords in YAML are supported for the first milestone but can be visible t
 - Manual stop always overrides automatic recovery.
 - Five process failures in ten minutes open the restart circuit; `remoractl start` resets it.
 
-Jellyfin XML settings reconciliation, API-key rotation/revocation commands, log querying, and session control remain future milestones.
+API-key rotation/revocation commands, log querying, and session control remain future milestones.
 
 ## Development checks
 
