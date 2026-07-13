@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
@@ -18,9 +19,12 @@ import (
 )
 
 type Checker struct {
-	cfg        *config.Config
-	backend    platform.Backend
-	executable string
+	cfg              *config.Config
+	backend          platform.Backend
+	executable       string
+	failureMu        sync.Mutex
+	failureCounts    []int
+	confirmedHealthy []bool
 }
 
 func New(cfg *config.Config, backend platform.Backend) (*Checker, error) {
@@ -28,13 +32,13 @@ func New(cfg *config.Config, backend platform.Backend) (*Checker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Checker{cfg: cfg, backend: backend, executable: exe}, nil
+	return &Checker{cfg: cfg, backend: backend, executable: exe, failureCounts: make([]int, len(cfg.Disks)), confirmedHealthy: make([]bool, len(cfg.Disks))}, nil
 }
 
 func (c *Checker) CheckAll(ctx context.Context) []model.StorageResult {
 	results := make([]model.StorageResult, len(c.cfg.Disks))
 	for i := range c.cfg.Disks {
-		results[i] = c.check(ctx, i, c.cfg.Disks[i], true)
+		results[i] = c.CheckDisk(ctx, i)
 	}
 	return results
 }
@@ -43,14 +47,15 @@ func (c *Checker) CheckDisk(ctx context.Context, index int) model.StorageResult 
 	if index < 0 || index >= len(c.cfg.Disks) {
 		return model.StorageResult{Index: index, Fatal: true, Message: "disk index out of range", CheckedAt: time.Now()}
 	}
-	return c.check(ctx, index, c.cfg.Disks[index], true)
+	disk := c.cfg.Disks[index]
+	return c.applyFailureThreshold(index, disk, c.checkRaw(ctx, index, disk, true))
 }
 
 func (c *Checker) InspectDisk(ctx context.Context, index int) model.StorageResult {
 	if index < 0 || index >= len(c.cfg.Disks) {
 		return model.StorageResult{Index: index, Fatal: true, Message: "disk index out of range", CheckedAt: time.Now()}
 	}
-	return c.check(ctx, index, c.cfg.Disks[index], false)
+	return c.checkRaw(ctx, index, c.cfg.Disks[index], false)
 }
 
 func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
@@ -75,7 +80,7 @@ func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
 	return results
 }
 
-func (c *Checker) check(ctx context.Context, index int, disk config.DiskConfig, allowMount bool) model.StorageResult {
+func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfig, allowMount bool) model.StorageResult {
 	r := model.StorageResult{Index: index, Type: disk.Type, Device: redactDevice(disk), Target: disk.Target, CheckedAt: time.Now()}
 	mounts, err := c.backend.Mounts(ctx)
 	if err != nil {
@@ -130,6 +135,33 @@ func (c *Checker) check(ctx context.Context, index int, disk config.DiskConfig, 
 		r.Message = "server port unreachable while mounted I/O remains healthy"
 	}
 	return r
+}
+
+func (c *Checker) applyFailureThreshold(index int, disk config.DiskConfig, result model.StorageResult) model.StorageResult {
+	c.failureMu.Lock()
+	defer c.failureMu.Unlock()
+	for len(c.failureCounts) <= index {
+		c.failureCounts = append(c.failureCounts, 0)
+		c.confirmedHealthy = append(c.confirmedHealthy, false)
+	}
+	threshold := max(1, disk.FailureThreshold)
+	if !result.Fatal {
+		c.failureCounts[index] = 0
+		if result.Healthy {
+			c.confirmedHealthy[index] = true
+		}
+		return result
+	}
+	if !c.confirmedHealthy[index] || threshold == 1 {
+		return result
+	}
+	c.failureCounts[index]++
+	if c.failureCounts[index] >= threshold {
+		return result
+	}
+	result.Fatal = false
+	result.Message = fmt.Sprintf("%s (failure %d/%d; waiting for failure threshold)", result.Message, c.failureCounts[index], threshold)
+	return result
 }
 
 func (c *Checker) probePath(ctx context.Context, path, permission string) error {

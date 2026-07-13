@@ -136,22 +136,34 @@ type RESTAPIConfig struct {
 type RemoraConfig struct {
 	ServerStartTimeout  Duration                `yaml:"server-start-timeout"`
 	ServerStopTimeout   Duration                `yaml:"server-stop-timeout"`
-	HeartbeatInterval   Duration                `yaml:"heartbeat-interval"`
-	HealthAPIHeartbeat  int                     `yaml:"health-api-heartbeat"`
-	HealthAPIHearbeat   int                     `yaml:"health-api-hearbeat,omitempty"`
 	IOTimeout           Duration                `yaml:"io-timeout"`
 	RecoverySuccesses   int                     `yaml:"recovery-successes"`
-	APIFailureThreshold int                     `yaml:"api-failure-threshold"`
-	UserLoginWatchdog   UserLoginWatchdogConfig `yaml:"user-login-watchdog,omitempty"`
+	Monitoring          MonitoringConfig        `yaml:"monitoring"`
 	DataDir             string                  `yaml:"data-dir"`
 	Logs                LogConfig               `yaml:"logs"`
+	HeartbeatInterval   Duration                `yaml:"-"`
+	HealthAPIHeartbeat  int                     `yaml:"-"`
+	APIFailureThreshold int                     `yaml:"-"`
+	UserLoginWatchdog   UserLoginWatchdogConfig `yaml:"-"`
+}
+
+type MonitoringConfig struct {
+	Interval    Duration                 `yaml:"interval"`
+	JellyfinAPI JellyfinAPIMonitorConfig `yaml:"jellyfin-api"`
+	UserLogin   UserLoginWatchdogConfig  `yaml:"user-login,omitempty"`
+}
+
+type JellyfinAPIMonitorConfig struct {
+	Interval         Duration `yaml:"interval"`
+	FailureThreshold int      `yaml:"failure-threshold"`
 }
 
 type UserLoginWatchdogConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Heartbeat int    `yaml:"heartbeat"`
-	User      string `yaml:"user"`
-	Password  string `yaml:"password"`
+	Enabled   bool     `yaml:"enabled"`
+	Interval  Duration `yaml:"interval"`
+	User      string   `yaml:"user"`
+	Password  string   `yaml:"password"`
+	Heartbeat int      `yaml:"-"`
 }
 
 type InitConfig struct {
@@ -173,16 +185,17 @@ type LogConfig struct {
 }
 
 type DiskConfig struct {
-	Type       string `yaml:"type"`
-	Device     string `yaml:"device"`
-	UUID       string `yaml:"uuid"`
-	Options    string `yaml:"options"`
-	User       string `yaml:"user"`
-	Password   string `yaml:"password"`
-	Target     string `yaml:"target"`
-	Permission string `yaml:"permission"`
-	Heartbeat  int    `yaml:"heartbeat"`
-	Hearbeat   int    `yaml:"hearbeat,omitempty"`
+	Type             string `yaml:"type"`
+	Device           string `yaml:"device"`
+	UUID             string `yaml:"uuid"`
+	Options          string `yaml:"options"`
+	User             string `yaml:"user"`
+	Password         string `yaml:"password"`
+	Target           string `yaml:"target"`
+	Permission       string `yaml:"permission"`
+	Heartbeat        int    `yaml:"heartbeat"`
+	Hearbeat         int    `yaml:"hearbeat,omitempty"`
+	FailureThreshold int    `yaml:"failure-threshold"`
 }
 
 type JellyfinConfig struct {
@@ -363,7 +376,7 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) defaults() {
 	if c.ConfigVersion == 0 {
-		c.ConfigVersion = 1
+		c.ConfigVersion = CurrentVersion
 		c.LegacyConfig = true
 	}
 	if c.RESTAPI.Listen == "" {
@@ -381,23 +394,28 @@ func (c *Config) defaults() {
 	if c.Remora.ServerStopTimeout.Duration == 0 {
 		c.Remora.ServerStopTimeout.Duration = 300 * time.Second
 	}
-	if c.Remora.HeartbeatInterval.Duration == 0 {
-		c.Remora.HeartbeatInterval.Duration = time.Second
+	if c.Remora.Monitoring.Interval.Duration == 0 {
+		c.Remora.Monitoring.Interval.Duration = time.Second
 	}
-	if c.Remora.HealthAPIHeartbeat == 0 {
-		c.Remora.HealthAPIHeartbeat = c.Remora.HealthAPIHearbeat
+	if c.Remora.Monitoring.JellyfinAPI.Interval.Duration == 0 {
+		c.Remora.Monitoring.JellyfinAPI.Interval.Duration = 10 * time.Second
 	}
-	if c.Remora.HealthAPIHeartbeat == 0 {
-		c.Remora.HealthAPIHeartbeat = 10
+	if c.Remora.Monitoring.JellyfinAPI.FailureThreshold == 0 {
+		c.Remora.Monitoring.JellyfinAPI.FailureThreshold = 3
 	}
+	if c.Remora.Monitoring.UserLogin.Enabled && c.Remora.Monitoring.UserLogin.Interval.Duration == 0 {
+		c.Remora.Monitoring.UserLogin.Interval.Duration = 60 * time.Second
+	}
+	c.Remora.HeartbeatInterval = c.Remora.Monitoring.Interval
+	c.Remora.HealthAPIHeartbeat = durationTicks(c.Remora.Monitoring.JellyfinAPI.Interval.Duration, c.Remora.HeartbeatInterval.Duration)
+	c.Remora.APIFailureThreshold = c.Remora.Monitoring.JellyfinAPI.FailureThreshold
+	c.Remora.Monitoring.UserLogin.Heartbeat = durationTicks(c.Remora.Monitoring.UserLogin.Interval.Duration, c.Remora.HeartbeatInterval.Duration)
+	c.Remora.UserLoginWatchdog = c.Remora.Monitoring.UserLogin
 	if c.Remora.IOTimeout.Duration == 0 {
 		c.Remora.IOTimeout.Duration = 5 * time.Second
 	}
 	if c.Remora.RecoverySuccesses == 0 {
 		c.Remora.RecoverySuccesses = 3
-	}
-	if c.Remora.APIFailureThreshold == 0 {
-		c.Remora.APIFailureThreshold = 3
 	}
 	if c.Remora.DataDir == "" || c.Remora.DataDir == "default" {
 		c.Remora.DataDir = c.Jellyfin.DataDir
@@ -431,6 +449,9 @@ func (c *Config) defaults() {
 		if c.Disks[i].Heartbeat == 0 {
 			c.Disks[i].Heartbeat = c.Disks[i].Hearbeat
 		}
+		if c.Disks[i].FailureThreshold == 0 {
+			c.Disks[i].FailureThreshold = 1
+		}
 		if c.Disks[i].Heartbeat == 0 {
 			if c.Disks[i].Type == "physical" {
 				c.Disks[i].Heartbeat = 1
@@ -442,7 +463,7 @@ func (c *Config) defaults() {
 }
 
 func (c *Config) Validate() error {
-	if c.ConfigVersion != 1 {
+	if c.ConfigVersion != CurrentVersion {
 		return fmt.Errorf("unsupported config-version %d", c.ConfigVersion)
 	}
 	if ip := net.ParseIP(c.RESTAPI.Listen); ip == nil || !ip.IsLoopback() {
@@ -451,7 +472,7 @@ func (c *Config) Validate() error {
 	if c.RESTAPI.Port < 1 || c.RESTAPI.Port > 65535 {
 		return errors.New("restapi.port must be between 1 and 65535")
 	}
-	if c.Remora.HeartbeatInterval.Duration <= 0 || c.Remora.ServerStartTimeout.Duration <= 0 || c.Remora.ServerStopTimeout.Duration <= 0 || c.Remora.IOTimeout.Duration <= 0 {
+	if c.Remora.HeartbeatInterval.Duration <= 0 || c.Remora.Monitoring.JellyfinAPI.Interval.Duration <= 0 || c.Remora.ServerStartTimeout.Duration <= 0 || c.Remora.ServerStopTimeout.Duration <= 0 || c.Remora.IOTimeout.Duration <= 0 {
 		return errors.New("remora intervals and timeouts must be positive")
 	}
 	switch c.Remora.Logs.Level {
@@ -482,6 +503,9 @@ func (c *Config) Validate() error {
 		if d.Permission != "r" && d.Permission != "rw" {
 			return fmt.Errorf("disk[%d].permission must be r or rw", i)
 		}
+		if d.FailureThreshold < 1 {
+			return fmt.Errorf("disk[%d].failure-threshold must be positive", i)
+		}
 		if d.Type == "physical" && (d.Device == "") == (d.UUID == "") {
 			return fmt.Errorf("disk[%d] physical disk requires exactly one of device or uuid", i)
 		}
@@ -511,13 +535,20 @@ func (c *Config) Validate() error {
 	}
 	if c.Remora.UserLoginWatchdog.Enabled {
 		if c.Remora.UserLoginWatchdog.User == "" || c.Remora.UserLoginWatchdog.Password == "" {
-			return errors.New("remora.user-login-watchdog.user and password are required when the watchdog is enabled")
+			return errors.New("remora.monitoring.user-login.user and password are required when user-login monitoring is enabled")
 		}
 		if c.Remora.UserLoginWatchdog.Heartbeat < 1 {
-			return errors.New("remora.user-login-watchdog.heartbeat must be positive when the watchdog is enabled")
+			return errors.New("remora.monitoring.user-login.interval must be positive when user-login monitoring is enabled")
 		}
 	}
 	return nil
+}
+
+func durationTicks(interval, tick time.Duration) int {
+	if interval <= 0 || tick <= 0 {
+		return 1
+	}
+	return max(1, int((interval+tick-1)/tick))
 }
 
 func (c *Config) JellyfinURL() string {

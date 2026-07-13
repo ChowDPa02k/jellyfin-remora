@@ -41,7 +41,7 @@ disk:
 	if c.Remora.HealthAPIHeartbeat != 7 {
 		t.Fatalf("heartbeat=%d", c.Remora.HealthAPIHeartbeat)
 	}
-	if c.Disks[0].Heartbeat != 4 || c.Disks[0].Type != "smb" {
+	if c.Disks[0].Heartbeat != 4 || c.Disks[0].FailureThreshold != 1 || c.Disks[0].Type != "smb" {
 		t.Fatalf("disk defaults: %#v", c.Disks[0])
 	}
 	if c.Remora.ServerStartTimeout.Duration != 30*time.Second {
@@ -92,7 +92,7 @@ jellyfin:
 }
 
 func TestRejectsIncompleteInitAndWatchdog(t *testing.T) {
-	base := Config{ConfigVersion: 1, RESTAPI: RESTAPIConfig{Listen: "127.0.0.1", Port: 8095}, Remora: RemoraConfig{ServerStartTimeout: Duration{time.Second}, ServerStopTimeout: Duration{time.Second}, HeartbeatInterval: Duration{time.Second}, IOTimeout: Duration{time.Second}, Logs: LogConfig{Level: "info"}}, Jellyfin: JellyfinConfig{Path: "/x", DataDir: "/d", ConfigDir: "/c", CacheDir: "/k", LogDir: "/l", RunAsUser: "nobody"}}
+	base := Config{ConfigVersion: CurrentVersion, RESTAPI: RESTAPIConfig{Listen: "127.0.0.1", Port: 8095}, Remora: RemoraConfig{ServerStartTimeout: Duration{time.Second}, ServerStopTimeout: Duration{time.Second}, HeartbeatInterval: Duration{time.Second}, IOTimeout: Duration{time.Second}, Logs: LogConfig{Level: "info"}}, Jellyfin: JellyfinConfig{Path: "/x", DataDir: "/d", ConfigDir: "/c", CacheDir: "/k", LogDir: "/l", RunAsUser: "nobody"}}
 	base.Init.User = "admin"
 	if err := base.Validate(); err == nil {
 		t.Fatal("expected incomplete init error")
@@ -153,5 +153,18 @@ jellyfin:
 	}
 	if !address.BindToLocalNetworkAddress.Set || len(address.BindToLocalNetworkAddress.Value) != 1 {
 		t.Fatalf("bind settings = %#v", address.BindToLocalNetworkAddress)
+	}
+}
+
+func TestDarwinSampleLoadsAsCurrentConfiguration(t *testing.T) {
+	cfg, err := Load(filepath.Join("..", "..", "sample", "config-darwin.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConfigVersion != CurrentVersion {
+		t.Fatalf("config version = %d, want %d", cfg.ConfigVersion, CurrentVersion)
+	}
+	if len(cfg.Disks) != 1 || cfg.Disks[0].FailureThreshold != 1 {
+		t.Fatalf("sample disks = %+v", cfg.Disks)
 	}
 }

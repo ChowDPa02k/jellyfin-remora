@@ -13,7 +13,23 @@ go build -o build/jellyfin-remora ./cmd/jellyfin-remora
 go build -o build/remoractl ./cmd/remoractl
 ```
 
-Copy `config.example.yml`, replace its volume UUID and macOS user, and create all four Jellyfin directories with ownership and write permission for that user. Remora deliberately does not create missing data directories because doing so beneath a lost `/Volumes` mount could create a false local data tree. When Remora runs as root, `jellyfin.run-as-user` is mandatory and Jellyfin is started with that account.
+The fully annotated Darwin template is
+[`sample/config-darwin.yaml`](sample/config-darwin.yaml). For an installed pair
+of binaries, run `remoractl init`: it selects the host-platform template, opens
+a mode-`0600` temporary copy with `$VISUAL`, `$EDITOR`, `vi`, or `nano`, strictly
+validates the saved YAML, and atomically writes it to
+`jellyfin.config-dir/config.yaml`. On macOS it also generates a launchd plist in
+that directory using the actual binary and configuration paths. The command
+does not bootstrap the plist automatically. Linux systemd and Windows Task
+Scheduler generators are reserved stubs until their platform phases; SysVinit
+will not be supported.
+
+Replace the template's volume UUID, accounts, and credentials, and create all
+four Jellyfin directories with ownership and write permission for the selected
+user. Remora deliberately does not create missing data directories because
+doing so beneath a lost `/Volumes` mount could create a false local data tree.
+When Remora runs as root, `jellyfin.run-as-user` is mandatory and Jellyfin is
+started with that account.
 
 For a new Jellyfin data directory, configure `init.user` and `init.password`. Remora completes the setup wizard, handles the macOS package's OS-account bootstrap user on Jellyfin 10.11 and 12, renames it to the configured administrator, creates a `Jellyfin Remora` API key with mode `0600`, creates the optional login-watchdog user, and performs a controlled restart. Existing initialized servers are not sent through the setup wizard.
 
@@ -38,13 +54,34 @@ from 12.x back to 10.11.x.
 Run in the foreground during initial validation:
 
 ```sh
-./build/jellyfin-remora validate-config -c config.yml
+./build/remoractl init
+./build/jellyfin-remora validate-config -c /path/to/jellyfin/config/config.yaml
 # Optional: create missing directories only after their configured storage passes validation.
-./build/jellyfin-remora validate-config -c config.yml --prepare
-./build/jellyfin-remora -c config.yml
+./build/jellyfin-remora validate-config -c /path/to/jellyfin/config/config.yaml --prepare
+./build/jellyfin-remora -c /path/to/jellyfin/config/config.yaml
 ./build/remoractl status
 ./build/remoractl healthcheck
 ```
+
+Configuration schema v2 groups health settings by what they observe:
+
+```yaml
+remora:
+  monitoring:
+    interval: 1s
+    jellyfin-api:
+      interval: 10s
+      failure-threshold: 3
+    user-login:
+      enabled: true
+      interval: 60s
+```
+
+Each `disk` can independently set `failure-threshold` (default `1`). After the
+disk has established one healthy baseline, Remora requires that many consecutive
+fatal checks before fencing Jellyfin; a successful check resets the counter.
+Startup still fails closed on the first unsafe check so a fresh daemon can never
+start Jellyfin against unverified storage.
 
 `remoractl status` and the converged results of lifecycle commands use
 go-pretty Unicode-aware tables for process identity, Jellyfin server metadata,
@@ -124,9 +161,9 @@ or `BUILD_DATE` for release builds, and inspect the result with
 `jellyfin-remora --version` or `remoractl --version`.
 
 Configuration is decoded through a versioned, in-memory migration pipeline before
-strict validation. An unversioned legacy file is treated as version 0 and migrated to
-version 1 without rewriting the source file; conflicting legacy and current keys fail
-closed.
+strict validation. Unversioned and version 1 files are migrated to version 2 without
+rewriting the source file; old heartbeat multipliers are converted to explicit
+durations, and conflicting legacy/current keys fail closed.
 
 ## License
 

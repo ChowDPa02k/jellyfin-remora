@@ -17,14 +17,14 @@ Current implementation already provides the two Go binaries, Darwin process supe
 
 Completed with the first real configuration iteration:
 
-- Config schema v1, strict unknown-key rejection, legacy heartbeat aliases, and checked-in JSON Schema.
+- Config schema v2, strict unknown-key rejection, legacy heartbeat aliases, duration-preserving v1 migration, and checked-in JSON Schema.
 - Non-mutating `validate-config`, protected `--prepare`, credential-file permission checks, and isolated timed I/O probes.
 - APFS plus SMB validation with Unicode share names, URL-encoded mount sources, and Bonjour service-name/IP equivalence.
 - Apple Silicon smoke test against Jellyfin 12.0.0: first-run database creation, hardware capability discovery, `/health` transition to `RUNNING`, and graceful stop all passed.
 - Clean-directory setup against Jellyfin 12.0.0: OS-account bootstrap-user handling, configured administrator rename, setup completion, owner-only API-key persistence, watchdog-user creation, controlled restart, and periodic login/logout all passed.
 - Normal-restart regression coverage confirms Jellyfin 12's transient setup-listener state is ignored until core health and a stable incomplete-wizard streak agree; existing installations no longer flash into `FIRST_START`.
 - Destructive local fault test using `test/test.yaml`: write-permission loss fenced and stopped Jellyfin; restoring permission required the configured recovery streak and launched exactly one replacement process. Explicit restart and manual stop also passed.
-- The repository now covers 72 top-level tests plus real Jellyfin fault injection: crash-loop circuit breaking, Remora crash adoption, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, `D`/`U` timeout branches, fail-closed XML reconciliation, stale-health isolation, Darwin provenance warnings, and Unicode-safe status/session rendering. See `test/HA_TEST_MATRIX.md`.
+- The repository now covers 78 top-level tests plus real Jellyfin fault injection: crash-loop circuit breaking, Remora crash adoption, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, per-disk consecutive-failure thresholds, `D`/`U` timeout branches, fail-closed XML reconciliation, stale-health isolation, Darwin provenance warnings, validated configuration initialization, and Unicode-safe status/session rendering. See `test/HA_TEST_MATRIX.md`.
 - Semantic build metadata (`version`, commit, build date, Go version, target) is injected into both commands.
 - GitHub Actions definitions cover formatting, unit/race tests, vet, native macOS/Windows tests, all target cross-builds, dependency review, vulnerability scanning, and launchd plist validation.
 - The module requires a patched Go toolchain and the local `govulncheck` gate reports no reachable vulnerabilities.
@@ -48,8 +48,8 @@ Exit gate:
 - Extend current executable/argument adoption with UID, durable start identity, and stronger PID-reuse protection.
 - Handle sleep/wake, network changes, volume arrival/removal, shutdown, launchd restart, and Remora crashes without creating duplicate Jellyfin processes.
 - Add Keychain-backed SMB credentials. Keep inline YAML passwords only as an explicitly insecure compatibility mode with redaction tests.
-- Add configurable per-check failure/recovery thresholds, mount retry limits, jittered restart backoff, and explicit administrative un-fence/reset operations.
-- Build `install`, `uninstall`, and extended `diagnose` workflows; `validate-config` and protected directory preparation are already available.
+- Add mount retry limits, jittered restart backoff, and explicit administrative un-fence/reset operations. Per-disk consecutive-failure and global recovery thresholds are implemented.
+- Build `install`, `uninstall`, and extended `diagnose` workflows; validated `remoractl init`, `validate-config`, protected directory preparation, and Darwin launchd-plist generation are already available.
 - Test both Apple Silicon and Intel builds against Jellyfin 10.11.x and the current 12.x-compatible API surface.
 
 Exit gate:
@@ -58,7 +58,7 @@ Exit gate:
 - A 7-day soak test covers media playback/transcoding, sleep/wake, network interruption, Remora restarts, log rotation, and repeated Jellyfin crashes.
 - Signed development artifacts install, upgrade, and uninstall cleanly through launchd on arm64 and amd64 macOS.
 
-## Phase 2 — Jellyfin lifecycle and configuration management (`v0.3.0-alpha.5`)
+## Phase 2 — Jellyfin lifecycle and configuration management (`v0.3.0-alpha.6`)
 
 Completed in the `test/test.yaml` iterations:
 
@@ -75,6 +75,8 @@ Completed in the `test/test.yaml` iterations:
 - Real Jellyfin 10.10.7 arm64 tarball validation: lowercase executable and sibling Web UI discovery, clean setup, full XML reconciliation, watchdog/API-key provisioning, key revocation recovery, PID replacement, Remora crash adoption, writable-path fencing/recovery, and live SMB disappearance/recovery all passed.
 - Replacement processes clear the preceding PID's health sample before entering `STARTING`, preventing a stale healthy result from erasing crash history before the new PID is checked.
 - `remoractl` renders go-pretty-backed Unicode-safe process/storage/session tables by default while retaining additive JSON output; status now includes the run-as UID, Jellyfin version/server name, and normalized active sessions for both supported server lines, and omits the sessions table when no client is active.
+- Configuration schema v2 replaces mixed heartbeat multipliers with explicit `monitoring.jellyfin-api` and `monitoring.user-login` intervals, preserves v1 timing through in-memory migration, and adds independently debounced disk failure thresholds.
+- `remoractl init` validates an edited platform template before atomically replacing `jellyfin.config-dir/config.yaml`; Darwin emits a path-correct launchd plist, while systemd and Task Scheduler generation remain platform-phase stubs.
 
 Exit gate:
 
@@ -129,7 +131,7 @@ Exit gate:
 
 ## Phase 6 — Cross-platform beta hardening (`v0.9.x-beta`)
 
-- Freeze configuration schema v1, state-file compatibility, REST API v1, CLI exit codes, service names, filesystem locations, and upgrade rules.
+- Freeze configuration schema v2, state-file compatibility, REST API v1, CLI exit codes, service names, filesystem locations, and upgrade rules.
 - Add property/state-machine tests, fuzzing for YAML/API/state parsing, failure injection for every syscall boundary, and restart-during-operation tests.
 - Run 30-day soak tests per OS with playback and hardware transcoding; record Remora CPU, memory, file-descriptor/handle growth, and restart behavior.
 - Complete secret-store migration, least-privilege reviews, dependency/license audits, SBOM generation, vulnerability response procedures, and external security review.

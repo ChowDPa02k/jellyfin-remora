@@ -8,7 +8,7 @@
   <array>
     <string>/usr/local/bin/jellyfin-remora</string>
     <string>-c</string>
-    <string>/usr/local/etc/jellyfin-remora/config.yml</string>
+    <string>/usr/local/etc/jellyfin-remora/config.yaml</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

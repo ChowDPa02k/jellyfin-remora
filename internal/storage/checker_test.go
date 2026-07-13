@@ -5,10 +5,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
 )
 
@@ -63,5 +65,27 @@ func TestRedactEscapedSecret(t *testing.T) {
 	got := redact("mount //u:p%40ss@nas/share", "p@ss")
 	if got != "mount //u:***@nas/share" {
 		t.Fatalf("redacted=%q", got)
+	}
+}
+
+func TestDiskFailureThresholdRequiresConsecutiveFailuresAfterHealthyCheck(t *testing.T) {
+	checker := &Checker{}
+	disk := config.DiskConfig{FailureThreshold: 3}
+	failure := model.StorageResult{Fatal: true, Message: "I/O failed"}
+	if got := checker.applyFailureThreshold(0, disk, failure); !got.Fatal {
+		t.Fatal("initial preflight failure must remain fatal")
+	}
+	if got := checker.applyFailureThreshold(0, disk, model.StorageResult{Healthy: true}); !got.Healthy {
+		t.Fatal("healthy baseline was not retained")
+	}
+	for attempt := 1; attempt <= 3; attempt++ {
+		got := checker.applyFailureThreshold(0, disk, failure)
+		if got.Fatal != (attempt == 3) {
+			t.Fatalf("attempt %d fatal=%t message=%q", attempt, got.Fatal, got.Message)
+		}
+	}
+	checker.applyFailureThreshold(0, disk, model.StorageResult{Healthy: true})
+	if got := checker.applyFailureThreshold(0, disk, failure); got.Fatal || !strings.Contains(got.Message, "failure 1/3") {
+		t.Fatalf("success did not reset threshold: %+v", got)
 	}
 }

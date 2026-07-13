@@ -120,7 +120,7 @@ func runValidateConfig(args []string) error {
 	}
 	report := validationReport{Valid: true, ConfigVersion: cfg.ConfigVersion}
 	if cfg.LegacyConfig {
-		report.Warnings = append(report.Warnings, "config-version is missing; version 1 compatibility was assumed")
+		report.Warnings = append(report.Warnings, "config-version is missing; legacy configuration was migrated to version 2 in memory")
 	}
 	if st, statErr := os.Stat(*configPath); statErr == nil && st.Mode().Perm()&0077 != 0 {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("configuration mode %04o exposes credentials to group or others; use 0600", st.Mode().Perm()))

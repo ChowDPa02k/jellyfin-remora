@@ -3,11 +3,13 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"strconv"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-const CurrentVersion = 1
+const CurrentVersion = 2
 
 type MigrationReport struct {
 	FromVersion int
@@ -24,6 +26,7 @@ type migration struct {
 
 var migrations = []migration{
 	{from: 0, to: 1, name: "legacy-unversioned-to-v1", apply: migrateLegacyToV1},
+	{from: 1, to: 2, name: "group-health-monitoring-v2", apply: migrateV1ToV2},
 }
 
 // Migrate converts configuration bytes in memory. It never writes the source file.
@@ -122,6 +125,68 @@ func migrateLegacyToV1(root *yaml.Node) error {
 	return nil
 }
 
+func migrateV1ToV2(root *yaml.Node) error {
+	version := mappingValue(root, "config-version")
+	if version == nil {
+		return fmt.Errorf("v1 migration requires config-version")
+	}
+	remora := mappingValue(root, "remora")
+	if remora != nil {
+		if mappingValue(remora, "monitoring") != nil {
+			return fmt.Errorf("remora.monitoring is reserved for config-version 2")
+		}
+		if err := renameKey(remora, "health-api-hearbeat", "health-api-heartbeat"); err != nil {
+			return err
+		}
+		base := time.Second
+		if node := mappingValue(remora, "heartbeat-interval"); node != nil {
+			var duration Duration
+			if err := node.Decode(&duration); err != nil {
+				return fmt.Errorf("remora.heartbeat-interval: %w", err)
+			}
+			base = duration.Duration
+		}
+		if base <= 0 {
+			return fmt.Errorf("remora.heartbeat-interval must be positive")
+		}
+		healthEvery, err := positiveInt(mappingValue(remora, "health-api-heartbeat"), 10)
+		if err != nil {
+			return fmt.Errorf("remora.health-api-heartbeat: %w", err)
+		}
+		failureThreshold, err := positiveInt(mappingValue(remora, "api-failure-threshold"), 3)
+		if err != nil {
+			return fmt.Errorf("remora.api-failure-threshold: %w", err)
+		}
+
+		monitoring := mappingNode()
+		setMappingValue(monitoring, "interval", scalarNode(base.String()))
+		api := mappingNode()
+		setMappingValue(api, "interval", scalarNode((base * time.Duration(healthEvery)).String()))
+		setMappingValue(api, "failure-threshold", intNode(failureThreshold))
+		setMappingValue(monitoring, "jellyfin-api", api)
+
+		if oldLogin := mappingValue(remora, "user-login-watchdog"); oldLogin != nil {
+			login := cloneMappingWithout(oldLogin, "heartbeat")
+			if heartbeat := mappingValue(oldLogin, "heartbeat"); heartbeat != nil {
+				every, decodeErr := positiveInt(heartbeat, 0)
+				if decodeErr != nil {
+					return fmt.Errorf("remora.user-login-watchdog.heartbeat: %w", decodeErr)
+				}
+				setMappingValue(login, "interval", scalarNode((base * time.Duration(every)).String()))
+			}
+			setMappingValue(monitoring, "user-login", login)
+		}
+
+		for _, key := range []string{"heartbeat-interval", "health-api-heartbeat", "api-failure-threshold", "user-login-watchdog"} {
+			removeMappingValue(remora, key)
+		}
+		setMappingValue(remora, "monitoring", monitoring)
+	}
+	version.Tag = "!!int"
+	version.Value = "2"
+	return nil
+}
+
 func mappingValue(mapping *yaml.Node, key string) *yaml.Node {
 	if mapping == nil || mapping.Kind != yaml.MappingNode {
 		return nil
@@ -154,4 +219,61 @@ func renameKey(mapping *yaml.Node, oldKey, newKey string) error {
 		mapping.Content[oldIndex].Value = newKey
 	}
 	return nil
+}
+
+func positiveInt(node *yaml.Node, fallback int) (int, error) {
+	if node == nil {
+		return fallback, nil
+	}
+	var value int
+	if err := node.Decode(&value); err != nil || value < 1 {
+		return 0, fmt.Errorf("must be a positive integer")
+	}
+	return value, nil
+}
+
+func mappingNode() *yaml.Node {
+	return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+}
+
+func scalarNode(value string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+}
+
+func intNode(value int) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(value)}
+}
+
+func setMappingValue(mapping *yaml.Node, key string, value *yaml.Node) {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content[i+1] = value
+			return
+		}
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+}
+
+func removeMappingValue(mapping *yaml.Node, key string) {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content = append(mapping.Content[:i], mapping.Content[i+2:]...)
+			return
+		}
+	}
+}
+
+func cloneMappingWithout(mapping *yaml.Node, excluded ...string) *yaml.Node {
+	clone := mappingNode()
+	skip := make(map[string]bool, len(excluded))
+	for _, key := range excluded {
+		skip[key] = true
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if !skip[mapping.Content[i].Value] {
+			clone.Content = append(clone.Content, mapping.Content[i], mapping.Content[i+1])
+		}
+	}
+	return clone
 }

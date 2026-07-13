@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["config-version", "remora", "jellyfin"],
   "properties": {
-    "config-version": { "const": 1 },
+    "config-version": { "const": 2 },
     "restapi": {
       "type": "object",
       "additionalProperties": false,
@@ -22,21 +22,32 @@
       "properties": {
         "server-start-timeout": { "$ref": "#/$defs/duration" },
         "server-stop-timeout": { "$ref": "#/$defs/duration" },
-        "heartbeat-interval": { "$ref": "#/$defs/duration" },
-        "health-api-heartbeat": { "type": "integer", "minimum": 1 },
-        "health-api-hearbeat": { "type": "integer", "minimum": 1, "deprecated": true },
         "io-timeout": { "$ref": "#/$defs/duration" },
         "recovery-successes": { "type": "integer", "minimum": 1 },
-        "api-failure-threshold": { "type": "integer", "minimum": 1 },
         "data-dir": { "type": "string" },
-        "user-login-watchdog": {
+        "monitoring": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "enabled": { "type": "boolean" },
-            "heartbeat": { "type": "integer", "minimum": 1 },
-            "user": { "type": "string" },
-            "password": { "type": "string" }
+            "interval": { "$ref": "#/$defs/duration" },
+            "jellyfin-api": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "interval": { "$ref": "#/$defs/duration" },
+                "failure-threshold": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "user-login": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "interval": { "$ref": "#/$defs/duration" },
+                "user": { "type": "string" },
+                "password": { "type": "string" }
+              }
+            }
           }
         },
         "logs": {
@@ -68,7 +79,8 @@
           "target": { "type": "string" },
           "permission": { "enum": ["r", "rw"] },
           "heartbeat": { "type": "integer", "minimum": 1 },
-          "hearbeat": { "type": "integer", "minimum": 1, "deprecated": true }
+          "hearbeat": { "type": "integer", "minimum": 1, "deprecated": true },
+          "failure-threshold": { "type": "integer", "minimum": 1, "default": 1 }
         }
       }
     },

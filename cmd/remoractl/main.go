@@ -41,7 +41,10 @@ func run() error {
 	}
 	args := global.Args()
 	if len(args) == 0 {
-		return errors.New("usage: remoractl [--host URL] [--json] <start|stop|restart|status|healthcheck>")
+		return errors.New("usage: remoractl [--host URL] [--json] <init|start|stop|restart|status|healthcheck>")
+	}
+	if args[0] == "init" {
+		return runInit(args[1:])
 	}
 	client, base, err := newClient(*host, *socket)
 	if err != nil {
