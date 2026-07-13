@@ -1,0 +1,53 @@
+# Jellyfin Remora
+
+Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS milestone supports storage fencing, process supervision, first-run setup, API-key provisioning, login watchdog checks, health checks, and local control.
+
+Development milestones through the cross-platform stable release are tracked in [ROADMAP.md](ROADMAP.md).
+The repeatable and real-fault high-availability coverage is recorded in [test/HA_TEST_MATRIX.md](test/HA_TEST_MATRIX.md).
+
+## Build
+
+```sh
+go build -o build/jellyfin-remora ./cmd/jellyfin-remora
+go build -o build/remoractl ./cmd/remoractl
+```
+
+Copy `config.example.yml`, replace its volume UUID and macOS user, and create all four Jellyfin directories with ownership and write permission for that user. Remora deliberately does not create missing data directories because doing so beneath a lost `/Volumes` mount could create a false local data tree. When Remora runs as root, `jellyfin.run-as-user` is mandatory and Jellyfin is started with that account.
+
+For a new Jellyfin data directory, configure `init.user` and `init.password`. Remora completes the setup wizard, handles Jellyfin 12's OS-account bootstrap user, renames it to the configured administrator, creates a `Jellyfin Remora` API key with mode `0600`, creates the optional login-watchdog user, and performs a controlled restart. Existing initialized servers are not sent through the setup wizard.
+
+Run in the foreground during initial validation:
+
+```sh
+./build/jellyfin-remora validate-config -c config.yml
+# Optional: create missing directories only after their configured storage passes validation.
+./build/jellyfin-remora validate-config -c config.yml --prepare
+./build/jellyfin-remora -c config.yml
+./build/remoractl status
+./build/remoractl healthcheck
+```
+
+The REST listener accepts loopback addresses only. `remoractl` uses `/tmp/jellyfin-remora.sock` by default and accepts `--host http://127.0.0.1:8095` as a fallback.
+
+## launchd
+
+Install the two binaries and configuration at the paths in `packaging/io.github.chowdpa02k.jellyfin-remora.plist`, then install the LaunchDaemon:
+
+```sh
+sudo cp packaging/io.github.chowdpa02k.jellyfin-remora.plist /Library/LaunchDaemons/
+sudo chown root:wheel /Library/LaunchDaemons/io.github.chowdpa02k.jellyfin-remora.plist
+sudo chmod 0644 /Library/LaunchDaemons/io.github.chowdpa02k.jellyfin-remora.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/io.github.chowdpa02k.jellyfin-remora.plist
+```
+
+SMB passwords in YAML are supported for the first milestone but can be visible transiently to privileged process inspection. Keep the configuration `0600`; Keychain-backed credentials are planned for a later milestone.
+
+## Safety rules
+
+- A missing mount, wrong mount source, or failed required I/O probe fences Jellyfin.
+- A reachable mount with working I/O is only degraded when its SMB/NFS port probe fails.
+- Storage must pass three consecutive checks before automatic recovery.
+- Manual stop always overrides automatic recovery.
+- Five process failures in ten minutes open the restart circuit; `remoractl start` resets it.
+
+Jellyfin XML settings reconciliation, API-key rotation/revocation commands, log querying, and session control remain future milestones.

@@ -1,0 +1,72 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"sync/atomic"
+)
+
+func main() {
+	port := 8096
+	healthFile := ""
+	childPIDFile := ""
+	startupMarker := ""
+	wizardFalseCount := int64(0)
+	for _, arg := range os.Args[1:] {
+		switch {
+		case strings.HasPrefix(arg, "--fakeport="):
+			port, _ = strconv.Atoi(strings.TrimPrefix(arg, "--fakeport="))
+		case strings.HasPrefix(arg, "--healthfile="):
+			healthFile = strings.TrimPrefix(arg, "--healthfile=")
+		case strings.HasPrefix(arg, "--childpidfile="):
+			childPIDFile = strings.TrimPrefix(arg, "--childpidfile=")
+		case strings.HasPrefix(arg, "--startupmarker="):
+			startupMarker = strings.TrimPrefix(arg, "--startupmarker=")
+		case strings.HasPrefix(arg, "--wizardfalsecount="):
+			wizardFalseCount, _ = strconv.ParseInt(strings.TrimPrefix(arg, "--wizardfalsecount="), 10, 64)
+		}
+	}
+	if childPIDFile != "" {
+		child := exec.Command("/bin/sleep", "300")
+		if err := child.Start(); err != nil {
+			panic(err)
+		}
+		_ = os.WriteFile(childPIDFile, []byte(strconv.Itoa(child.Process.Pid)+"\n"), 0600)
+	}
+	var publicCalls atomic.Int64
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if healthFile != "" {
+			if b, err := os.ReadFile(healthFile); err == nil && strings.TrimSpace(string(b)) != "healthy" {
+				http.Error(w, "Unhealthy", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Healthy"))
+	})
+	http.HandleFunc("/System/Info/Public", func(w http.ResponseWriter, r *http.Request) {
+		complete := publicCalls.Add(1) > wizardFalseCount
+		_ = json.NewEncoder(w).Encode(map[string]any{"Version": "12.0.0-test", "StartupWizardCompleted": complete})
+	})
+	for _, path := range []string{"/Startup/User", "/Startup/Configuration", "/Startup/RemoteAccess", "/Startup/Complete"} {
+		http.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			if startupMarker != "" && r.Method == http.MethodPost {
+				_ = os.WriteFile(startupMarker, []byte(r.URL.Path+"\n"), 0600)
+			}
+			if r.Method == http.MethodGet && r.URL.Path == "/Startup/User" {
+				_ = json.NewEncoder(w).Encode(map[string]string{"Name": "fake-user"})
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
+	if err := http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", port), nil); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

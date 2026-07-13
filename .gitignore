@@ -1,0 +1,15 @@
+/jellyfin/
+/jellyfin-openapi-stable*.json
+build/
+coverage.out
+*.test
+
+# Local operator configuration and credentials.
+/config.yml
+/config.yaml
+/test/test.yaml
+*.local.yml
+*.local.yaml
+
+# macOS workspace metadata.
+.DS_Store
