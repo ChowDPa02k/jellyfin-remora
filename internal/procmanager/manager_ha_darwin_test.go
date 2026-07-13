@@ -43,6 +43,22 @@ func haManager(t *testing.T, exe string, parameters map[string]any) (*Manager, *
 	return pm, cfg
 }
 
+func waitForMatchingProcesses(t *testing.T, executable string, args []string, want int) {
+	t.Helper()
+	backend := platform.New()
+	deadline := time.Now().Add(3 * time.Second)
+	var last []platform.ProcessInfo
+	var lastErr error
+	for time.Now().Before(deadline) {
+		last, lastErr = backend.FindProcesses(context.Background(), executable, args)
+		if lastErr == nil && len(last) == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("matching processes=%d, want=%d, err=%v", len(last), want, lastErr)
+}
+
 func TestAdoptsExactlyOneMatchingProcess(t *testing.T) {
 	exe := buildHAFake(t)
 	owner, cfg := haManager(t, exe, map[string]any{"fakeport": 0})
@@ -50,6 +66,7 @@ func TestAdoptsExactlyOneMatchingProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = owner.Stop(context.Background(), true, time.Second) })
+	waitForMatchingProcesses(t, owner.Executable(), owner.Arguments(), 1)
 	adopter, err := New(cfg, platform.New(), io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +97,7 @@ func TestAdoptionRejectsDuplicateProcesses(t *testing.T) {
 		_ = one.Stop(context.Background(), true, time.Second)
 		_ = two.Stop(context.Background(), true, time.Second)
 	})
+	waitForMatchingProcesses(t, one.Executable(), one.Arguments(), 2)
 	observer, err := New(cfg, platform.New(), io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
