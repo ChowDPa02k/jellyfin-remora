@@ -191,7 +191,10 @@ func (m *Manager) Adopt(ctx context.Context) (bool, error) {
 	}
 	m.mu.Lock()
 	m.pid = processes[0].PID
-	m.startedAt = time.Now()
+	m.startedAt = processes[0].StartedAt
+	if m.startedAt.IsZero() {
+		m.startedAt = time.Now()
+	}
 	m.mu.Unlock()
 	return true, nil
 }

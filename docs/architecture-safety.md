@@ -37,7 +37,16 @@ the documented LaunchDaemon privilege.
 
 Temporary write probes use unique files, sync their contents, close them, and remove
 them. Probe timeouts are isolated so a blocked filesystem operation cannot stall the
-supervisor loop indefinitely.
+supervisor loop indefinitely. Each probe deliberately runs in a short-lived child
+process: a context cannot reliably cancel a kernel-blocked filesystem syscall, while
+the isolated process can be terminated without wedging Remora. The per-probe fork is
+an explicit availability cost, controlled by each disk's monitoring interval.
+
+Remora-owned state/key writes and Jellyfin XML writes intentionally use different
+ownership policies. XML replacement preserves the existing Jellyfin file owner and
+mode; Remora state and secrets use daemon-selected restrictive ownership and must not
+inherit metadata from an untrusted destination. Shared atomic-write code must retain
+that distinction if these implementations are consolidated later.
 
 ## Child-process privilege and environment
 

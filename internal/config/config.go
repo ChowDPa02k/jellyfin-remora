@@ -24,14 +24,7 @@ type Optional[T any] struct {
 }
 
 func (o *Optional[T]) UnmarshalYAML(n *yaml.Node) error {
-	o.Set = true
-	if n.Tag == "!!null" {
-		o.Null = true
-		var zero T
-		o.Value = zero
-		return nil
-	}
-	return n.Decode(&o.Value)
+	return decodeOptional(n, o)
 }
 
 type OptionalStrings struct {

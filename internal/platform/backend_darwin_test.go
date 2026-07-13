@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -22,6 +23,39 @@ func TestEnsureMountTargetCreatesMissingDirectory(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Fatalf("target mode = %v, want directory", info.Mode())
+	}
+}
+
+func TestRequiredArgumentMatchingUsesTokenBoundaries(t *testing.T) {
+	arguments := []string{"/Applications/Jellyfin", "--datadir=/Volumes/App Data", "--configdir=/config"}
+	for _, arg := range []string{"--datadir=/Volumes/App Data", "--configdir=/config"} {
+		if !hasRequiredArg(arguments, arg) {
+			t.Fatalf("required argument %q did not match %q", arg, arguments)
+		}
+	}
+	for _, arg := range []string{"--datadir=/Volumes/App", "--configdir=/conf", "figdir=/config"} {
+		if hasRequiredArg(arguments, arg) {
+			t.Fatalf("argument prefix %q matched %q", arg, arguments)
+		}
+	}
+	if !hasRequiredArg([]string{"jellyfin", "--datadir", "/Volumes/App Data"}, "--datadir=/Volumes/App Data") {
+		t.Fatal("split key/value argument form did not match")
+	}
+}
+
+func TestParseElapsedProcessAge(t *testing.T) {
+	for input, want := range map[string]time.Duration{
+		"00:05":      5 * time.Second,
+		"01:02:03":   time.Hour + 2*time.Minute + 3*time.Second,
+		"2-03:04:05": 51*time.Hour + 4*time.Minute + 5*time.Second,
+	} {
+		got, err := parseElapsed(input)
+		if err != nil || got != want {
+			t.Fatalf("parseElapsed(%q) = %s, %v; want %s", input, got, err, want)
+		}
+	}
+	if _, err := parseElapsed("1:99"); err == nil {
+		t.Fatal("invalid elapsed time succeeded")
 	}
 }
 

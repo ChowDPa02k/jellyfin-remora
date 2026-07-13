@@ -1,12 +1,36 @@
 package procmanager
 
 import (
+	"context"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
+
+type adoptionBackend struct {
+	platform.Backend
+	processes []platform.ProcessInfo
+}
+
+func (b adoptionBackend) FindProcesses(context.Context, string, []string) ([]platform.ProcessInfo, error) {
+	return b.processes, nil
+}
+
+func TestAdoptionRetainsDiscoveredProcessStartTime(t *testing.T) {
+	want := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	m := &Manager{backend: adoptionBackend{processes: []platform.ProcessInfo{{PID: 42, StartedAt: want}}}, executable: "/jellyfin"}
+	adopted, err := m.Adopt(context.Background())
+	if err != nil || !adopted {
+		t.Fatalf("Adopt() = %t, %v", adopted, err)
+	}
+	if got := m.StartedAt(); !got.Equal(want) {
+		t.Fatalf("StartedAt() = %s, want %s", got, want)
+	}
+}
 
 func TestResolveExecutableAndBuildArgs(t *testing.T) {
 	d := t.TempDir()

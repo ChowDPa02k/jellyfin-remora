@@ -81,6 +81,9 @@ func newClient(host, socket string) (*http.Client, string, error) {
 			return nil, "", err
 		}
 		h := u.Hostname()
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return nil, "", errors.New("--host must use http or https")
+		}
 		ip := net.ParseIP(h)
 		if h != "localhost" && (ip == nil || !ip.IsLoopback()) {
 			return nil, "", errors.New("--host must resolve syntactically to localhost or a loopback IP")
@@ -95,8 +98,30 @@ func newClient(host, socket string) (*http.Client, string, error) {
 					return nil, "", errors.New("localhost resolved to a non-loopback address")
 				}
 			}
+			pinned := ips[0]
+			for _, resolved := range ips {
+				if resolved.To4() != nil {
+					pinned = resolved
+					break
+				}
+			}
+			transport := http.DefaultTransport.(*http.Transport).Clone()
+			transport.Proxy = nil
+			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				dialHost, port, splitErr := net.SplitHostPort(address)
+				if splitErr != nil {
+					return nil, splitErr
+				}
+				if dialHost != "localhost" {
+					return nil, fmt.Errorf("refusing redirected host %q", dialHost)
+				}
+				return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(pinned.String(), port))
+			}
+			return &http.Client{Transport: transport, Timeout: 10 * time.Second}, strings.TrimRight(host, "/"), nil
 		}
-		return &http.Client{Timeout: 10 * time.Second}, strings.TrimRight(host, "/"), nil
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		return &http.Client{Transport: transport, Timeout: 10 * time.Second}, strings.TrimRight(host, "/"), nil
 	}
 	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
@@ -104,7 +129,10 @@ func newClient(host, socket string) (*http.Client, string, error) {
 	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, "http://unix", nil
 }
 func request(c *http.Client, method, url string) (model.Status, error) {
-	req, _ := http.NewRequest(method, url, bytes.NewReader(nil))
+	req, err := http.NewRequest(method, url, bytes.NewReader(nil))
+	if err != nil {
+		return model.Status{}, err
+	}
 	resp, err := c.Do(req)
 	if err != nil {
 		return model.Status{}, err

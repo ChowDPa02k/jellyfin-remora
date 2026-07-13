@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"os/exec"
+	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 )
@@ -34,6 +35,7 @@ type ProcessInfo struct {
 	CPUPercent  float64
 	MemoryBytes uint64
 	Ports       []int
+	StartedAt   time.Time
 }
 
 func New() Backend { return newBackend() }

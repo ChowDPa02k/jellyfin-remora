@@ -5,6 +5,7 @@ package platform
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"golang.org/x/sys/unix"
@@ -269,20 +271,24 @@ func (d *darwinBackend) SignalGroup(pid int, force bool) error {
 }
 
 func (d *darwinBackend) ProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {
-	b, err := run(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-ww", "-o", "pid=,pgid=,state=,%cpu=,rss=,command=")
+	b, err := run(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-ww", "-o", "pid=,pgid=,state=,%cpu=,rss=,etime=,command=")
 	if err != nil {
 		return ProcessInfo{}, err
 	}
 	fields := strings.Fields(string(b))
-	if len(fields) < 6 {
+	if len(fields) < 7 {
 		return ProcessInfo{}, errors.New("unexpected ps output")
 	}
 	parsedPID, _ := strconv.Atoi(fields[0])
 	pgid, _ := strconv.Atoi(fields[1])
 	cpu, _ := strconv.ParseFloat(fields[3], 64)
 	rss, _ := strconv.ParseUint(fields[4], 10, 64)
-	command := strings.Join(fields[5:], " ")
-	return ProcessInfo{PID: parsedPID, PGID: pgid, State: fields[2], CPUPercent: cpu, MemoryBytes: rss * 1024, Command: command, Arguments: splitCommand(command), Ports: d.ports(ctx, parsedPID)}, nil
+	command := strings.Join(fields[6:], " ")
+	startedAt := time.Time{}
+	if elapsed, parseErr := parseElapsed(fields[5]); parseErr == nil {
+		startedAt = time.Now().Add(-elapsed)
+	}
+	return ProcessInfo{PID: parsedPID, PGID: pgid, State: fields[2], CPUPercent: cpu, MemoryBytes: rss * 1024, Command: command, Arguments: splitCommand(command), Ports: d.ports(ctx, parsedPID), StartedAt: startedAt}, nil
 }
 
 func (d *darwinBackend) FindProcesses(ctx context.Context, executable string, requiredArgs []string) ([]ProcessInfo, error) {
@@ -300,10 +306,13 @@ func (d *darwinBackend) FindProcesses(ctx context.Context, executable string, re
 		if err != nil {
 			continue
 		}
-		cmdline := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+		arguments, err := processArguments(pid)
+		if err != nil {
+			continue
+		}
 		matched := true
 		for _, arg := range requiredArgs {
-			if !hasRequiredArg(cmdline, arg) {
+			if !hasRequiredArg(arguments, arg) {
 				matched = false
 				break
 			}
@@ -381,10 +390,86 @@ func (d *darwinBackend) ports(ctx context.Context, pid int) []int {
 }
 
 func splitCommand(command string) []string { return strings.Fields(command) }
-func hasRequiredArg(command, arg string) bool {
-	if strings.Contains(command, arg) {
-		return true
+func hasRequiredArg(arguments []string, required string) bool {
+	for i, argument := range arguments {
+		if argument == required {
+			return true
+		}
+		parts := strings.SplitN(required, "=", 2)
+		if len(parts) == 2 && argument == parts[0] && i+1 < len(arguments) && arguments[i+1] == parts[1] {
+			return true
+		}
 	}
-	parts := strings.SplitN(arg, "=", 2)
-	return len(parts) == 2 && strings.Contains(command, parts[0]+" "+parts[1])
+	return false
+}
+
+func processArguments(pid int) ([]string, error) {
+	raw, err := unix.SysctlRaw("kern.procargs2", pid)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) < 4 {
+		return nil, errors.New("short kern.procargs2 response")
+	}
+	argc := int(binary.NativeEndian.Uint32(raw[:4]))
+	data := raw[4:]
+	if executableEnd := bytes.IndexByte(data, 0); executableEnd >= 0 {
+		data = data[executableEnd+1:]
+	} else {
+		return nil, errors.New("kern.procargs2 omitted executable terminator")
+	}
+	for len(data) > 0 && data[0] == 0 {
+		data = data[1:]
+	}
+	arguments := make([]string, 0, argc)
+	for len(data) > 0 && len(arguments) < argc {
+		end := bytes.IndexByte(data, 0)
+		if end < 0 {
+			end = len(data)
+		}
+		arguments = append(arguments, string(data[:end]))
+		if end == len(data) {
+			break
+		}
+		data = data[end+1:]
+	}
+	if len(arguments) != argc {
+		return nil, fmt.Errorf("kern.procargs2 returned %d of %d arguments", len(arguments), argc)
+	}
+	return arguments, nil
+}
+
+func parseElapsed(value string) (time.Duration, error) {
+	var days int64
+	clock := value
+	if parts := strings.SplitN(value, "-", 2); len(parts) == 2 {
+		parsed, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || parsed < 0 {
+			return 0, fmt.Errorf("invalid elapsed time %q", value)
+		}
+		days = parsed
+		clock = parts[1]
+	}
+	parts := strings.Split(clock, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, fmt.Errorf("invalid elapsed time %q", value)
+	}
+	values := make([]int64, len(parts))
+	for i, part := range parts {
+		parsed, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || parsed < 0 {
+			return 0, fmt.Errorf("invalid elapsed time %q", value)
+		}
+		values[i] = parsed
+	}
+	var hours, minutes, seconds int64
+	if len(values) == 3 {
+		hours, minutes, seconds = values[0], values[1], values[2]
+	} else {
+		minutes, seconds = values[0], values[1]
+	}
+	if minutes >= 60 || seconds >= 60 {
+		return 0, fmt.Errorf("invalid elapsed time %q", value)
+	}
+	return time.Duration(days*24+hours)*time.Hour + time.Duration(minutes)*time.Minute + time.Duration(seconds)*time.Second, nil
 }

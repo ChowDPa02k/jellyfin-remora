@@ -2,9 +2,12 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,6 +25,81 @@ type stateProcess struct {
 	forceStop bool
 	stopErr   error
 	started   time.Time
+}
+
+func TestFirstStartInitializationBacksOffAndOpensCircuit(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			complete := false
+			_ = json.NewEncoder(w).Encode(jellyfin.PublicInfo{StartupWizardCompleted: &complete})
+		case "/Startup/User":
+			attempts++
+			http.Error(w, "persistent setup failure", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	process := &stateProcess{running: true, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.cfg.Init = config.InitConfig{User: "admin", Password: "secret"}
+	s.wizardIncompleteRuns = 3
+	for want := 1; want <= 5; want++ {
+		s.nextInitialization = time.Time{}
+		s.reconcile(context.Background())
+		if attempts != want {
+			t.Fatalf("attempts=%d, want %d", attempts, want)
+		}
+		if want < 5 {
+			s.reconcile(context.Background())
+			if attempts != want {
+				t.Fatalf("initialization ignored backoff after attempt %d", want)
+			}
+		}
+	}
+	if !s.processFailed || process.running || s.Status().State != model.StateProcessFailed {
+		t.Fatalf("failed=%t running=%t state=%s", s.processFailed, process.running, s.Status().State)
+	}
+	reply := make(chan error, 1)
+	s.handle(Request{Action: ActionStart, Reply: reply})
+	if err := <-reply; err != nil {
+		t.Fatal(err)
+	}
+	if s.processFailed || s.initializationFails != 0 || !s.nextInitialization.IsZero() {
+		t.Fatal("administrative start did not reset initialization circuit")
+	}
+}
+
+func TestReconcilePerformsOneHealthRequestPerTick(t *testing.T) {
+	healthRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			healthRequests++
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			complete := true
+			_ = json.NewEncoder(w).Encode(jellyfin.PublicInfo{StartupWizardCompleted: &complete})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	process := &stateProcess{running: true, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.tick = 1
+	s.reconcile(context.Background())
+	if healthRequests != 1 {
+		t.Fatalf("health requests=%d, want 1", healthRequests)
+	}
 }
 
 func (p *stateProcess) Executable() string  { return "/fake/jellyfin" }

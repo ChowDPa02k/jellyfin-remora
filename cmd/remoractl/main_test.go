@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -112,5 +114,32 @@ func TestRestartWaitsForPIDReplacement(t *testing.T) {
 	}
 	if calls.Load() < 3 {
 		t.Fatalf("restart returned before PID changed: calls=%d", calls.Load())
+	}
+}
+
+func TestLocalhostClientPinsValidatedLoopbackAddress(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(model.Status{State: model.StateRunning})
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	client, base, err := newClient("http://localhost:"+strconv.Itoa(listener.Addr().(*net.TCPAddr).Port), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := request(client, http.MethodGet, base+"/v1/status")
+	if err != nil || status.State != model.StateRunning {
+		t.Fatalf("request status=%+v err=%v", status, err)
+	}
+}
+
+func TestRequestReturnsMalformedURLError(t *testing.T) {
+	if _, err := request(http.DefaultClient, http.MethodGet, "://bad-url"); err == nil {
+		t.Fatal("malformed URL succeeded")
 	}
 }

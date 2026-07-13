@@ -84,6 +84,8 @@ type Supervisor struct {
 	watchdogReady        bool
 	watchdogFailed       bool
 	wizardIncompleteRuns int
+	initializationFails  int
+	nextInitialization   time.Time
 	sessionsInitialized  bool
 }
 
@@ -158,6 +160,8 @@ func (s *Supervisor) handle(req Request) {
 		s.processFailed = false
 		s.crashes = nil
 		s.nextStart = time.Time{}
+		s.initializationFails = 0
+		s.nextInitialization = time.Time{}
 	case ActionStop:
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
@@ -169,6 +173,8 @@ func (s *Supervisor) handle(req Request) {
 		s.forceStop = req.Force
 		s.processFailed = false
 		s.crashes = nil
+		s.initializationFails = 0
+		s.nextInitialization = time.Time{}
 	case ActionHealthcheck:
 	default:
 		err = fmt.Errorf("unknown action %q", req.Action)
@@ -299,7 +305,11 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.healthyStorageRuns = 0
 	}
 	if s.processFailed {
-		s.transition(model.StateProcessFailed, "restart rate limit exceeded")
+		if s.Status().State == model.StateProcessFailed {
+			s.transition(model.StateProcessFailed, "")
+		} else {
+			s.transition(model.StateProcessFailed, "restart rate limit exceeded")
+		}
 		_ = s.persist()
 		return
 	}
@@ -381,6 +391,9 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	// database are ready. During an ordinary restart that listener can briefly
 	// report StartupWizardCompleted=false for an already initialized server.
 	// Only trust setup state after /health proves the full application is ready.
+	s.mu.RLock()
+	previousHealthCheck := s.status.Jellyfin.CheckedAt
+	s.mu.RUnlock()
 	readiness := s.client.Health(ctx)
 	s.mu.Lock()
 	s.status.Jellyfin = readiness
@@ -400,11 +413,30 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			return
 		}
 		s.transition(model.StateFirstStart, "")
-		if err := s.initializeServer(ctx); err != nil {
-			s.setError("Jellyfin first-start initialization: " + err.Error())
+		if time.Now().Before(s.nextInitialization) {
+			s.transition(model.StateFirstStart, "waiting for Jellyfin first-start initialization retry")
 			_ = s.persist()
 			return
 		}
+		if err := s.initializeServer(ctx); err != nil {
+			s.initializationFails++
+			message := "Jellyfin first-start initialization: " + err.Error()
+			if s.initializationFails >= 5 {
+				s.processFailed = true
+				if stopErr := s.stop(ctx, false); stopErr != nil {
+					message += "; incomplete Jellyfin could not be stopped: " + stopErr.Error()
+				}
+				s.transition(model.StateProcessFailed, message+"; retry limit exceeded; use remoractl start to reset")
+			} else {
+				delay := retryDelay(s.initializationFails)
+				s.nextInitialization = time.Now().Add(delay)
+				s.transition(model.StateFirstStart, fmt.Sprintf("%s; retrying in %s", message, delay))
+			}
+			_ = s.persist()
+			return
+		}
+		s.initializationFails = 0
+		s.nextInitialization = time.Time{}
 		if err := s.stop(ctx, false); err != nil {
 			s.processFailed = true
 			s.transition(model.StateProcessFailed, "initialized Jellyfin could not be stopped: "+err.Error())
@@ -418,6 +450,10 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	}
 	if infoErr != nil || info.StartupWizardCompleted == nil || *info.StartupWizardCompleted {
 		s.wizardIncompleteRuns = 0
+	}
+	if infoErr == nil && info.StartupWizardCompleted != nil && *info.StartupWizardCompleted {
+		s.initializationFails = 0
+		s.nextInitialization = time.Time{}
 	}
 	if infoErr == nil {
 		s.mu.Lock()
@@ -435,7 +471,6 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.watchdogFailed = true
 			s.setError("login watchdog setup: " + err.Error())
 		} else {
-			s.watchdogReady = true
 			s.watchdogFailed = false
 		}
 	}
@@ -486,23 +521,16 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.sessionsInitialized = true
 		}
 	}
-	s.mu.RLock()
-	lastHealthCheck := s.status.Jellyfin.CheckedAt
-	s.mu.RUnlock()
-	if s.tick%uint64(max(1, s.cfg.Remora.HealthAPIHeartbeat)) == 0 || age >= s.cfg.Remora.ServerStartTimeout.Duration && lastHealthCheck.IsZero() {
-		h := s.client.Health(ctx)
-		s.mu.Lock()
-		s.status.Jellyfin = h
-		s.mu.Unlock()
-		if h.Healthy {
+	healthCountDue := s.tick%uint64(max(1, s.cfg.Remora.HealthAPIHeartbeat)) == 0 ||
+		(age >= s.cfg.Remora.ServerStartTimeout.Duration && previousHealthCheck.IsZero())
+	if healthCountDue {
+		if readiness.Healthy {
 			s.apiFailures = 0
 		} else {
 			s.apiFailures++
 		}
 	}
-	s.mu.RLock()
-	health := s.status.Jellyfin
-	s.mu.RUnlock()
+	health := readiness
 	if health.Healthy {
 		if s.watchdogFailed {
 			s.transition(model.StateDegraded, "login watchdog remains unhealthy")
@@ -589,6 +617,8 @@ func (s *Supervisor) adminCredential() string {
 	if s.adminToken != "" {
 		return s.adminToken
 	}
+	// A Remora API key can authorize administrative API calls, but watchdog
+	// login, /Users/Me, and logout always use the watchdog user's own session.
 	return s.apiKey
 }
 
@@ -611,6 +641,8 @@ func (s *Supervisor) stop(ctx context.Context, force bool) error {
 func (s *Supervisor) recordCrash() {
 	now := time.Now()
 	cut := now.Add(-10 * time.Minute)
+	// Reuse the backing array only after reading each old entry; kept never
+	// aliases data that is still needed by this loop.
 	kept := s.crashes[:0]
 	for _, t := range s.crashes {
 		if t.After(cut) {
@@ -627,11 +659,15 @@ func (s *Supervisor) scheduleRestart() {
 	if n < 1 {
 		n = 1
 	}
-	delay := time.Second * time.Duration(1<<min(n-1, 6))
-	if delay > 60*time.Second {
-		delay = 60 * time.Second
+	s.nextStart = time.Now().Add(retryDelay(n))
+}
+
+func retryDelay(failures int) time.Duration {
+	if failures < 1 {
+		failures = 1
 	}
-	s.nextStart = time.Now().Add(delay)
+	delay := time.Second * time.Duration(1<<min(failures-1, 6))
+	return min(delay, 60*time.Second)
 }
 func (s *Supervisor) clearOneShots() {
 	s.mu.Lock()

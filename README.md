@@ -5,6 +5,7 @@ Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS milest
 Development milestones through the cross-platform stable release are tracked in [ROADMAP.md](ROADMAP.md).
 The repeatable and real-fault high-availability coverage is recorded in [test/HA_TEST_MATRIX.md](test/HA_TEST_MATRIX.md).
 Supervisor invariants and trust boundaries are defined in [docs/architecture-safety.md](docs/architecture-safety.md).
+Build and review requirements are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Build
 
