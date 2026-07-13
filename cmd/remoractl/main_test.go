@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -141,5 +143,56 @@ func TestLocalhostClientPinsValidatedLoopbackAddress(t *testing.T) {
 func TestRequestReturnsMalformedURLError(t *testing.T) {
 	if _, err := request(http.DefaultClient, http.MethodGet, "://bad-url"); err == nil {
 		t.Fatal("malformed URL succeeded")
+	}
+}
+
+func TestRequestDecodesStructuredAPIErrorAndExitCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"error":{"code":"storage_fenced","message":"storage unavailable","operation_id":"op-42"}}`)
+	}))
+	defer server.Close()
+	_, err := request(server.Client(), http.MethodPost, server.URL+"/v1/start")
+	var apiErr *HTTPError
+	if !errors.As(err, &apiErr) || apiErr.Code != "storage_fenced" || apiErr.OperationID != "op-42" {
+		t.Fatalf("API error=%#v", err)
+	}
+	if code := exitCode(err); code != 4 {
+		t.Fatalf("exit code=%d, want 4", code)
+	}
+}
+
+func TestExitCodesAreDeterministic(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		want int
+	}{
+		{err: &usageError{message: "usage"}, want: 2},
+		{err: &HTTPError{StatusCode: http.StatusServiceUnavailable}, want: 3},
+		{err: errOperationTimedOut, want: 5},
+		{err: errors.New("internal"), want: 1},
+	} {
+		if got := exitCode(test.err); got != test.want {
+			t.Fatalf("exitCode(%v)=%d, want %d", test.err, got, test.want)
+		}
+	}
+}
+
+func TestRenderEventsSupportsTableAndJSON(t *testing.T) {
+	events := []model.Event{{Sequence: 7, Timestamp: time.Unix(1, 0), Type: "state_transition", State: model.StateRunning, Message: "ready"}}
+	var tableOutput bytes.Buffer
+	if err := writeEvents(&tableOutput, events, false); err != nil {
+		t.Fatal(err)
+	}
+	if output := tableOutput.String(); !strings.Contains(output, "Remora Events") || !strings.Contains(output, "RUNNING") {
+		t.Fatalf("events table=%s", output)
+	}
+	var jsonOutput bytes.Buffer
+	if err := writeEvents(&jsonOutput, events, true); err != nil {
+		t.Fatal(err)
+	}
+	var decoded []model.Event
+	if err := json.Unmarshal(jsonOutput.Bytes(), &decoded); err != nil || len(decoded) != 1 || decoded[0].Sequence != 7 {
+		t.Fatalf("events JSON=%s err=%v", jsonOutput.String(), err)
 	}
 }

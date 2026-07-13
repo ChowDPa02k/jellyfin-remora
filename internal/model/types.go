@@ -37,6 +37,7 @@ type StorageResult struct {
 	Reachable bool      `json:"reachable"`
 	Message   string    `json:"message,omitempty"`
 	CheckedAt time.Time `json:"checked_at"`
+	LatencyMS int64     `json:"latency_ms"`
 }
 
 type HealthResult struct {
@@ -54,6 +55,14 @@ type Session struct {
 	Media  string `json:"media,omitempty"`
 }
 
+type Event struct {
+	Sequence  uint64    `json:"sequence"`
+	Timestamp time.Time `json:"timestamp"`
+	Type      string    `json:"type"`
+	State     State     `json:"state,omitempty"`
+	Message   string    `json:"message,omitempty"`
+}
+
 type Status struct {
 	State          State           `json:"state"`
 	DesiredState   DesiredState    `json:"desired_state"`
@@ -63,6 +72,7 @@ type Status struct {
 	PID            int             `json:"pid,omitempty"`
 	ProcessState   string          `json:"process_state,omitempty"`
 	UptimeSeconds  int64           `json:"uptime_seconds,omitempty"`
+	ProcessStarted time.Time       `json:"process_started_at,omitempty,omitzero"`
 	Executable     string          `json:"executable,omitempty"`
 	Version        string          `json:"version,omitempty"`
 	ServerName     string          `json:"server_name,omitempty"`
@@ -72,6 +82,7 @@ type Status struct {
 	MemoryBytes    uint64          `json:"memory_bytes,omitempty"`
 	Storage        []StorageResult `json:"storage"`
 	Sessions       []Session       `json:"sessions,omitempty"`
+	PlayingUsers   []string        `json:"playing_users,omitempty"`
 	Jellyfin       HealthResult    `json:"jellyfin"`
 	LastError      string          `json:"last_error,omitempty"`
 	LastTransition time.Time       `json:"last_transition"`

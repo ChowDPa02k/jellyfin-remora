@@ -24,6 +24,27 @@ func writeStatus(w io.Writer, status model.Status, jsonOutput bool) error {
 	return err
 }
 
+func writeEvents(w io.Writer, events []model.Event, jsonOutput bool) error {
+	if jsonOutput {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(events)
+	}
+	tw := newTable("Remora Events", []table.ColumnConfig{
+		column(1, 6, 10),
+		column(2, 20, 30),
+		column(3, 16, 20),
+		column(4, 18, 24),
+		column(5, 24, 72),
+	})
+	tw.AppendHeader(table.Row{"#", "time", "type", "state", "message"})
+	for _, event := range events {
+		tw.AppendRow(sanitizeRow(table.Row{event.Sequence, event.Timestamp.Local().Format(time.RFC3339), event.Type, event.State, event.Message}))
+	}
+	_, err := io.WriteString(w, tw.Render()+"\n")
+	return err
+}
+
 func renderStatus(status model.Status) string {
 	tables := []string{renderSummary(status), renderStorage(status)}
 	if len(status.Sessions) > 0 {
@@ -66,6 +87,12 @@ func renderSummary(status model.Status) string {
 		{"Desired State", string(status.DesiredState)},
 		{"Uptime", formatUptime(status.UptimeSeconds)},
 	}
+	if !status.ProcessStarted.IsZero() {
+		rows = append(rows, table.Row{"Process Started", status.ProcessStarted.Local().Format(time.RFC3339)})
+	}
+	if len(status.PlayingUsers) > 0 {
+		rows = append(rows, table.Row{"Playing Users", strings.Join(status.PlayingUsers, ", ")})
+	}
 	if status.LastError != "" {
 		rows = append(rows, table.Row{"Detail", status.LastError})
 	}
@@ -84,16 +111,17 @@ func renderStorage(status model.Status) string {
 		hasDetail = hasDetail || storage.Message != ""
 	}
 
-	headings := table.Row{"#", "healthy", "type", "target"}
+	headings := table.Row{"#", "healthy", "type", "latency", "target"}
 	columns := []table.ColumnConfig{
 		column(1, 1, 4),
 		column(2, 7, 7),
 		column(3, 8, 10),
-		column(4, 52, 72),
+		column(4, 8, 10),
+		column(5, 44, 64),
 	}
 	if hasDetail {
 		headings = append(headings, "detail")
-		columns = append(columns, column(5, 20, 52))
+		columns = append(columns, column(6, 20, 52))
 	}
 
 	tw := newTable("Storage Volumes", columns)
@@ -103,7 +131,7 @@ func renderStorage(status model.Status) string {
 		if typeName == "smb" {
 			typeName = "samba"
 		}
-		row := table.Row{storage.Index, storage.Healthy, typeName, storage.Target}
+		row := table.Row{storage.Index, storage.Healthy, typeName, fmt.Sprintf("%dms", storage.LatencyMS), storage.Target}
 		if hasDetail {
 			row = append(row, storage.Message)
 		}

@@ -5,6 +5,7 @@ Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS milest
 Development milestones through the cross-platform stable release are tracked in [ROADMAP.md](ROADMAP.md).
 The repeatable and real-fault high-availability coverage is recorded in [test/HA_TEST_MATRIX.md](test/HA_TEST_MATRIX.md).
 Supervisor invariants and trust boundaries are defined in [docs/architecture-safety.md](docs/architecture-safety.md).
+The local control-plane contract is documented in [docs/api-v1.md](docs/api-v1.md).
 Build and review requirements are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Build
@@ -96,9 +97,19 @@ start Jellyfin against unverified storage.
 go-pretty Unicode-aware tables for process identity, Jellyfin server metadata,
 storage, and active sessions. The active-sessions table is omitted when no
 clients are active; otherwise its rows distinguish `playing`, `paused`, and
-`idle` clients without exposing access tokens. Use either `remoractl --json status` or
+`idle` clients without exposing access tokens. Process start time, storage probe
+latency, and the unique users currently playing or paused are included in the
+status document. Use either `remoractl --json status` or
 `remoractl status --json` for the additive, machine-readable `/v1/status`
 document. Older clients safely ignore the new status fields.
+
+`remoractl events [--limit 1..256]` displays the daemon's bounded state-transition
+history; add `--json` for machine-readable output. Every `/v1` response exposes
+an API version and operation ID in headers, while failures use stable structured
+error codes. CLI exit codes distinguish usage errors, control-plane availability,
+state conflicts, and operation timeouts. API-key management, log querying,
+configuration editing, session termination, diagnostic bundles, and metrics are
+planned for later `v0.4.0-alpha` iterations.
 
 ### macOS tarball installations
 
@@ -144,8 +155,6 @@ SMB passwords in YAML are supported for the first milestone but can be visible t
 - Storage must pass three consecutive checks before automatic recovery.
 - Manual stop always overrides automatic recovery.
 - Five process failures in ten minutes open the restart circuit; `remoractl start` resets it.
-
-API-key rotation/revocation commands, log querying, and session control remain future milestones.
 
 ## Development checks
 

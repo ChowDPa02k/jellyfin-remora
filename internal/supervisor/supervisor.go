@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,6 +88,8 @@ type Supervisor struct {
 	initializationFails  int
 	nextInitialization   time.Time
 	sessionsInitialized  bool
+	events               []model.Event
+	eventSequence        uint64
 }
 
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
@@ -97,6 +100,7 @@ func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.
 	}
 	uid, username := runtimeIdentity(cfg.Jellyfin.RunAsUser)
 	s.status = model.Status{State: model.StateInit, DesiredState: model.DesiredRunning, UID: uid, Username: username, Executable: pm.Executable(), Arguments: pm.Arguments(), Ports: []int{cfg.Jellyfin.Networking.ServerAddressSettings.LocalHTTPPort}, LastTransition: now}
+	s.recordEventLocked(model.Event{Timestamp: now, Type: "state_transition", State: model.StateInit})
 	if manualStop(filepath.Join(runtimeStateDir(cfg), "jellyfin.state")) || manualStop(filepath.Join(cfg.Remora.DataDir, "jellyfin.state")) {
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
@@ -684,9 +688,30 @@ func (s *Supervisor) Status() model.Status {
 	st.Arguments = append([]string(nil), st.Arguments...)
 	st.Sessions = append([]model.Session(nil), st.Sessions...)
 	if st.PID > 0 && !s.process.StartedAt().IsZero() {
-		st.UptimeSeconds = int64(time.Since(s.process.StartedAt()).Seconds())
+		st.ProcessStarted = s.process.StartedAt()
+		st.UptimeSeconds = int64(time.Since(st.ProcessStarted).Seconds())
 	}
+	users := make(map[string]bool)
+	for _, session := range st.Sessions {
+		if session.User != "" && (session.Status == "playing" || session.Status == "paused") {
+			users[session.User] = true
+		}
+	}
+	st.PlayingUsers = make([]string, 0, len(users))
+	for username := range users {
+		st.PlayingUsers = append(st.PlayingUsers, username)
+	}
+	sort.Strings(st.PlayingUsers)
 	return st
+}
+
+func (s *Supervisor) Events(limit int) []model.Event {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit < 1 || limit > len(s.events) {
+		limit = len(s.events)
+	}
+	return append([]model.Event(nil), s.events[len(s.events)-limit:]...)
 }
 
 func runtimeIdentity(runAsUser string) (int, string) {
@@ -711,6 +736,8 @@ func (s *Supervisor) transition(state model.State, message string) {
 	if s.status.State != state {
 		s.status.State = state
 		s.status.LastTransition = time.Now()
+		s.eventSequence++
+		s.recordEventLocked(model.Event{Sequence: s.eventSequence, Timestamp: s.status.LastTransition, Type: "state_transition", State: state, Message: message})
 		s.log.Info("state transition", "state", state)
 	}
 	if message != "" {
@@ -719,6 +746,18 @@ func (s *Supervisor) transition(state model.State, message string) {
 		s.status.LastError = ""
 	}
 	s.mu.Unlock()
+}
+
+func (s *Supervisor) recordEventLocked(event model.Event) {
+	if event.Sequence == 0 {
+		s.eventSequence++
+		event.Sequence = s.eventSequence
+	}
+	s.events = append(s.events, event)
+	if len(s.events) > 256 {
+		copy(s.events, s.events[len(s.events)-256:])
+		s.events = s.events[:256]
+	}
 }
 func (s *Supervisor) setError(message string) {
 	s.mu.Lock()

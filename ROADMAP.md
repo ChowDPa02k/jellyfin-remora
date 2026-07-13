@@ -24,7 +24,7 @@ Completed with the first real configuration iteration:
 - Clean-directory setup against Jellyfin 12.0.0: OS-account bootstrap-user handling, configured administrator rename, setup completion, owner-only API-key persistence, watchdog-user creation, controlled restart, and periodic login/logout all passed.
 - Normal-restart regression coverage confirms Jellyfin 12's transient setup-listener state is ignored until core health and a stable incomplete-wizard streak agree; existing installations no longer flash into `FIRST_START`.
 - Destructive local fault test using `test/test.yaml`: write-permission loss fenced and stopped Jellyfin; restoring permission required the configured recovery streak and launched exactly one replacement process. Explicit restart and manual stop also passed.
-- The repository now covers 88 top-level tests plus real Jellyfin fault injection: crash-loop and first-start initialization circuit breaking, Remora crash adoption with original uptime, exact argv identity, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, per-disk consecutive-failure thresholds, `D`/`U` timeout branches, fail-closed XML reconciliation, stale-health isolation, Darwin provenance warnings, validated configuration initialization, Jellyfin Web selection-label resolution, and Unicode-safe status/session rendering. See `test/HA_TEST_MATRIX.md`.
+- The repository now covers 95 top-level tests plus real Jellyfin fault injection: crash-loop and first-start initialization circuit breaking, Remora crash adoption with original uptime, exact argv identity, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, per-disk consecutive-failure thresholds, `D`/`U` timeout branches, fail-closed XML reconciliation, stale-health isolation, Darwin provenance warnings, validated configuration initialization, Jellyfin Web selection-label resolution, bounded control events, and Unicode-safe status/session rendering. See `test/HA_TEST_MATRIX.md`.
 - Semantic build metadata (`version`, commit, build date, Go version, target) is injected into both commands.
 - GitHub Actions definitions cover formatting, unit/race tests, vet, native macOS/Windows tests, all target cross-builds, dependency review, vulnerability scanning, and launchd plist validation.
 - The module requires a patched Go toolchain and the local `govulncheck` gate reports no reachable vulnerabilities.
@@ -93,17 +93,29 @@ feature milestone.
 
 ## Phase 3 — Complete control plane and observability (`v0.4.0-alpha`)
 
-- Stabilize and document `/v1` request/response schemas, error codes, operation IDs, status enums, and compatibility rules.
-- Complete `remoractl logs`, `edit-config`, `apikey list/create/delete`, and `session list/stop`.
-- Extend status with durable process start identity, storage latency, playing-user summaries, and Remora-owned ffmpeg/transcode counts; CPU/RSS, listening endpoints, and active session details are already available.
-- Add bounded event history, structured diagnostic bundles, and Prometheus-compatible metrics on a separate opt-in loopback endpoint.
-- Add concurrent-client, slow-client, cancellation, malformed-request, socket-permission, and daemon-restart tests.
+Completed in `v0.4.0-alpha.1`:
+
+- Documented the additive local `/v1` contract, status enums, compatibility rules, response-version metadata, per-request operation IDs, and structured stable error codes.
+- Retained the status response shape used by older clients while extending it with process start time, storage-probe latency, and sorted playing-user summaries; CPU/RSS, listening endpoints, and active session details remain available.
+- Added a 256-entry in-memory state-transition history through `GET /v1/events` and `remoractl events`, with bounded result selection and table/JSON rendering.
+- Defined deterministic `remoractl` exit codes for usage, local failures, daemon/API availability, state conflicts, and operation timeouts.
+- Preserved local-only control over owner-restricted Unix sockets or loopback REST and serialized every mutating request through the supervisor state machine.
+
+Remaining in later `v0.4.0-alpha` iterations:
+
+- Complete `remoractl logs`, `edit-config`, `apikey list/create/delete`, and `session list/stop` with matching documented API operations.
+- Add Remora-owned ffmpeg/transcode counts, structured diagnostic bundles, and Prometheus-compatible metrics on a separate opt-in loopback endpoint.
+- Add expanded concurrent-client, slow-client, cancellation, malformed-request, socket-permission, daemon-restart, and old-client/new-daemon compatibility matrices.
 - Keep remote control disabled by default. If non-loopback control is later enabled, require TLS and scoped authentication rather than reusing Jellyfin credentials.
 
 Exit gate:
 
 - Every CLI action has a matching documented API operation and deterministic exit codes.
 - API compatibility tests demonstrate that an older supported `remoractl` can control a newer daemon within the same major version.
+
+The Phase 3 exit gate remains open after `v0.4.0-alpha.1`; this release establishes
+the versioned contract and observability foundation without claiming the remaining
+commands, diagnostics, or metrics are complete.
 
 ## Phase 4 — Linux support (`v0.6.0-alpha`)
 

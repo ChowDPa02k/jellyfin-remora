@@ -23,9 +23,34 @@ import (
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "remoractl:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
+
+type usageError struct{ message string }
+
+func (e *usageError) Error() string { return e.message }
+
+type HTTPError struct {
+	StatusCode  int
+	Code        string
+	Message     string
+	OperationID string
+}
+
+func (e *HTTPError) Error() string {
+	message := e.Message
+	if message == "" {
+		message = http.StatusText(e.StatusCode)
+	}
+	if e.OperationID != "" {
+		return fmt.Sprintf("%s (code=%s, operation_id=%s)", message, e.Code, e.OperationID)
+	}
+	return message
+}
+
+var errOperationTimedOut = errors.New("operation timed out")
+
 func run() error {
 	global := flag.NewFlagSet("remoractl", flag.ContinueOnError)
 	host := global.String("host", "", "loopback Remora URL")
@@ -33,7 +58,7 @@ func run() error {
 	jsonOutput := global.Bool("json", false, "print machine-readable JSON")
 	showVersion := global.Bool("version", false, "show version")
 	if err := global.Parse(os.Args[1:]); err != nil {
-		return err
+		return &usageError{message: err.Error()}
 	}
 	if *showVersion {
 		fmt.Println(buildinfo.Current("remoractl"))
@@ -41,7 +66,7 @@ func run() error {
 	}
 	args := global.Args()
 	if len(args) == 0 {
-		return errors.New("usage: remoractl [--host URL] [--json] <init|start|stop|restart|status|healthcheck>")
+		return &usageError{message: "usage: remoractl [--host URL] [--json] <init|start|stop|restart|status|events|healthcheck>"}
 	}
 	if args[0] == "init" {
 		return runInit(args[1:])
@@ -51,7 +76,22 @@ func run() error {
 		return err
 	}
 	cmd := args[0]
-	useJSON := *jsonOutput || contains(args[1:], "--json")
+	if cmd == "events" {
+		fs := flag.NewFlagSet("remoractl events", flag.ContinueOnError)
+		limit := fs.Int("limit", 50, "maximum events to return (1-256)")
+		commandJSON := fs.Bool("json", false, "print machine-readable JSON")
+		if err := fs.Parse(args[1:]); err != nil {
+			return &usageError{message: err.Error()}
+		}
+		if fs.NArg() != 0 || *limit < 1 || *limit > 256 {
+			return &usageError{message: "usage: remoractl events [--limit 1..256] [--json]"}
+		}
+		var response eventResponse
+		if err := requestJSON(client, http.MethodGet, fmt.Sprintf("%s/v1/events?limit=%d", base, *limit), &response); err != nil {
+			return err
+		}
+		return writeEvents(os.Stdout, response.Events, *jsonOutput || *commandJSON)
+	}
 	method := http.MethodGet
 	path := "/v1/status"
 	switch cmd {
@@ -60,9 +100,21 @@ func run() error {
 		method = http.MethodPost
 		path = "/v1/" + cmd
 	default:
-		return fmt.Errorf("unsupported command %q", cmd)
+		return &usageError{message: fmt.Sprintf("unsupported command %q", cmd)}
 	}
-	if (cmd == "stop" || cmd == "restart") && contains(args[1:], "--force") {
+	commandFlags := flag.NewFlagSet("remoractl "+cmd, flag.ContinueOnError)
+	commandJSON := commandFlags.Bool("json", false, "print machine-readable JSON")
+	var force *bool
+	if cmd == "stop" || cmd == "restart" {
+		force = commandFlags.Bool("force", false, "force process termination")
+	}
+	if err := commandFlags.Parse(args[1:]); err != nil || commandFlags.NArg() != 0 {
+		if err != nil {
+			return &usageError{message: err.Error()}
+		}
+		return &usageError{message: fmt.Sprintf("unexpected arguments for %s", cmd)}
+	}
+	if force != nil && *force {
 		path += "?force=true"
 	}
 	st, err := request(client, method, base+path)
@@ -70,9 +122,9 @@ func run() error {
 		return err
 	}
 	if cmd == "start" || cmd == "stop" || cmd == "restart" {
-		return wait(client, base, cmd, st.PID, os.Stdout, useJSON)
+		return wait(client, base, cmd, st.PID, os.Stdout, *jsonOutput || *commandJSON)
 	}
-	return writeStatus(os.Stdout, st, useJSON)
+	return writeStatus(os.Stdout, st, *jsonOutput || *commandJSON)
 }
 func newClient(host, socket string) (*http.Client, string, error) {
 	if host != "" {
@@ -129,24 +181,45 @@ func newClient(host, socket string) (*http.Client, string, error) {
 	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, "http://unix", nil
 }
 func request(c *http.Client, method, url string) (model.Status, error) {
+	var status model.Status
+	err := requestJSON(c, method, url, &status)
+	return status, err
+}
+
+type eventResponse struct {
+	Events []model.Event `json:"events"`
+}
+
+func requestJSON(c *http.Client, method, url string, out any) error {
 	req, err := http.NewRequest(method, url, bytes.NewReader(nil))
 	if err != nil {
-		return model.Status{}, err
+		return err
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return model.Status{}, err
+		return err
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return model.Status{}, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(b)))
+		var envelope struct {
+			Error struct {
+				Code        string `json:"code"`
+				Message     string `json:"message"`
+				OperationID string `json:"operation_id"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(b, &envelope)
+		message := envelope.Error.Message
+		if message == "" {
+			message = strings.TrimSpace(string(b))
+		}
+		return &HTTPError{StatusCode: resp.StatusCode, Code: envelope.Error.Code, Message: message, OperationID: envelope.Error.OperationID}
 	}
-	var st model.Status
-	if err := json.Unmarshal(b, &st); err != nil {
-		return st, err
+	if err := json.Unmarshal(b, out); err != nil {
+		return err
 	}
-	return st, nil
+	return nil
 }
 func wait(c *http.Client, base, command string, initialPID int, output io.Writer, jsonOutput bool) error {
 	started := time.Now()
@@ -176,13 +249,30 @@ func wait(c *http.Client, base, command string, initialPID int, output io.Writer
 			return fmt.Errorf("operation failed in state %s: %s", st.State, st.LastError)
 		}
 	}
-	return errors.New("operation timed out")
+	return errOperationTimedOut
 }
-func contains(items []string, want string) bool {
-	for _, v := range items {
-		if v == want {
-			return true
+func exitCode(err error) int {
+	var usage *usageError
+	if errors.As(err, &usage) || errors.Is(err, flag.ErrHelp) {
+		return 2
+	}
+	if errors.Is(err, errOperationTimedOut) {
+		return 5
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		switch httpErr.StatusCode {
+		case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed:
+			return 2
+		case http.StatusConflict:
+			return 4
+		default:
+			return 3
 		}
 	}
-	return false
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return 3
+	}
+	return 1
 }

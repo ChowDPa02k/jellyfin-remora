@@ -196,3 +196,51 @@ func TestNewProcessDoesNotInheritPreviousPIDHealth(t *testing.T) {
 		t.Fatalf("startup cleared crash history before a new health check: %d", len(s.crashes))
 	}
 }
+
+func TestEventHistoryIsBoundedAndOrdered(t *testing.T) {
+	s := stateSupervisor(t, &stateProcess{})
+	for i := 0; i < 300; i++ {
+		state := model.StateRunning
+		if i%2 == 0 {
+			state = model.StateDegraded
+		}
+		s.transition(state, "test transition")
+	}
+
+	all := s.Events(999)
+	if len(all) != 256 {
+		t.Fatalf("events=%d, want 256", len(all))
+	}
+	for i := 1; i < len(all); i++ {
+		if all[i].Sequence <= all[i-1].Sequence {
+			t.Fatalf("event sequence is not increasing at %d: %d <= %d", i, all[i].Sequence, all[i-1].Sequence)
+		}
+	}
+	last := s.Events(10)
+	if len(last) != 10 || last[0].Sequence != all[len(all)-10].Sequence {
+		t.Fatalf("unexpected event tail: %+v", last)
+	}
+}
+
+func TestStatusIncludesProcessStartAndPlayingUsers(t *testing.T) {
+	started := time.Now().Add(-time.Minute)
+	p := &stateProcess{running: true, started: started}
+	s := stateSupervisor(t, p)
+	s.mu.Lock()
+	s.status.PID = p.PID()
+	s.status.Sessions = []model.Session{
+		{User: "zoe", Status: "playing"},
+		{User: "alice", Status: "paused"},
+		{User: "zoe", Status: "paused"},
+		{User: "ignored", Status: "idle"},
+	}
+	s.mu.Unlock()
+
+	status := s.Status()
+	if !status.ProcessStarted.Equal(started) || status.UptimeSeconds < 59 {
+		t.Fatalf("unexpected process timing: started=%s uptime=%d", status.ProcessStarted, status.UptimeSeconds)
+	}
+	if len(status.PlayingUsers) != 2 || status.PlayingUsers[0] != "alice" || status.PlayingUsers[1] != "zoe" {
+		t.Fatalf("playing users=%v", status.PlayingUsers)
+	}
+}

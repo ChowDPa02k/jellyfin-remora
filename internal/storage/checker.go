@@ -80,8 +80,10 @@ func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
 	return results
 }
 
-func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfig, allowMount bool) model.StorageResult {
-	r := model.StorageResult{Index: index, Type: disk.Type, Device: redactDevice(disk), Target: disk.Target, CheckedAt: time.Now()}
+func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfig, allowMount bool) (r model.StorageResult) {
+	started := time.Now()
+	r = model.StorageResult{Index: index, Type: disk.Type, Device: redactDevice(disk), Target: disk.Target, CheckedAt: started}
+	defer func() { r.LatencyMS = time.Since(started).Milliseconds() }()
 	mounts, err := c.backend.Mounts(ctx)
 	if err != nil {
 		r.Fatal = true
