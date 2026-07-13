@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ChowDPa02K/jellyfin-remora/internal/buildinfo"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 )
 
@@ -29,8 +30,13 @@ func run() error {
 	global := flag.NewFlagSet("remoractl", flag.ContinueOnError)
 	host := global.String("host", "", "loopback Remora URL")
 	socket := global.String("socket", filepath.Join(os.TempDir(), "jellyfin-remora.sock"), "Remora unix socket")
+	showVersion := global.Bool("version", false, "show version")
 	if err := global.Parse(os.Args[1:]); err != nil {
 		return err
+	}
+	if *showVersion {
+		fmt.Println(buildinfo.Current("remoractl"))
+		return nil
 	}
 	args := global.Args()
 	if len(args) == 0 {

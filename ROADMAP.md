@@ -24,15 +24,17 @@ Completed with the first real configuration iteration:
 - Clean-directory setup against Jellyfin 12.0.0: OS-account bootstrap-user handling, configured administrator rename, setup completion, owner-only API-key persistence, watchdog-user creation, controlled restart, and periodic login/logout all passed.
 - Normal-restart regression coverage confirms Jellyfin 12's transient setup-listener state is ignored until core health and a stable incomplete-wizard streak agree; existing installations no longer flash into `FIRST_START`.
 - Destructive local fault test using `test/test.yaml`: write-permission loss fenced and stopped Jellyfin; restoring permission required the configured recovery streak and launched exactly one replacement process. Explicit restart and manual stop also passed.
-- The HA matrix now covers 51 automated tests plus real Jellyfin fault injection: crash-loop circuit breaking, Remora crash adoption, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, and `D`/`U` timeout branches. See `test/HA_TEST_MATRIX.md`.
+- The repository now covers 56 top-level tests plus real Jellyfin fault injection: crash-loop circuit breaking, Remora crash adoption, duplicate-instance locking, API-key revocation recovery, sticky watchdog degradation, process-group cleanup, stale PID rejection, live SMB unmount fencing/recovery, and `D`/`U` timeout branches. See `test/HA_TEST_MATRIX.md`.
+- Semantic build metadata (`version`, commit, build date, Go version, target) is injected into both commands.
+- GitHub Actions definitions cover formatting, unit/race tests, vet, native macOS/Windows tests, all target cross-builds, dependency review, vulnerability scanning, and launchd plist validation.
+- The module requires a patched Go toolchain and the local `govulncheck` gate reports no reachable vulnerabilities.
+- A fail-closed, version-step configuration migration pipeline upgrades legacy unversioned input in memory without rewriting operator files.
+- State-machine invariants, filesystem trust boundaries, child-process privileges, and the current secrets threat model are documented as change-review requirements.
+- The project is licensed under MIT and prepared for the public `github.com/ChowDPa02K/jellyfin-remora` repository.
 
 Remaining work:
 
-- Establish the GitHub repository under `github.com/ChowDPa02K/jellyfin-remora`, choose a license, and add contribution, security-reporting, and support-policy documents.
-- Add GitHub Actions for formatting, unit/race tests, vet, Darwin/Linux/Windows builds, dependency review, vulnerability scanning, and plist validation.
-- Add semantic version injection (`version`, commit, build date).
-- Add a configuration migration framework before configuration becomes stable.
-- Document the state-machine invariants, filesystem trust boundaries, child-process privilege model, and secrets threat model.
+- Add contribution, security-reporting, and support-policy documents.
 
 Exit gate:
 

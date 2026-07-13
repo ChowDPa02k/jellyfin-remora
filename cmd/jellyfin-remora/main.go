@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ChowDPa02K/jellyfin-remora/internal/buildinfo"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/control"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
@@ -27,7 +28,6 @@ import (
 	"github.com/ChowDPa02K/jellyfin-remora/internal/supervisor"
 )
 
-var version = "dev"
 var effectiveUID = os.Geteuid
 
 func main() {
@@ -50,7 +50,7 @@ func run() error {
 		return err
 	}
 	if *showVersion {
-		fmt.Println(version)
+		fmt.Println(buildinfo.Current("jellyfin-remora"))
 		return nil
 	}
 	cfg, err := config.Load(*configPath)

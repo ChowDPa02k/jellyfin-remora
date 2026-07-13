@@ -4,6 +4,7 @@ Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS milest
 
 Development milestones through the cross-platform stable release are tracked in [ROADMAP.md](ROADMAP.md).
 The repeatable and real-fault high-availability coverage is recorded in [test/HA_TEST_MATRIX.md](test/HA_TEST_MATRIX.md).
+Supervisor invariants and trust boundaries are defined in [docs/architecture-safety.md](docs/architecture-safety.md).
 
 ## Build
 
@@ -51,3 +52,34 @@ SMB passwords in YAML are supported for the first milestone but can be visible t
 - Five process failures in ten minutes open the restart circuit; `remoractl start` resets it.
 
 Jellyfin XML settings reconciliation, API-key rotation/revocation commands, log querying, and session control remain future milestones.
+
+## Development checks
+
+```sh
+make build
+make test
+make check
+make vuln
+make cross-build
+```
+
+The module requires the patched Go toolchain declared in `go.mod`. With the default
+`GOTOOLCHAIN=auto`, Go downloads that toolchain when the locally installed Go command
+is older. Install the vulnerability scanner with:
+
+```sh
+go install golang.org/x/vuln/cmd/govulncheck@latest
+```
+
+`make build` injects release metadata into both commands. Override `VERSION`, `COMMIT`,
+or `BUILD_DATE` for release builds, and inspect the result with
+`jellyfin-remora --version` or `remoractl --version`.
+
+Configuration is decoded through a versioned, in-memory migration pipeline before
+strict validation. An unversioned legacy file is treated as version 0 and migrated to
+version 1 without rewriting the source file; conflicting legacy and current keys fail
+closed.
+
+## License
+
+Jellyfin Remora is available under the [MIT License](LICENSE).

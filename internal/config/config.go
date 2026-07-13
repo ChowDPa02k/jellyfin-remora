@@ -48,13 +48,14 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 }
 
 type Config struct {
-	ConfigVersion int            `yaml:"config-version"`
-	LegacyConfig  bool           `yaml:"-"`
-	RESTAPI       RESTAPIConfig  `yaml:"restapi"`
-	Remora        RemoraConfig   `yaml:"remora"`
-	Disks         []DiskConfig   `yaml:"disk"`
-	Jellyfin      JellyfinConfig `yaml:"jellyfin"`
-	Init          InitConfig     `yaml:"init,omitempty"`
+	ConfigVersion int             `yaml:"config-version"`
+	LegacyConfig  bool            `yaml:"-"`
+	Migrations    MigrationReport `yaml:"-"`
+	RESTAPI       RESTAPIConfig   `yaml:"restapi"`
+	Remora        RemoraConfig    `yaml:"remora"`
+	Disks         []DiskConfig    `yaml:"disk"`
+	Jellyfin      JellyfinConfig  `yaml:"jellyfin"`
+	Init          InitConfig      `yaml:"init,omitempty"`
 }
 
 type RESTAPIConfig struct {
@@ -147,12 +148,18 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	migrated, report, err := Migrate(b)
+	if err != nil {
+		return nil, err
+	}
 	var c Config
-	decoder := yaml.NewDecoder(bytes.NewReader(b))
+	decoder := yaml.NewDecoder(bytes.NewReader(migrated))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	c.Migrations = report
+	c.LegacyConfig = report.FromVersion == 0
 	c.defaults()
 	if err := c.Validate(); err != nil {
 		return nil, err
