@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,7 +53,7 @@ func resolveExecutable(path string) (string, error) {
 	for _, name := range []string{"Jellyfin", "jellyfin", "jellyfin.exe"} {
 		p := filepath.Join(path, name)
 		if st, e := os.Stat(p); e == nil && !st.IsDir() {
-			if st.Mode()&0111 == 0 {
+			if runtime.GOOS != "windows" && st.Mode()&0111 == 0 {
 				return "", fmt.Errorf("Jellyfin executable is not executable: %s", p)
 			}
 			return filepath.Abs(p)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
@@ -11,24 +12,25 @@ import (
 func TestLoadDefaultsAndLegacyHeartbeatAliases(t *testing.T) {
 	d := t.TempDir()
 	path := filepath.Join(d, "config.yml")
-	yaml := `restapi:
+	root := filepath.ToSlash(d)
+	yaml := fmt.Sprintf(`restapi:
   listen: 127.0.0.1
 remora:
   health-api-hearbeat: 7
 jellyfin:
   path: /Applications/Jellyfin.app/Contents/MacOS
   run-as-user: nobody
-  data-dir: /tmp/jf/data
-  config-dir: /tmp/jf/config
-  cache-dir: /tmp/jf/cache
-  log-dir: /tmp/jf/log
+  data-dir: %s/jf/data
+  config-dir: %s/jf/config
+  cache-dir: %s/jf/cache
+  log-dir: %s/jf/log
 disk:
   - type: SMB
     device: //nas/share
-    target: /tmp/share
+    target: %s/share
     permission: r
     hearbeat: 4
-`
+`, root, root, root, root, root)
 	if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
 		t.Fatal(err)
 	}

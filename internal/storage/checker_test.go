@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -39,7 +40,11 @@ func TestNormalizeBonjourSMBServiceHost(t *testing.T) {
 
 func TestCheckPathsUsesIsolatedProbeProcess(t *testing.T) {
 	d := t.TempDir()
-	exe := filepath.Join(d, "remora")
+	executableName := "remora"
+	if runtime.GOOS == "windows" {
+		executableName += ".exe"
+	}
+	exe := filepath.Join(d, executableName)
 	cmd := exec.Command("go", "build", "-o", exe, "../../cmd/jellyfin-remora")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build remora: %v: %s", err, b)
