@@ -23,6 +23,7 @@ type Client struct {
 
 type PublicInfo struct {
 	Version                string `json:"Version"`
+	ServerName             string `json:"ServerName"`
 	StartupWizardCompleted *bool  `json:"StartupWizardCompleted"`
 }
 type AuthenticationResult struct {
@@ -40,6 +41,21 @@ type AuthenticationInfo struct {
 }
 type authenticationInfoQuery struct {
 	Items []AuthenticationInfo `json:"Items"`
+}
+
+type sessionInfo struct {
+	ID             string `json:"Id"`
+	UserName       string `json:"UserName"`
+	Client         string `json:"Client"`
+	DeviceName     string `json:"DeviceName"`
+	IsActive       bool   `json:"IsActive"`
+	NowPlayingItem *struct {
+		Name       string `json:"Name"`
+		SeriesName string `json:"SeriesName"`
+	} `json:"NowPlayingItem"`
+	PlayState *struct {
+		IsPaused bool `json:"IsPaused"`
+	} `json:"PlayState"`
 }
 type APIError struct {
 	StatusCode            int
@@ -142,6 +158,41 @@ func (c *Client) apiKeys(ctx context.Context, token string) ([]AuthenticationInf
 func (c *Client) ValidateAPIKey(ctx context.Context, token string) error {
 	_, err := c.apiKeys(ctx, token)
 	return err
+}
+
+func (c *Client) Sessions(ctx context.Context, token string) ([]model.Session, error) {
+	var raw []sessionInfo
+	if err := c.do(ctx, http.MethodGet, "/Sessions", token, nil, &raw, http.StatusOK); err != nil {
+		return nil, err
+	}
+	sessions := make([]model.Session, 0, len(raw))
+	for _, item := range raw {
+		if item.ID == "" || item.UserName == "" || !item.IsActive {
+			continue
+		}
+		status := "idle"
+		media := ""
+		if item.NowPlayingItem != nil {
+			media = item.NowPlayingItem.Name
+			if item.NowPlayingItem.SeriesName != "" && item.NowPlayingItem.SeriesName != media {
+				media = item.NowPlayingItem.SeriesName + " — " + media
+			}
+			status = "playing"
+			if item.PlayState != nil && item.PlayState.IsPaused {
+				status = "paused"
+			}
+		}
+		device := item.Client
+		if item.DeviceName != "" && !strings.EqualFold(item.DeviceName, item.Client) {
+			if device == "" {
+				device = item.DeviceName
+			} else {
+				device += " (" + item.DeviceName + ")"
+			}
+		}
+		sessions = append(sessions, model.Session{ID: item.ID, Status: status, User: item.UserName, Device: device, Media: media})
+	}
+	return sessions, nil
 }
 
 func (c *Client) EnsureWatchdogUser(ctx context.Context, adminToken string, cfg config.UserLoginWatchdogConfig) error {

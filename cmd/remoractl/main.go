@@ -30,6 +30,7 @@ func run() error {
 	global := flag.NewFlagSet("remoractl", flag.ContinueOnError)
 	host := global.String("host", "", "loopback Remora URL")
 	socket := global.String("socket", filepath.Join(os.TempDir(), "jellyfin-remora.sock"), "Remora unix socket")
+	jsonOutput := global.Bool("json", false, "print machine-readable JSON")
 	showVersion := global.Bool("version", false, "show version")
 	if err := global.Parse(os.Args[1:]); err != nil {
 		return err
@@ -40,13 +41,14 @@ func run() error {
 	}
 	args := global.Args()
 	if len(args) == 0 {
-		return errors.New("usage: remoractl [--host URL] <start|stop|restart|status|healthcheck>")
+		return errors.New("usage: remoractl [--host URL] [--json] <start|stop|restart|status|healthcheck>")
 	}
 	client, base, err := newClient(*host, *socket)
 	if err != nil {
 		return err
 	}
 	cmd := args[0]
+	useJSON := *jsonOutput || contains(args[1:], "--json")
 	method := http.MethodGet
 	path := "/v1/status"
 	switch cmd {
@@ -64,11 +66,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	printStatus(st)
 	if cmd == "start" || cmd == "stop" || cmd == "restart" {
-		return wait(client, base, cmd, st.PID)
+		return wait(client, base, cmd, st.PID, os.Stdout, useJSON)
 	}
-	return nil
+	return writeStatus(os.Stdout, st, useJSON)
 }
 func newClient(host, socket string) (*http.Client, string, error) {
 	if host != "" {
@@ -116,7 +117,7 @@ func request(c *http.Client, method, url string) (model.Status, error) {
 	}
 	return st, nil
 }
-func wait(c *http.Client, base, command string, initialPID int) error {
+func wait(c *http.Client, base, command string, initialPID int, output io.Writer, jsonOutput bool) error {
 	started := time.Now()
 	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {
@@ -126,16 +127,13 @@ func wait(c *http.Client, base, command string, initialPID int) error {
 			return err
 		}
 		if command == "stop" && st.State == model.StateStopped {
-			printStatus(st)
-			return nil
+			return writeStatus(output, st, jsonOutput)
 		}
 		if command == "start" && st.State == model.StateRunning {
-			printStatus(st)
-			return nil
+			return writeStatus(output, st, jsonOutput)
 		}
 		if command == "restart" && st.State == model.StateRunning && st.PID != 0 && st.PID != initialPID {
-			printStatus(st)
-			return nil
+			return writeStatus(output, st, jsonOutput)
 		}
 		if st.State == model.StateProcessFailed && (command == "start" || command == "restart") && time.Since(started) < 2*time.Second {
 			continue
@@ -148,15 +146,6 @@ func wait(c *http.Client, base, command string, initialPID int) error {
 		}
 	}
 	return errors.New("operation timed out")
-}
-func printStatus(st model.Status) {
-	fmt.Printf("state: %s\ndesired: %s\npid: %d\nuptime: %ds\n", st.State, st.DesiredState, st.PID, st.UptimeSeconds)
-	if st.LastError != "" {
-		fmt.Printf("detail: %s\n", st.LastError)
-	}
-	for _, d := range st.Storage {
-		fmt.Printf("storage[%d]: healthy=%t fatal=%t target=%s %s\n", d.Index, d.Healthy, d.Fatal, d.Target, d.Message)
-	}
 }
 func contains(items []string, want string) bool {
 	for _, v := range items {

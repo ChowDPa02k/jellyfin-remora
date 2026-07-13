@@ -35,6 +35,9 @@ func TestSupportedReleaseContractFixtures(t *testing.T) {
 			if !strings.HasPrefix(info.Version, release.versionPrefix) || info.StartupWizardCompleted == nil || !*info.StartupWizardCompleted {
 				t.Fatalf("public info = %#v", info)
 			}
+			if info.ServerName == "" {
+				t.Fatal("public info fixture omitted server name")
+			}
 			var startup StartupUser
 			decode("startup-user", &startup)
 			if startup.Name == "" {
@@ -50,7 +53,49 @@ func TestSupportedReleaseContractFixtures(t *testing.T) {
 			if len(keys.Items) != 1 || keys.Items[0].AppName != "Jellyfin Remora" || keys.Items[0].AccessToken == "" {
 				t.Fatalf("API keys = %#v", keys)
 			}
+			var sessions []sessionInfo
+			decode("sessions", &sessions)
+			if len(sessions) == 0 || sessions[0].ID == "" || sessions[0].UserName == "" {
+				t.Fatalf("sessions = %#v", sessions)
+			}
 		})
+	}
+}
+
+func TestSessionsNormalizesPlaybackAndDevice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/Sessions" || !strings.Contains(r.Header.Get("Authorization"), `Token="api-key"`) {
+			t.Errorf("request = %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode([]sessionInfo{
+			{ID: "playing-id", UserName: "alice", Client: "Jellyfin Web", DeviceName: "Chrome", IsActive: true, NowPlayingItem: &struct {
+				Name       string `json:"Name"`
+				SeriesName string `json:"SeriesName"`
+			}{Name: "Pilot", SeriesName: "Example Series"}},
+			{ID: "idle-id", UserName: "bob", Client: "Findroid", IsActive: true},
+			{ID: "paused-id", UserName: "carol", Client: "Jellyfin Media Player", IsActive: true, NowPlayingItem: &struct {
+				Name       string `json:"Name"`
+				SeriesName string `json:"SeriesName"`
+			}{Name: "The Matrix"}, PlayState: &struct {
+				IsPaused bool `json:"IsPaused"`
+			}{IsPaused: true}},
+			{ID: "anonymous", Client: "ignored", IsActive: true},
+			{ID: "inactive", UserName: "carol", Client: "ignored"},
+		})
+	}))
+	defer srv.Close()
+	sessions, err := New(srv.URL, time.Second).Sessions(context.Background(), "api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 3 || sessions[0].Status != "playing" || sessions[0].Device != "Jellyfin Web (Chrome)" || sessions[0].Media != "Example Series — Pilot" {
+		t.Fatalf("sessions = %#v", sessions)
+	}
+	if sessions[1].Status != "idle" {
+		t.Fatalf("idle session = %#v", sessions[1])
+	}
+	if sessions[2].Status != "paused" || sessions[2].Media != "The Matrix" {
+		t.Fatalf("paused session = %#v", sessions[2])
 	}
 }
 

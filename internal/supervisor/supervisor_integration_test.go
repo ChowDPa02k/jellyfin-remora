@@ -56,6 +56,9 @@ func TestSupervisorStartsAndStopsHealthyJellyfin(t *testing.T) {
 	go func() { done <- sup.Run(ctx) }()
 	defer func() { cancel(); <-done }()
 	waitState(t, sup, model.StateRunning, 5*time.Second)
+	if status := sup.Status(); status.Version != "12.0.0-test" || status.ServerName != "Fake Jellyfin" || status.Username == "" || status.UID < 0 {
+		t.Fatalf("status metadata = %+v", status)
+	}
 	if err := sup.Submit(context.Background(), ActionStop, false); err != nil {
 		t.Fatal(err)
 	}

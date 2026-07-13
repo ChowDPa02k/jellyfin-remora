@@ -4,7 +4,7 @@ Baselines: `test/test.yaml`, Jellyfin 10.11.11 and 12.0.0, macOS arm64. Destruct
 
 ## Automated coverage
 
-The repository currently contains 65 top-level tests. HA-specific coverage includes:
+The repository currently contains 68 top-level tests. HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, transient startup-wizard rejection, five-crash circuit breaker, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, executable/argument identity, and macOS environment preservation.
@@ -14,6 +14,7 @@ The repository currently contains 65 top-level tests. HA-specific coverage inclu
 - Jellyfin health success/failure, first-run sequence, bootstrap-user rename, API-key creation/validation, revoked-key rejection, watchdog creation/login/logout, and wrong-password failure propagation.
 - Jellyfin 10.11/12 API contract fixtures; setup-wizard XML suppression; configured/unconfigured ownership precedence; atomic backup, idempotence, asset prevalidation, multi-file rollback, and fail-closed process start.
 - A new PID cannot inherit the prior PID's healthy result or clear crash history before receiving its own health check.
+- Unicode table rendering rejects terminal control characters and aligns CJK paths; structured JSON preserves UID/server/session fields, and Jellyfin 10.11/12 session fixtures cover playing, paused, idle, anonymous, and inactive clients.
 
 Run with:
 

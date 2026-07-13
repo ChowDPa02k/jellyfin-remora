@@ -51,7 +51,7 @@ func main() {
 	})
 	http.HandleFunc("/System/Info/Public", func(w http.ResponseWriter, r *http.Request) {
 		complete := publicCalls.Add(1) > wizardFalseCount
-		_ = json.NewEncoder(w).Encode(map[string]any{"Version": "12.0.0-test", "StartupWizardCompleted": complete})
+		_ = json.NewEncoder(w).Encode(map[string]any{"Version": "12.0.0-test", "ServerName": "Fake Jellyfin", "StartupWizardCompleted": complete})
 	})
 	for _, path := range []string{"/Startup/User", "/Startup/Configuration", "/Startup/RemoteAccess", "/Startup/Complete"} {
 		http.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {

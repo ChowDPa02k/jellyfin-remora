@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -83,6 +84,7 @@ type Supervisor struct {
 	watchdogReady        bool
 	watchdogFailed       bool
 	wizardIncompleteRuns int
+	sessionsInitialized  bool
 }
 
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
@@ -91,7 +93,8 @@ func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.
 	if b, err := os.ReadFile(filepath.Join(cfg.Remora.DataDir, ".remora_api_key")); err == nil {
 		s.apiKey = strings.TrimSpace(string(b))
 	}
-	s.status = model.Status{State: model.StateInit, DesiredState: model.DesiredRunning, Executable: pm.Executable(), Arguments: pm.Arguments(), Ports: []int{cfg.Jellyfin.Networking.ServerAddressSettings.LocalHTTPPort}, LastTransition: now}
+	uid, username := runtimeIdentity(cfg.Jellyfin.RunAsUser)
+	s.status = model.Status{State: model.StateInit, DesiredState: model.DesiredRunning, UID: uid, Username: username, Executable: pm.Executable(), Arguments: pm.Arguments(), Ports: []int{cfg.Jellyfin.Networking.ServerAddressSettings.LocalHTTPPort}, LastTransition: now}
 	if manualStop(filepath.Join(runtimeStateDir(cfg), "jellyfin.state")) || manualStop(filepath.Join(cfg.Remora.DataDir, "jellyfin.state")) {
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
@@ -258,7 +261,9 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.status.ProcessState = ""
 		s.status.CPUPercent = 0
 		s.status.MemoryBytes = 0
+		s.status.Sessions = nil
 		s.mu.Unlock()
+		s.sessionsInitialized = false
 		_ = s.process.RemovePIDFile()
 	}
 	s.wasRunning = running
@@ -359,7 +364,9 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.apiFailures = 0
 			s.mu.Lock()
 			s.status.Jellyfin = model.HealthResult{}
+			s.status.Sessions = nil
 			s.mu.Unlock()
+			s.sessionsInitialized = false
 			s.transition(model.StateStarting, "")
 			if err := s.process.WritePIDFile(); err != nil {
 				s.log.Warn("cannot write PID file", "error", err)
@@ -412,6 +419,12 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	if infoErr != nil || info.StartupWizardCompleted == nil || *info.StartupWizardCompleted {
 		s.wizardIncompleteRuns = 0
 	}
+	if infoErr == nil {
+		s.mu.Lock()
+		s.status.Version = info.Version
+		s.status.ServerName = info.ServerName
+		s.mu.Unlock()
+	}
 	if infoErr == nil && s.apiKey == "" {
 		if err := s.ensureAPIKey(ctx); err != nil {
 			s.log.Warn("cannot provision Remora API key", "error", err)
@@ -457,6 +470,21 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			return
 		}
 		s.watchdogFailed = false
+	}
+	if infoErr == nil && s.apiKey != "" && (!s.sessionsInitialized || s.tick%uint64(max(1, s.cfg.Remora.HealthAPIHeartbeat)) == 0) {
+		sessions, err := s.client.Sessions(ctx, s.apiKey)
+		if err != nil {
+			s.log.Debug("cannot refresh Jellyfin sessions", "error", err)
+			s.mu.Lock()
+			s.status.Sessions = nil
+			s.mu.Unlock()
+			s.sessionsInitialized = false
+		} else {
+			s.mu.Lock()
+			s.status.Sessions = sessions
+			s.mu.Unlock()
+			s.sessionsInitialized = true
+		}
 	}
 	s.mu.RLock()
 	lastHealthCheck := s.status.Jellyfin.CheckedAt
@@ -618,10 +646,29 @@ func (s *Supervisor) Status() model.Status {
 	st := s.status
 	st.Storage = append([]model.StorageResult(nil), st.Storage...)
 	st.Arguments = append([]string(nil), st.Arguments...)
+	st.Sessions = append([]model.Session(nil), st.Sessions...)
 	if st.PID > 0 && !s.process.StartedAt().IsZero() {
 		st.UptimeSeconds = int64(time.Since(s.process.StartedAt()).Seconds())
 	}
 	return st
+}
+
+func runtimeIdentity(runAsUser string) (int, string) {
+	uid := -1
+	var account *user.User
+	var err error
+	if runAsUser != "" {
+		account, err = user.Lookup(runAsUser)
+	} else {
+		account, err = user.Current()
+	}
+	if err != nil {
+		return uid, runAsUser
+	}
+	if parsed, parseErr := strconv.Atoi(account.Uid); parseErr == nil {
+		uid = parsed
+	}
+	return uid, account.Username
 }
 func (s *Supervisor) transition(state model.State, message string) {
 	s.mu.Lock()

@@ -46,6 +46,13 @@ Run in the foreground during initial validation:
 ./build/remoractl healthcheck
 ```
 
+`remoractl status` and the converged results of lifecycle commands use
+Unicode-aware tables for process identity, Jellyfin server metadata, storage,
+and active sessions. Session rows distinguish `playing`, `paused`, and `idle`
+clients without exposing access tokens. Use either `remoractl --json status` or
+`remoractl status --json` for the additive, machine-readable `/v1/status`
+document. Older clients safely ignore the new status fields.
+
 The REST listener accepts loopback addresses only. `remoractl` uses `/tmp/jellyfin-remora.sock` by default and accepts `--host http://127.0.0.1:8095` as a fallback.
 
 ## launchd

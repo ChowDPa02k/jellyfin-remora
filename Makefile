@@ -1,4 +1,4 @@
-VERSION ?= 0.3.0-alpha.1
+VERSION ?= 0.3.0-alpha.2
 COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILDINFO := github.com/ChowDPa02K/jellyfin-remora/internal/buildinfo
