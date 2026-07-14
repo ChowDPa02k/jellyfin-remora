@@ -1,0 +1,47 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Jellyfin Remora"
+           Manufacturer="Jellyfin Remora contributors"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="89D9706B-863B-4FB7-A4F2-CA9EFF3DE849"
+           Scope="perMachine">
+    <SummaryInformation Description="Native Jellyfin storage-fencing supervisor" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Jellyfin Remora is already installed."
+                  AllowSameVersionUpgrades="no"
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Test-only fault injection. It runs only when WIXFAILWHENDEFERRED=1. -->
+    <util:FailWhenDeferred />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Jellyfin Remora">
+        <Component Id="Executables" Guid="AAB33D06-EB82-4741-B1BC-DF334526286E" Bitness="always64">
+          <File Id="RemoraDaemon" Source="$(var.StageDir)\jellyfin-remora.exe" KeyPath="yes" />
+          <File Id="RemoraCtl" Source="$(var.StageDir)\remoractl.exe" />
+        </Component>
+        <Directory Id="SampleFolder" Name="sample">
+          <Component Id="WindowsSample" Guid="8E0EA92E-C0D3-413A-BA12-BB96FAD5A31B" Bitness="always64">
+            <File Source="$(var.StageDir)\sample\config-windows.yaml" KeyPath="yes" />
+          </Component>
+        </Directory>
+        <Directory Id="DocsFolder" Name="docs">
+          <Component Id="WindowsDocs" Guid="9D7D4D74-0345-4A36-A34F-2818B87D4416" Bitness="always64">
+            <File Source="$(var.StageDir)\docs\windows-storage.md" KeyPath="yes" />
+            <File Source="$(var.StageDir)\docs\windows-service.md" />
+          </Component>
+        </Directory>
+        <Component Id="License" Guid="FB933EEA-2FD8-45F7-80DA-0E06127467A3" Bitness="always64">
+          <File Source="$(var.StageDir)\LICENSE" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Jellyfin Remora" Level="1">
+      <ComponentRef Id="Executables" />
+      <ComponentRef Id="WindowsSample" />
+      <ComponentRef Id="WindowsDocs" />
+      <ComponentRef Id="License" />
+    </Feature>
+  </Package>
+</Wix>

@@ -13,3 +13,5 @@ coverage.out
 
 # macOS workspace metadata.
 .DS_Store
+.tmp/
+.wix/
