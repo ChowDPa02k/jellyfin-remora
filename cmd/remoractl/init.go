@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
@@ -27,11 +26,17 @@ func runInit(args []string) error {
 	fs := flag.NewFlagSet("remoractl init", flag.ContinueOnError)
 	sampleDir := fs.String("sample-dir", "", "directory containing platform configuration samples")
 	editor := fs.String("editor", "", "editor executable; defaults to $VISUAL, $EDITOR, vi, then nano")
+	volume := fs.String("volume", "", "Windows physical-volume mount point, such as D:\\")
+	dataRoot := fs.String("data-root", "", "Windows data root beneath the selected volume; defaults to <volume>\\jellyfin")
+	noEdit := fs.Bool("no-edit", false, "use a fully prepared sample without opening an editor")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: remoractl init [--sample-dir DIR] [--editor vi|nano]")
+		return errors.New("usage: remoractl init [--sample-dir DIR] [--editor EDITOR | --no-edit] [--volume D:\\] [--data-root PATH]")
+	}
+	if *noEdit && *editor != "" {
+		return errors.New("--editor and --no-edit are mutually exclusive")
 	}
 
 	sample, err := findPlatformSample(*sampleDir)
@@ -41,6 +46,13 @@ func runInit(args []string) error {
 	template, err := os.ReadFile(sample)
 	if err != nil {
 		return fmt.Errorf("read platform sample: %w", err)
+	}
+	template, err = preparePlatformTemplate(template, *volume, *dataRoot)
+	if err != nil {
+		return err
+	}
+	if *noEdit && hasUnresolvedInitPlaceholder(template) {
+		return errors.New("--no-edit requires a fully prepared sample without REPLACE-WITH placeholders")
 	}
 	temporary, err := os.CreateTemp("", "jellyfin-remora-config-*.yaml")
 	if err != nil {
@@ -60,16 +72,21 @@ func runInit(args []string) error {
 		return err
 	}
 
-	selectedEditor, err := chooseEditor(*editor)
-	if err != nil {
-		return err
-	}
-	if err := editConfigFile(selectedEditor, temporaryPath); err != nil {
-		return err
+	if !*noEdit {
+		selectedEditor, err := chooseEditor(*editor)
+		if err != nil {
+			return err
+		}
+		if err := editConfigFile(selectedEditor, temporaryPath); err != nil {
+			return err
+		}
 	}
 	cfg, err := config.Load(temporaryPath)
 	if err != nil {
 		return fmt.Errorf("edited configuration is invalid; no files were changed: %w", err)
+	}
+	if err := preparePlatformInitDirectories(cfg); err != nil {
+		return fmt.Errorf("prepare platform directories: %w", err)
 	}
 	configDirInfo, err := os.Stat(cfg.Jellyfin.ConfigDir)
 	if err != nil {
@@ -102,13 +119,8 @@ func runInit(args []string) error {
 	return nil
 }
 
-func platformSampleName() (string, error) {
-	switch runtime.GOOS {
-	case "darwin", "linux", "windows":
-		return "config-" + runtime.GOOS + ".yaml", nil
-	default:
-		return "", fmt.Errorf("remoractl init does not support %s", runtime.GOOS)
-	}
+func hasUnresolvedInitPlaceholder(template []byte) bool {
+	return strings.Contains(strings.ToUpper(string(template)), "REPLACE-WITH")
 }
 
 func findPlatformSample(configuredDir string) (string, error) {
@@ -208,10 +220,7 @@ func siblingRemoraExecutable() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	name := "jellyfin-remora"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
+	name := remoraExecutableName()
 	path := filepath.Join(filepath.Dir(ctl), name)
 	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf("jellyfin-remora executable must be installed beside remoractl: %w", err)

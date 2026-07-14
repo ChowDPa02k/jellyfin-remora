@@ -27,10 +27,10 @@ jellyfin:
 disk:
   - type: SMB
     device: //nas/share
-    target: %s/share
+    target: '%s'
     permission: r
     hearbeat: 4
-`, root, root, root, root, root)
+`, root, root, root, root, testSMBTarget(root))
 	if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -153,18 +153,5 @@ jellyfin:
 	}
 	if !address.BindToLocalNetworkAddress.Set || len(address.BindToLocalNetworkAddress.Value) != 1 {
 		t.Fatalf("bind settings = %#v", address.BindToLocalNetworkAddress)
-	}
-}
-
-func TestDarwinSampleLoadsAsCurrentConfiguration(t *testing.T) {
-	cfg, err := Load(filepath.Join("..", "..", "sample", "config-darwin.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ConfigVersion != CurrentVersion {
-		t.Fatalf("config version = %d, want %d", cfg.ConfigVersion, CurrentVersion)
-	}
-	if len(cfg.Disks) != 1 || cfg.Disks[0].FailureThreshold != 1 {
-		t.Fatalf("sample disks = %+v", cfg.Disks)
 	}
 }

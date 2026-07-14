@@ -1,0 +1,90 @@
+# Jellyfin Remora Windows configuration template.
+# remoractl init discovers a selected local volume and replaces these placeholders.
+
+config-version: 2
+
+restapi:
+  listen: 127.0.0.1
+  port: 8095
+  named-pipe: '\\.\pipe\jellyfin-remora'
+
+remora:
+  server-start-timeout: 60s
+  server-stop-timeout: 300s
+  io-timeout: 5s
+  recovery-successes: 3
+  monitoring:
+    interval: 1s
+    jellyfin-api:
+      interval: 10s
+      failure-threshold: 3
+    user-login:
+      enabled: false
+  data-dir: default
+  logs:
+    path: remora-log
+    level: info
+    rotation-time: 24h
+    rotation-size-mb: 30
+    preserve-time: 7d
+
+disk:
+  - type: physical
+    # Use mountvol D:\ /L or remoractl init to discover this value.
+    volume-guid: '\\?\Volume{00000000-0000-0000-0000-000000000000}\'
+    volume-label: REPLACE-WITH-VOLUME-LABEL
+    filesystem: NTFS
+    target: 'D:\'
+    # Use a writable directory beneath target; volume roots often deny writes.
+    probe-path: 'D:\jellyfin'
+    permission: rw
+    heartbeat: 1
+    failure-threshold: 1
+
+  # A mapped drive visible in Explorer is scoped to that login session. The
+  # Remora service reconnects this source in its own identity.
+  # - type: smb
+  #   device: //192.168.1.20/media
+  #   target: 'F:\'
+  #   probe-path: 'F:\jellyfin'
+  #   credential: windows-credential-manager
+  #   permission: rw
+  #   heartbeat: 3
+  #   failure-threshold: 3
+
+  # Windows Client for NFS example. Client for NFS must be enabled first.
+  # - type: nfs
+  #   device: 192.168.1.20:/exports/media
+  #   target: 'Z:\'
+  #   options: mtype=hard,timeout=2,retry=2,sec=krb5
+  #   probe-path: 'Z:\jellyfin'
+  #   permission: rw
+  #   heartbeat: 3
+  #   failure-threshold: 3
+
+jellyfin:
+  path: 'C:\Program Files\Jellyfin\Server'
+  data-dir: 'D:\jellyfin\data'
+  config-dir: 'D:\jellyfin\config'
+  cache-dir: 'D:\jellyfin\cache'
+  log-dir: 'D:\jellyfin\log'
+  web-dir: default
+  general:
+    settings:
+      server-name: Remora Windows
+  networking:
+    server-address-settings:
+      local-http-port-number: 8096
+      enable-https: false
+    ip-protocols:
+      enable-ipv4: true
+      enable-ipv6: true
+
+init:
+  server-name: Remora Windows
+  display-language: English
+  user: REPLACE-WITH-ADMIN
+  password: REPLACE-WITH-ADMIN-PASSWORD
+  preferred-metadata-language: English
+  preferred-metadata-region: United States
+  allow-remote-connections: true

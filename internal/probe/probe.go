@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 )
 
+var writePayload = []byte("jellyfin-remora-storage-probe\n")
+
 func Path(path, permission string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -23,13 +25,16 @@ func Path(path, permission string) error {
 	if permission == "r" {
 		return nil
 	}
+	if err := ensureWriteCapacity(path, uint64(len(writePayload))); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(path, ".remora-probe-*")
 	if err != nil {
 		return fmt.Errorf("create probe: %w", err)
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if _, err = tmp.Write([]byte("jellyfin-remora-storage-probe\n")); err != nil {
+	if _, err = tmp.Write(writePayload); err != nil {
 		tmp.Close()
 		return fmt.Errorf("write probe: %w", err)
 	}
