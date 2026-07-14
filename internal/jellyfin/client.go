@@ -3,6 +3,7 @@ package jellyfin
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,12 @@ import (
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
+)
+
+const (
+	defaultDeviceID  = "jellyfin-remora"
+	adminDeviceID    = "jellyfin-remora-admin"
+	watchdogDeviceID = "jellyfin-remora-watchdog-"
 )
 
 type Client struct {
@@ -199,12 +206,16 @@ func (c *Client) UpdateUsername(ctx context.Context, token string, user map[stri
 		return fmt.Errorf("Jellyfin authentication response did not include the first user ID")
 	}
 	user["Name"] = name
-	return c.do(ctx, http.MethodPost, "/Users?userId="+url.QueryEscape(id), token, user, nil, http.StatusNoContent)
+	return c.doWithDeviceID(ctx, http.MethodPost, "/Users?userId="+url.QueryEscape(id), token, user, nil, adminDeviceID, http.StatusNoContent)
 }
 
 func (c *Client) Authenticate(ctx context.Context, user, password string) (AuthenticationResult, error) {
+	return c.authenticateWithDeviceID(ctx, user, password, adminDeviceID)
+}
+
+func (c *Client) authenticateWithDeviceID(ctx context.Context, user, password, deviceID string) (AuthenticationResult, error) {
 	var out AuthenticationResult
-	err := c.do(ctx, http.MethodPost, "/Users/AuthenticateByName", "", map[string]string{"Username": user, "Pw": password}, &out, http.StatusOK)
+	err := c.doWithDeviceID(ctx, http.MethodPost, "/Users/AuthenticateByName", "", map[string]string{"Username": user, "Pw": password}, &out, deviceID, http.StatusOK)
 	if err == nil && out.AccessToken == "" {
 		err = fmt.Errorf("Jellyfin authentication returned an empty token")
 	}
@@ -212,7 +223,7 @@ func (c *Client) Authenticate(ctx context.Context, user, password string) (Authe
 }
 
 func (c *Client) EnsureAPIKey(ctx context.Context, adminToken string) (string, error) {
-	keys, err := c.apiKeys(ctx, adminToken)
+	keys, err := c.apiKeysWithDeviceID(ctx, adminToken, adminDeviceID)
 	if err != nil {
 		return "", err
 	}
@@ -222,10 +233,10 @@ func (c *Client) EnsureAPIKey(ctx context.Context, adminToken string) (string, e
 		}
 	}
 	path := "/Auth/Keys?app=" + url.QueryEscape("Jellyfin Remora")
-	if err := c.do(ctx, http.MethodPost, path, adminToken, nil, nil, http.StatusNoContent); err != nil {
+	if err := c.doWithDeviceID(ctx, http.MethodPost, path, adminToken, nil, nil, adminDeviceID, http.StatusNoContent); err != nil {
 		return "", err
 	}
-	keys, err = c.apiKeys(ctx, adminToken)
+	keys, err = c.apiKeysWithDeviceID(ctx, adminToken, adminDeviceID)
 	if err != nil {
 		return "", err
 	}
@@ -237,8 +248,12 @@ func (c *Client) EnsureAPIKey(ctx context.Context, adminToken string) (string, e
 	return "", fmt.Errorf("Jellyfin created the Remora API key but did not return it in the key list")
 }
 func (c *Client) apiKeys(ctx context.Context, token string) ([]AuthenticationInfo, error) {
+	return c.apiKeysWithDeviceID(ctx, token, defaultDeviceID)
+}
+
+func (c *Client) apiKeysWithDeviceID(ctx context.Context, token, deviceID string) ([]AuthenticationInfo, error) {
 	var out authenticationInfoQuery
-	err := c.do(ctx, http.MethodGet, "/Auth/Keys", token, nil, &out, http.StatusOK)
+	err := c.doWithDeviceID(ctx, http.MethodGet, "/Auth/Keys", token, nil, &out, deviceID, http.StatusOK)
 	return out.Items, err
 }
 
@@ -303,7 +318,11 @@ func (c *Client) EnsureWatchdogUser(ctx context.Context, adminToken string, cfg 
 	if !cfg.Enabled {
 		return nil
 	}
-	auth, err := c.Authenticate(ctx, cfg.User, cfg.Password)
+	deviceID, err := newWatchdogDeviceID()
+	if err != nil {
+		return fmt.Errorf("create watchdog device identity: %w", err)
+	}
+	auth, err := c.authenticateWithDeviceID(ctx, cfg.User, cfg.Password, deviceID)
 	if err != nil {
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) || (apiErr.StatusCode != http.StatusUnauthorized && apiErr.StatusCode != http.StatusForbidden) {
@@ -312,23 +331,28 @@ func (c *Client) EnsureWatchdogUser(ctx context.Context, adminToken string, cfg 
 		if adminToken == "" {
 			return fmt.Errorf("watchdog user %q is missing and no administrator token is available", cfg.User)
 		}
-		if err := c.do(ctx, http.MethodPost, "/Users/New", adminToken, map[string]string{"Name": cfg.User, "Password": cfg.Password}, nil, http.StatusOK); err != nil {
+		if err := c.doWithDeviceID(ctx, http.MethodPost, "/Users/New", adminToken, map[string]string{"Name": cfg.User, "Password": cfg.Password}, nil, adminDeviceID, http.StatusOK); err != nil {
 			return err
 		}
-		auth, err = c.Authenticate(ctx, cfg.User, cfg.Password)
+		auth, err = c.authenticateWithDeviceID(ctx, cfg.User, cfg.Password, deviceID)
 		if err != nil {
 			return err
 		}
 	}
 	var me map[string]any
-	if err := c.do(ctx, http.MethodGet, "/Users/Me", auth.AccessToken, nil, &me, http.StatusOK); err != nil {
-		return err
+	checkErr := c.doWithDeviceID(ctx, http.MethodGet, "/Users/Me", auth.AccessToken, nil, &me, deviceID, http.StatusOK)
+	logoutErr := c.doWithDeviceID(ctx, http.MethodPost, "/Sessions/Logout", auth.AccessToken, nil, nil, deviceID, http.StatusNoContent)
+	if logoutErr != nil {
+		logoutErr = fmt.Errorf("logout watchdog session: %w", logoutErr)
 	}
-	_ = c.do(ctx, http.MethodPost, "/Sessions/Logout", auth.AccessToken, nil, nil, http.StatusNoContent)
-	return nil
+	return errors.Join(checkErr, logoutErr)
 }
 
 func (c *Client) do(ctx context.Context, method, path, token string, body, out any, expected ...int) error {
+	return c.doWithDeviceID(ctx, method, path, token, body, out, defaultDeviceID, expected...)
+}
+
+func (c *Client) doWithDeviceID(ctx context.Context, method, path, token string, body, out any, deviceID string, expected ...int) error {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -344,7 +368,7 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	auth := `MediaBrowser Client="Jellyfin%20Remora", DeviceId="jellyfin-remora", Device="Jellyfin%20Remora", Version="dev"`
+	auth := `MediaBrowser Client="Jellyfin%20Remora", DeviceId="` + deviceID + `", Device="Jellyfin%20Remora", Version="dev"`
 	if token != "" {
 		auth += `, Token="` + token + `"`
 	}
@@ -370,6 +394,14 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil
+}
+
+func newWatchdogDeviceID() (string, error) {
+	var suffix [16]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return watchdogDeviceID + fmt.Sprintf("%x", suffix), nil
 }
 
 func (c *Client) Health(ctx context.Context) model.HealthResult {

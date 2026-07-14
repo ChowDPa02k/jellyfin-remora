@@ -343,9 +343,12 @@ func TestValidateAPIKeyRejectsRevokedKey(t *testing.T) {
 func TestEnsureWatchdogUserCreatesMissingUserAndLogsIn(t *testing.T) {
 	created := false
 	logouts := 0
+	var watchdogIDs []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deviceID := authorizationDeviceID(r.Header.Get("Authorization"))
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
+			watchdogIDs = append(watchdogIDs, deviceID)
 			if !created {
 				http.Error(w, "unknown user", http.StatusUnauthorized)
 				return
@@ -355,14 +358,19 @@ func TestEnsureWatchdogUserCreatesMissingUserAndLogsIn(t *testing.T) {
 			if !strings.Contains(r.Header.Get("Authorization"), `Token="admin-token"`) {
 				t.Errorf("missing administrator token")
 			}
+			if deviceID != adminDeviceID {
+				t.Errorf("user creation device ID = %q, want %q", deviceID, adminDeviceID)
+			}
 			created = true
 			_ = json.NewEncoder(w).Encode(map[string]string{"Name": "remora"})
 		case "/Users/Me":
+			watchdogIDs = append(watchdogIDs, deviceID)
 			if !strings.Contains(r.Header.Get("Authorization"), `Token="watchdog-token"`) {
 				t.Errorf("missing watchdog token")
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"Name": "remora"})
 		case "/Sessions/Logout":
+			watchdogIDs = append(watchdogIDs, deviceID)
 			logouts++
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -377,6 +385,88 @@ func TestEnsureWatchdogUserCreatesMissingUserAndLogsIn(t *testing.T) {
 	if !created || logouts != 1 {
 		t.Fatalf("created=%v logouts=%d", created, logouts)
 	}
+	if len(watchdogIDs) != 4 {
+		t.Fatalf("watchdog request device IDs = %v", watchdogIDs)
+	}
+	for _, deviceID := range watchdogIDs {
+		if deviceID != watchdogIDs[0] {
+			t.Fatalf("watchdog request device IDs differ: %v", watchdogIDs)
+		}
+	}
+	if !strings.HasPrefix(watchdogIDs[0], watchdogDeviceID) || watchdogIDs[0] == defaultDeviceID || watchdogIDs[0] == adminDeviceID {
+		t.Fatalf("watchdog device ID is not isolated: %q", watchdogIDs[0])
+	}
+}
+
+func TestAuthenticateUsesIsolatedAdminDevice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := authorizationDeviceID(r.Header.Get("Authorization")); got != adminDeviceID {
+			t.Errorf("device ID = %q, want %q", got, adminDeviceID)
+		}
+		_ = json.NewEncoder(w).Encode(AuthenticationResult{AccessToken: "admin-token"})
+	}))
+	defer srv.Close()
+	if _, err := New(srv.URL, time.Second).Authenticate(context.Background(), "admin", "secret"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWatchdogDeviceIDsAreUnique(t *testing.T) {
+	first, err := newWatchdogDeviceID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newWatchdogDeviceID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("watchdog device IDs were reused: %q", first)
+	}
+	if !strings.HasPrefix(first, watchdogDeviceID) || !strings.HasPrefix(second, watchdogDeviceID) {
+		t.Fatalf("unexpected watchdog device IDs: %q %q", first, second)
+	}
+}
+
+func TestEnsureWatchdogLogsOutAfterIdentityCheckFailure(t *testing.T) {
+	logouts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/AuthenticateByName":
+			_ = json.NewEncoder(w).Encode(AuthenticationResult{AccessToken: "watchdog-token"})
+		case "/Users/Me":
+			http.Error(w, "identity check failed", http.StatusInternalServerError)
+		case "/Sessions/Logout":
+			logouts++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	cfg := config.UserLoginWatchdogConfig{Enabled: true, User: "remora", Password: "secret"}
+	err := New(srv.URL, time.Second).EnsureWatchdogUser(context.Background(), "admin-token", cfg)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("identity check failure was not propagated: %v", err)
+	}
+	if logouts != 1 {
+		t.Fatalf("logouts=%d, want 1", logouts)
+	}
+}
+
+func authorizationDeviceID(header string) string {
+	const marker = `DeviceId="`
+	start := strings.Index(header, marker)
+	if start < 0 {
+		return ""
+	}
+	value := header[start+len(marker):]
+	end := strings.IndexByte(value, '"')
+	if end < 0 {
+		return ""
+	}
+	return value[:end]
 }
 
 func TestEnsureWatchdogWrongPasswordFailsClosed(t *testing.T) {
