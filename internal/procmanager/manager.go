@@ -229,10 +229,16 @@ func (m *Manager) Stop(ctx context.Context, force bool, timeout time.Duration) e
 		return nil
 	}
 	if err := m.backend.SignalGroup(pid, force); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if _, running := m.Info(ctx); !running {
+			return nil
+		}
 		if force {
 			return err
 		}
 		if forceErr := m.backend.SignalGroup(pid, true); forceErr != nil && !errors.Is(forceErr, os.ErrProcessDone) {
+			if _, running := m.Info(ctx); !running {
+				return nil
+			}
 			return fmt.Errorf("graceful stop failed: %v; force stop failed: %w", err, forceErr)
 		}
 		return m.waitForExit(ctx, pid, 5*time.Second)
@@ -244,6 +250,9 @@ func (m *Manager) Stop(ctx context.Context, force bool, timeout time.Duration) e
 		return nil
 	}
 	if err := m.backend.SignalGroup(pid, true); err != nil {
+		if _, running := m.Info(ctx); !running {
+			return nil
+		}
 		return err
 	}
 	return m.waitForExit(ctx, pid, 5*time.Second)

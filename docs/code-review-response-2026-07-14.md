@@ -17,7 +17,7 @@ review. Severity labels and identifiers follow that report.
 | N2 duplicate optional decoding | Accepted | `Optional[T].UnmarshalYAML` delegates to the shared helper. |
 | N3 three atomic writers | Not consolidated | Their ownership policies intentionally differ. Jellyfin XML must preserve Jellyfin ownership; Remora-owned state and secrets must not inherit destination ownership. The distinction is documented before any future mechanical consolidation. |
 | N5 duplicate watchdog-ready assignment | Accepted | The caller-side duplicate assignment was removed; `ensureWatchdog` owns the state transition. |
-| N6 API key/session-token semantics | Clarified | The fallback API key authorizes administrator API operations only. `/Users/Me` and logout use the access token returned by the watchdog user's own authentication; a code comment now makes this boundary explicit. |
+| N6 API key/session-token semantics | Clarified | The fallback API key authorizes administrator API operations only. `/Users/Me` uses the cached access token returned by the watchdog user's own authentication; a code comment now makes this boundary explicit. |
 | N7 crash-slice reuse readability | Accepted | The safe in-place filtering invariant is documented beside the operation. |
 
 The review contains no N4 item; no disposition was inferred for an absent finding.

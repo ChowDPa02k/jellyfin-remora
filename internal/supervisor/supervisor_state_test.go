@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,6 +129,40 @@ func TestHealthySetupListenerDoesNotReportRunningBeforePublicInfoIsReady(t *test
 	}
 	if status.Jellyfin.Healthy || !strings.Contains(status.Jellyfin.Error, "public information is unavailable") {
 		t.Fatalf("application health=%+v", status.Jellyfin)
+	}
+}
+
+func TestTransientPublicInfoFailureDoesNotRestartReadyServer(t *testing.T) {
+	var publicCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			if publicCalls.Add(1) > 1 {
+				http.Error(w, "server busy", http.StatusServiceUnavailable)
+				return
+			}
+			complete := true
+			_ = json.NewEncoder(w).Encode(jellyfin.PublicInfo{StartupWizardCompleted: &complete})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	process := &stateProcess{running: true, started: time.Now().Add(-time.Hour)}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.cfg.Remora.APIFailureThreshold = 1
+	s.status.State = model.StateRunning
+	s.reconcile(context.Background())
+	if !s.applicationReady || s.Status().State != model.StateRunning {
+		t.Fatalf("initial readiness=%t state=%s", s.applicationReady, s.Status().State)
+	}
+	s.reconcile(context.Background())
+	if !process.running || s.Status().State != model.StateRunning || s.apiFailures != 0 {
+		t.Fatalf("running=%t state=%s apiFailures=%d", process.running, s.Status().State, s.apiFailures)
 	}
 }
 

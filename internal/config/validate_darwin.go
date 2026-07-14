@@ -15,8 +15,8 @@ func validatePlatformConfig(c *Config) error {
 }
 
 func validatePlatformDisk(index int, disk DiskConfig) error {
-	if disk.Type == "physical" && disk.VolumeGUID != "" {
-		return fmt.Errorf("disk[%d].volume-guid is only supported on Windows", index)
+	if disk.VolumeGUID != "" || disk.VolumeLabel != "" || disk.Filesystem != "" {
+		return fmt.Errorf("disk[%d] volume-guid, volume-label, and filesystem are only supported on Windows", index)
 	}
 	if disk.Credential != "" {
 		return fmt.Errorf("disk[%d].credential is only supported on Windows", index)

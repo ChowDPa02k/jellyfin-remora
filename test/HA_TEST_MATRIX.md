@@ -19,8 +19,11 @@ The repository currently contains 111 top-level tests. HA-specific coverage incl
 - Control-plane tests cover version and operation-ID headers, structured safety errors, deterministic CLI exit codes, and bounded/ordered state-transition history.
 - Phase 3 control-plane coverage includes concurrent operation IDs, old-client lifecycle compatibility, canceled mutations, actual slow-header disconnection, malformed/oversized request rejection, bounded non-symlink log reads, owner-only socket restart, redacted API-key CRUD, session stop, atomic configuration editing, diagnostic bundle permissions, and managed-tree-only ffmpeg accounting.
 - A transient Darwin `U` process state with a healthy API remains `RUNNING`, while continuously uninterruptible `D`/`U` timeout paths still force-kill or open `PROCESS_FAILED` when termination fails.
+- After application readiness is established, a transient `/System/Info/Public` failure cannot override a healthy `/health` result or trigger a restart; before readiness, the same split setup-listener state remains `STARTING`.
+- Graceful API shutdown is race-safe: if Jellyfin exits before the following process-group signal, the missing process is accepted as a successful stop instead of opening `PROCESS_FAILED`.
+- Darwin rejects Windows named-pipe, volume-GUID/label/filesystem, and Credential Manager fields instead of silently accepting unenforced identity constraints.
 - Versioned configuration migration preserves legacy heartbeat timing; `remoractl init` rejects invalid edits without replacing an existing configuration, uses owner-only file mode, rejects symlink destinations, and emits a path-correct Darwin launchd plist.
-- Jellyfin health success/failure, first-run sequence, bootstrap-user rename, API-key creation/validation, revoked-key rejection, watchdog creation/login/logout, and wrong-password failure propagation.
+- Jellyfin health success/failure, first-run sequence, bootstrap-user rename, API-key creation/validation, revoked-key rejection, persistent watchdog-session reuse, rejected-token reauthentication, and wrong-password failure propagation.
 - Setup selection values are resolved from the same display-language, metadata-language, and country catalogs used by Jellyfin Web; API codes entered as configuration labels fail closed, while omitted selections preserve server defaults.
 - Jellyfin 10.11/12 API contract fixtures; setup-wizard XML suppression; configured/unconfigured ownership precedence; atomic backup, idempotence, asset prevalidation, multi-file rollback, and fail-closed process start.
 - A new PID cannot inherit the prior PID's healthy result or clear crash history before receiving its own health check.
@@ -42,7 +45,7 @@ All items below passed on 2026-07-13:
 | Empty data/config/cache/log directories | Automatic setup, one API key, controlled restart, `RUNNING` | Pass |
 | Revoke active Remora API key | Detect 401, authenticate administrator, replace key atomically, no Jellyfin outage | Pass |
 | Change watchdog password externally | Sticky `DEGRADED`; ordinary health cannot clear it | Pass |
-| Restore watchdog password | Next real login/logout clears degradation | Pass |
+| Restore watchdog password | Next session validation and reauthentication clears degradation | Pass |
 | Kill healthy Jellyfin with `SIGKILL` | Backoff and replacement PID | Pass |
 | Kill five startup processes before health | `PROCESS_FAILED` circuit opens | Pass |
 | Administrative start after circuit opens | Circuit resets and Jellyfin returns to `RUNNING` | Pass |

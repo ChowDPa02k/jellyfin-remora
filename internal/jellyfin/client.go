@@ -3,7 +3,6 @@ package jellyfin
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
@@ -20,12 +20,14 @@ import (
 const (
 	defaultDeviceID  = "jellyfin-remora"
 	adminDeviceID    = "jellyfin-remora-admin"
-	watchdogDeviceID = "jellyfin-remora-watchdog-"
+	watchdogDeviceID = "jellyfin-remora-watchdog"
 )
 
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL       string
+	http          *http.Client
+	watchdogMu    sync.Mutex
+	watchdogToken string
 }
 
 type PublicInfo struct {
@@ -325,14 +327,23 @@ func (c *Client) EnsureWatchdogUser(ctx context.Context, adminToken string, cfg 
 	if !cfg.Enabled {
 		return nil
 	}
-	deviceID, err := newWatchdogDeviceID()
-	if err != nil {
-		return fmt.Errorf("create watchdog device identity: %w", err)
+	c.watchdogMu.Lock()
+	defer c.watchdogMu.Unlock()
+
+	if c.watchdogToken != "" {
+		err := c.checkWatchdogSession(ctx, c.watchdogToken)
+		if err == nil {
+			return nil
+		}
+		if !isAuthenticationFailure(err) {
+			return err
+		}
+		c.watchdogToken = ""
 	}
-	auth, err := c.authenticateWithDeviceID(ctx, cfg.User, cfg.Password, deviceID)
+
+	auth, err := c.authenticateWithDeviceID(ctx, cfg.User, cfg.Password, watchdogDeviceID)
 	if err != nil {
-		var apiErr *APIError
-		if !errors.As(err, &apiErr) || (apiErr.StatusCode != http.StatusUnauthorized && apiErr.StatusCode != http.StatusForbidden) {
+		if !isAuthenticationFailure(err) {
 			return err
 		}
 		if adminToken == "" {
@@ -341,18 +352,27 @@ func (c *Client) EnsureWatchdogUser(ctx context.Context, adminToken string, cfg 
 		if err := c.doWithDeviceID(ctx, http.MethodPost, "/Users/New", adminToken, map[string]string{"Name": cfg.User, "Password": cfg.Password}, nil, adminDeviceID, http.StatusOK); err != nil {
 			return err
 		}
-		auth, err = c.authenticateWithDeviceID(ctx, cfg.User, cfg.Password, deviceID)
+		auth, err = c.authenticateWithDeviceID(ctx, cfg.User, cfg.Password, watchdogDeviceID)
 		if err != nil {
 			return err
 		}
 	}
-	var me map[string]any
-	checkErr := c.doWithDeviceID(ctx, http.MethodGet, "/Users/Me", auth.AccessToken, nil, &me, deviceID, http.StatusOK)
-	logoutErr := c.doWithDeviceID(ctx, http.MethodPost, "/Sessions/Logout", auth.AccessToken, nil, nil, deviceID, http.StatusNoContent)
-	if logoutErr != nil {
-		logoutErr = fmt.Errorf("logout watchdog session: %w", logoutErr)
+	c.watchdogToken = auth.AccessToken
+	err = c.checkWatchdogSession(ctx, auth.AccessToken)
+	if isAuthenticationFailure(err) {
+		c.watchdogToken = ""
 	}
-	return errors.Join(checkErr, logoutErr)
+	return err
+}
+
+func (c *Client) checkWatchdogSession(ctx context.Context, token string) error {
+	var me map[string]any
+	return c.doWithDeviceID(ctx, http.MethodGet, "/Users/Me", token, nil, &me, watchdogDeviceID, http.StatusOK)
+}
+
+func isAuthenticationFailure(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden)
 }
 
 func (c *Client) do(ctx context.Context, method, path, token string, body, out any, expected ...int) error {
@@ -401,14 +421,6 @@ func (c *Client) doWithDeviceID(ctx context.Context, method, path, token string,
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil
-}
-
-func newWatchdogDeviceID() (string, error) {
-	var suffix [16]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return "", err
-	}
-	return watchdogDeviceID + fmt.Sprintf("%x", suffix), nil
 }
 
 func (c *Client) Health(ctx context.Context) model.HealthResult {

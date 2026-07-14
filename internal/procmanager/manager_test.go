@@ -18,6 +18,23 @@ type stopFallbackBackend struct {
 	forces  []bool
 }
 
+type alreadyExitedBackend struct{ platform.Backend }
+
+func (alreadyExitedBackend) SignalGroup(int, bool) error {
+	return errors.New("no such process")
+}
+
+func (alreadyExitedBackend) ProcessInfo(context.Context, int) (platform.ProcessInfo, error) {
+	return platform.ProcessInfo{}, errors.New("no such process")
+}
+
+func TestStopAcceptsProcessThatExitedBeforeSignal(t *testing.T) {
+	manager := &Manager{backend: alreadyExitedBackend{}, pid: 42}
+	if err := manager.Stop(context.Background(), false, time.Second); err != nil {
+		t.Fatalf("already-exited process reported as stop failure: %v", err)
+	}
+}
+
 func (b *stopFallbackBackend) SignalGroup(_ int, force bool) error {
 	b.forces = append(b.forces, force)
 	if !force {

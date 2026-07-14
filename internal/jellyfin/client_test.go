@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -361,14 +362,16 @@ func TestShutdownUsesAuthenticatedSystemEndpoint(t *testing.T) {
 	}
 }
 
-func TestEnsureWatchdogUserCreatesMissingUserAndLogsIn(t *testing.T) {
+func TestEnsureWatchdogUserCreatesMissingUserAndReusesSession(t *testing.T) {
 	created := false
-	logouts := 0
+	authentications := 0
+	identityChecks := 0
 	var watchdogIDs []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		deviceID := authorizationDeviceID(r.Header.Get("Authorization"))
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
+			authentications++
 			watchdogIDs = append(watchdogIDs, deviceID)
 			if !created {
 				http.Error(w, "unknown user", http.StatusUnauthorized)
@@ -385,26 +388,30 @@ func TestEnsureWatchdogUserCreatesMissingUserAndLogsIn(t *testing.T) {
 			created = true
 			_ = json.NewEncoder(w).Encode(map[string]string{"Name": "remora"})
 		case "/Users/Me":
+			identityChecks++
 			watchdogIDs = append(watchdogIDs, deviceID)
 			if !strings.Contains(r.Header.Get("Authorization"), `Token="watchdog-token"`) {
 				t.Errorf("missing watchdog token")
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"Name": "remora"})
 		case "/Sessions/Logout":
-			watchdogIDs = append(watchdogIDs, deviceID)
-			logouts++
-			w.WriteHeader(http.StatusNoContent)
+			t.Error("persistent watchdog session must not log out after a health check")
+			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
 	cfg := config.UserLoginWatchdogConfig{Enabled: true, User: "remora", Password: "secret"}
-	if err := New(srv.URL, time.Second).EnsureWatchdogUser(context.Background(), "admin-token", cfg); err != nil {
+	client := New(srv.URL, time.Second)
+	if err := client.EnsureWatchdogUser(context.Background(), "admin-token", cfg); err != nil {
 		t.Fatal(err)
 	}
-	if !created || logouts != 1 {
-		t.Fatalf("created=%v logouts=%d", created, logouts)
+	if err := client.EnsureWatchdogUser(context.Background(), "admin-token", cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !created || authentications != 2 || identityChecks != 2 {
+		t.Fatalf("created=%v authentications=%d identityChecks=%d", created, authentications, identityChecks)
 	}
 	if len(watchdogIDs) != 4 {
 		t.Fatalf("watchdog request device IDs = %v", watchdogIDs)
@@ -414,7 +421,7 @@ func TestEnsureWatchdogUserCreatesMissingUserAndLogsIn(t *testing.T) {
 			t.Fatalf("watchdog request device IDs differ: %v", watchdogIDs)
 		}
 	}
-	if !strings.HasPrefix(watchdogIDs[0], watchdogDeviceID) || watchdogIDs[0] == defaultDeviceID || watchdogIDs[0] == adminDeviceID {
+	if watchdogIDs[0] != watchdogDeviceID || watchdogIDs[0] == defaultDeviceID || watchdogIDs[0] == adminDeviceID {
 		t.Fatalf("watchdog device ID is not isolated: %q", watchdogIDs[0])
 	}
 }
@@ -432,47 +439,78 @@ func TestAuthenticateUsesIsolatedAdminDevice(t *testing.T) {
 	}
 }
 
-func TestWatchdogDeviceIDsAreUnique(t *testing.T) {
-	first, err := newWatchdogDeviceID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := newWatchdogDeviceID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first == second {
-		t.Fatalf("watchdog device IDs were reused: %q", first)
-	}
-	if !strings.HasPrefix(first, watchdogDeviceID) || !strings.HasPrefix(second, watchdogDeviceID) {
-		t.Fatalf("unexpected watchdog device IDs: %q %q", first, second)
-	}
-}
-
-func TestEnsureWatchdogLogsOutAfterIdentityCheckFailure(t *testing.T) {
-	logouts := 0
+func TestEnsureWatchdogReauthenticatesOnlyAfterTokenRejection(t *testing.T) {
+	authentications := 0
+	rejectFirstToken := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
-			_ = json.NewEncoder(w).Encode(AuthenticationResult{AccessToken: "watchdog-token"})
+			authentications++
+			_ = json.NewEncoder(w).Encode(AuthenticationResult{AccessToken: fmt.Sprintf("watchdog-token-%d", authentications)})
 		case "/Users/Me":
-			http.Error(w, "identity check failed", http.StatusInternalServerError)
+			if rejectFirstToken && strings.Contains(r.Header.Get("Authorization"), `Token="watchdog-token-1"`) {
+				http.Error(w, "token revoked", http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"Name": "remora"})
 		case "/Sessions/Logout":
-			logouts++
-			w.WriteHeader(http.StatusNoContent)
+			t.Error("persistent watchdog session must not log out")
+			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
 	cfg := config.UserLoginWatchdogConfig{Enabled: true, User: "remora", Password: "secret"}
-	err := New(srv.URL, time.Second).EnsureWatchdogUser(context.Background(), "admin-token", cfg)
+	client := New(srv.URL, time.Second)
+	if err := client.EnsureWatchdogUser(context.Background(), "admin-token", cfg); err != nil {
+		t.Fatal(err)
+	}
+	rejectFirstToken = true
+	if err := client.EnsureWatchdogUser(context.Background(), "admin-token", cfg); err != nil {
+		t.Fatal(err)
+	}
+	if authentications != 2 {
+		t.Fatalf("authentications=%d, want 2", authentications)
+	}
+}
+
+func TestEnsureWatchdogKeepsSessionAcrossTransientIdentityFailure(t *testing.T) {
+	authentications := 0
+	failIdentity := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/AuthenticateByName":
+			authentications++
+			_ = json.NewEncoder(w).Encode(AuthenticationResult{AccessToken: "watchdog-token"})
+		case "/Users/Me":
+			if failIdentity {
+				failIdentity = false
+				http.Error(w, "server busy", http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"Name": "remora"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	cfg := config.UserLoginWatchdogConfig{Enabled: true, User: "remora", Password: "secret"}
+	client := New(srv.URL, time.Second)
+	if err := client.EnsureWatchdogUser(context.Background(), "admin-token", cfg); err != nil {
+		t.Fatal(err)
+	}
+	failIdentity = true
+	err := client.EnsureWatchdogUser(context.Background(), "admin-token", cfg)
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("identity check failure was not propagated: %v", err)
 	}
-	if logouts != 1 {
-		t.Fatalf("logouts=%d, want 1", logouts)
+	if err := client.EnsureWatchdogUser(context.Background(), "admin-token", cfg); err != nil {
+		t.Fatal(err)
+	}
+	if authentications != 1 {
+		t.Fatalf("transient failure caused %d authentications, want 1", authentications)
 	}
 }
 

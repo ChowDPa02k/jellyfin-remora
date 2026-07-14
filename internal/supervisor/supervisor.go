@@ -89,6 +89,7 @@ type Supervisor struct {
 	initializationFails  int
 	nextInitialization   time.Time
 	sessionsInitialized  bool
+	applicationReady     bool
 	events               []model.Event
 	eventSequence        uint64
 }
@@ -267,6 +268,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	}
 	if !running {
 		s.hungSince = time.Time{}
+		s.applicationReady = false
 		s.mu.Lock()
 		s.status.PID = 0
 		s.status.ProcessState = ""
@@ -385,6 +387,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		} else {
 			s.wasRunning = true
 			s.apiFailures = 0
+			s.applicationReady = false
 			s.mu.Lock()
 			s.status.Jellyfin = model.HealthResult{}
 			s.status.Sessions = nil
@@ -415,10 +418,15 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	} else {
 		infoErr = errors.New("Jellyfin core is not ready")
 	}
+	if readiness.Healthy && infoErr == nil {
+		s.applicationReady = true
+	}
 	applicationHealth := readiness
-	if readiness.Healthy && infoErr != nil {
+	if readiness.Healthy && infoErr != nil && !s.applicationReady {
 		applicationHealth.Healthy = false
 		applicationHealth.Error = "Jellyfin public information is unavailable: " + infoErr.Error()
+	} else if readiness.Healthy && infoErr != nil {
+		s.log.Debug("cannot refresh Jellyfin public information; retaining established application readiness", "error", infoErr)
 	}
 	s.mu.Lock()
 	s.status.Jellyfin = applicationHealth
@@ -541,7 +549,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	healthCountDue := s.tick%uint64(max(1, s.cfg.Remora.HealthAPIHeartbeat)) == 0 ||
 		(age >= s.cfg.Remora.ServerStartTimeout.Duration && previousHealthCheck.IsZero())
 	if healthCountDue {
-		if applicationHealth.Healthy {
+		if readiness.Healthy {
 			s.apiFailures = 0
 		} else {
 			s.apiFailures++
@@ -557,6 +565,8 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.transition(model.StateRunning, "")
 		}
 		s.crashes = nil
+	} else if readiness.Healthy {
+		s.transition(model.StateStarting, health.Error)
 	} else if age < s.cfg.Remora.ServerStartTimeout.Duration {
 		s.transition(model.StateStarting, health.Error)
 	} else if s.apiFailures >= s.cfg.Remora.APIFailureThreshold {
@@ -637,7 +647,7 @@ func (s *Supervisor) adminCredential() string {
 		return s.adminToken
 	}
 	// A Remora API key can authorize administrative API calls, but watchdog
-	// login, /Users/Me, and logout always use the watchdog user's own session.
+	// login and /Users/Me always use the watchdog user's persistent session.
 	return s.apiKey
 }
 

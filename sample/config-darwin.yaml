@@ -34,7 +34,8 @@ remora:
       # Consecutive failed /health checks before Jellyfin is restarted.
       failure-threshold: 3
     user-login:
-      # Exercise authentication, /Users/Me, and logout with a real user.
+      # Keep a real user session and check /Users/Me; reauthenticate only after
+      # Jellyfin rejects or revokes the cached session token.
       enabled: true
       # Interval between user-login checks.
       interval: 60s
