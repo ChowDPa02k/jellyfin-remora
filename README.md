@@ -1,6 +1,9 @@
 # Jellyfin Remora
 
-Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS milestone supports storage fencing, process supervision, first-run setup, pre-start XML configuration reconciliation, API-key provisioning, login watchdog checks, health checks, and local control.
+Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS and
+Windows alpha milestones support storage fencing, process supervision, first-run
+setup, pre-start XML configuration reconciliation, API-key provisioning, login
+watchdog checks, health checks, and local control.
 
 Development milestones through the cross-platform stable release are tracked in [ROADMAP.md](ROADMAP.md).
 The repeatable and real-fault high-availability coverage is recorded in [test/HA_TEST_MATRIX.md](test/HA_TEST_MATRIX.md).
@@ -15,21 +18,22 @@ go build -o build/jellyfin-remora ./cmd/jellyfin-remora
 go build -o build/remoractl ./cmd/remoractl
 ```
 
-The fully annotated Darwin template is
-[`sample/config-darwin.yaml`](sample/config-darwin.yaml). For an installed pair
-of binaries, run `remoractl init`: it selects the host-platform template, opens
-a mode-`0600` temporary copy with `$VISUAL`, `$EDITOR`, `vi`, or `nano`, strictly
-validates the saved YAML, and atomically writes it to
-`jellyfin.config-dir/config.yaml`. On macOS it also generates a launchd plist in
-that directory using the actual binary and configuration paths. The command
-does not bootstrap the plist automatically. Linux systemd and Windows Task
-Scheduler generators are reserved stubs until their platform phases; SysVinit
-will not be supported.
+The platform templates are [`sample/config-darwin.yaml`](sample/config-darwin.yaml)
+and [`sample/config-windows.yaml`](sample/config-windows.yaml). For an installed
+pair of binaries, run `remoractl init`: it selects the host template, edits and
+strictly validates a temporary YAML copy, then atomically writes
+`jellyfin.config-dir/config.yaml`. Automated Windows provisioning can use a
+fully prepared sample with `--volume`, `--data-root`, and `--no-edit`; unresolved
+placeholders are rejected.
 
-Replace the template's volume UUID, accounts, and credentials, and create all
-four Jellyfin directories with ownership and write permission for the selected
-user. Remora deliberately does not create missing data directories because
-doing so beneath a lost `/Volumes` mount could create a false local data tree.
+On macOS, init generates a launchd plist and never creates a missing data tree
+beneath an unverified `/Volumes` path. On Windows, it resolves the selected
+mount point to a native volume GUID, verifies every configured storage target,
+creates Jellyfin directories only beneath those verified targets, and generates
+an administrator-reviewed native Service/Task Scheduler installer. Neither
+platform installs or starts the generated service definition automatically.
+Linux systemd generation remains reserved for Phase 5; SysVinit will not be
+supported.
 When Remora runs as root, `jellyfin.run-as-user` is mandatory and Jellyfin is
 started with that account.
 
