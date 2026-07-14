@@ -121,9 +121,11 @@ The shared API and CLI contract cross-builds for all declared targets.
 ## Phase 4 — Windows support (`v0.6.0-alpha`)
 
 Windows precedes native Linux support because Linux users are more likely to run
-Jellyfin through Docker, while Windows users need a native supervisor. The first
-deliverable is therefore a Windows-safe storage configuration and probe backend;
-process and service integration build on that storage boundary.
+Jellyfin through Docker, while Windows users need a native supervisor. Windows
+Server is the primary compatibility target for native Jellyfin deployments;
+Windows 11 Pro provides the desktop/workstation baseline. The first deliverable
+is therefore a Windows-safe storage configuration and probe backend; process and
+service integration build on that storage boundary.
 
 Implemented on the initial Windows development host:
 
@@ -207,12 +209,14 @@ Implemented on the initial Windows development host:
   transactional rollback with old-version restoration, major upgrade, downgrade
   blocking, and uninstall with complete Program Files cleanup; the lifecycle is
   captured in `packaging/windows/test-msi.ps1` for disposable elevated hosts.
-- CI pins explicit Windows Server 2022 and 2025 runners for native tests,
-  clean-volume initialization, and the complete unsigned MSI lifecycle instead
-  of relying only on the moving `windows-latest` label.
+- CI pins explicit Windows Server 2022 and 2025 runners as the primary Windows
+  compatibility matrix for native tests, clean-volume initialization, and the
+  complete unsigned MSI lifecycle instead of relying on the moving
+  `windows-latest` label.
 
-Windows 11 Pro 23H2 build 22631 VM evidence recorded on 2026-07-14 covers clean
-init without third-party tools; a temporary NTFS VHD wrong-volume/reused-letter,
+Windows 11 Pro 23H2 build 22631 is the desktop compatibility baseline and its VM
+evidence recorded on 2026-07-14 replaces a separate Windows 10 run. It covers
+clean init without third-party tools; a temporary NTFS VHD wrong-volume/reused-letter,
 missing target, reassignment, read-only, zero-free-space, detach, and recovery
 matrix; live Generic-Credential SMB connect/write/disconnect/reconnect and
 credential deletion/fail-closed/restoration recovery under a password-backed
@@ -244,14 +248,16 @@ the Dashboard media-library picker can use both mappings without requiring them
 to appear in Explorer.
 
 Still required before the Phase 4 exit gate can pass: release-certificate
-Authenticode signing and verification, clean Windows 10 VM evidence, and
-successful results from the declared Windows Server 2022/2025 CI matrix. Windows
-arm64 remains build-only and is not a released target until its complete native
-dependency and Jellyfin matrix passes.
+Authenticode signing and verification, plus successful results from the primary
+Windows Server 2022/2025 compatibility matrix. The completed Windows 11 Pro run
+satisfies the desktop-client requirement; a separate Windows 10 run is not
+required. Windows arm64 remains build-only and is not a released target until
+its complete native dependency and Jellyfin matrix passes.
 
 Exit gate:
 
-- Windows 10/11 and supported Windows Server VM matrices pass on amd64; arm64 is released only if the complete native dependency and Jellyfin test matrix passes.
+- Windows 11 Pro passes the desktop/workstation amd64 matrix; its recorded clean-VM evidence satisfies the client baseline without a duplicate Windows 10 run.
+- Windows Server 2022 and 2025 pass the primary amd64 compatibility matrix, including native service lifecycle, clean initialization, storage fault recovery, reboot, upgrade/rollback, and MSI uninstall behavior; arm64 is released only if the complete native dependency and Jellyfin test matrix passes.
 - A clean Windows installation can produce a valid physical-volume configuration through `remoractl init` without third-party tools, registry browsing, or prior knowledge of volume GUIDs; the documented `mountvol` and PowerShell procedures produce the same identity.
 - Physical-volume identity tests prove that a reused drive letter cannot make the wrong disk healthy and that a configured volume remains identifiable across drive-letter changes.
 - Reboot, service-account change, SMB credential expiry, share disconnect, NFS mount loss where supported, drive-letter change, hung process, forced stop, and upgrade tests pass.
