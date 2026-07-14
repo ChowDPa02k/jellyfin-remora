@@ -31,6 +31,7 @@ try {
   $content = $content.Replace("path: 'C:\Program Files\Jellyfin\Server'", "path: '$daemon'")
   $content = $content.Replace('REPLACE-WITH-ADMIN-PASSWORD', 'clean-init-password')
   $content = $content.Replace('REPLACE-WITH-ADMIN', 'clean-init-admin')
+  $content = $content.Replace('REPLACE-WITH-WATCHDOG-PASSWORD', 'clean-watchdog-password')
   [IO.File]::WriteAllText($preparedSample, $content, [Text.UTF8Encoding]::new($false))
 
   $volume = [IO.Path]::GetPathRoot($sandbox)

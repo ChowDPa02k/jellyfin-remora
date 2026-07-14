@@ -9,6 +9,32 @@ import (
 	"testing"
 )
 
+func TestWindowsSampleLoadsAsCurrentConfiguration(t *testing.T) {
+	cfg, err := Load(filepath.Join("..", "..", "sample", "config-windows.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConfigVersion != CurrentVersion {
+		t.Fatalf("config version = %d, want %d", cfg.ConfigVersion, CurrentVersion)
+	}
+	if len(cfg.Disks) != 1 || cfg.Disks[0].VolumeGUID == "" || cfg.Disks[0].ProbePath == "" {
+		t.Fatalf("sample physical disk = %+v", cfg.Disks)
+	}
+	if cfg.Remora.Monitoring.UserLogin.Interval.Duration <= 0 || cfg.Remora.Monitoring.UserLogin.User == "" {
+		t.Fatalf("sample user-login monitor = %+v", cfg.Remora.Monitoring.UserLogin)
+	}
+	if cfg.Jellyfin.Parameters["package-name"] != "jellyfin-remora" {
+		t.Fatalf("sample parameters = %+v", cfg.Jellyfin.Parameters)
+	}
+	if !cfg.Jellyfin.General.Paths.CachePath.Set || !cfg.Jellyfin.Branding.EnableSplashScreen.Set || !cfg.Jellyfin.Playback.Transcoding.TranscodePath.Set {
+		t.Fatal("sample does not exercise all managed Jellyfin setting groups")
+	}
+	server := cfg.Jellyfin.Networking.ServerAddressSettings
+	if !server.LocalHTTPPortConfigured || !server.LocalHTTPSPortConfigured || !server.EnableHTTPSConfigured || !server.BaseURLConfigured || !server.BindToLocalNetworkAddress.Set {
+		t.Fatalf("sample server address settings = %+v", server)
+	}
+}
+
 func TestWindowsPhysicalVolumeConfiguration(t *testing.T) {
 	root := t.TempDir()
 	body := `config-version: 2
