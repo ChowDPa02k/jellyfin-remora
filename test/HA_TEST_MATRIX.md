@@ -7,7 +7,7 @@ temporary permission, credential, and mount change.
 
 ## Automated coverage
 
-The repository currently contains 95 top-level tests. HA-specific coverage includes:
+The repository currently contains 110 top-level tests. HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, single-sample health accounting, transient startup-wizard rejection, bounded first-start initialization retries, five-failure setup/process circuit breakers, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, original adopted-process uptime, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, kernel argv-boundary identity (including paths with spaces), and macOS environment preservation.
@@ -17,6 +17,7 @@ The repository currently contains 95 top-level tests. HA-specific coverage inclu
 - Fenced start rejection, force-stop routing, socket-file safety, duplicate Remora instance locking, and CLI convergence across `PROCESS_FAILED`, `STORAGE_FENCED`, and restart PID replacement.
 - `remoractl` validates request construction and pins a validated `localhost` resolution to prevent a second DNS/hosts lookup from changing the control destination.
 - Control-plane tests cover version and operation-ID headers, structured safety errors, deterministic CLI exit codes, and bounded/ordered state-transition history.
+- Phase 3 control-plane coverage includes concurrent operation IDs, old-client lifecycle compatibility, canceled mutations, actual slow-header disconnection, malformed/oversized request rejection, bounded non-symlink log reads, owner-only socket restart, redacted API-key CRUD, session stop, atomic configuration editing, diagnostic bundle permissions, and managed-tree-only ffmpeg accounting.
 - Versioned configuration migration preserves legacy heartbeat timing; `remoractl init` rejects invalid edits without replacing an existing configuration, uses owner-only file mode, rejects symlink destinations, and emits a path-correct Darwin launchd plist.
 - Jellyfin health success/failure, first-run sequence, bootstrap-user rename, API-key creation/validation, revoked-key rejection, watchdog creation/login/logout, and wrong-password failure propagation.
 - Setup selection values are resolved from the same display-language, metadata-language, and country catalogs used by Jellyfin Web; API codes entered as configuration labels fail closed, while omitted selections preserve server defaults.

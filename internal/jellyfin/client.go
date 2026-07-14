@@ -72,6 +72,7 @@ type sessionInfo struct {
 	PlayState *struct {
 		IsPaused bool `json:"IsPaused"`
 	} `json:"PlayState"`
+	TranscodingInfo json.RawMessage `json:"TranscodingInfo"`
 }
 type APIError struct {
 	StatusCode            int
@@ -241,6 +242,18 @@ func (c *Client) apiKeys(ctx context.Context, token string) ([]AuthenticationInf
 	return out.Items, err
 }
 
+func (c *Client) APIKeys(ctx context.Context, token string) ([]AuthenticationInfo, error) {
+	return c.apiKeys(ctx, token)
+}
+
+func (c *Client) CreateAPIKey(ctx context.Context, token, name string) error {
+	return c.do(ctx, http.MethodPost, "/Auth/Keys?app="+url.QueryEscape(name), token, nil, nil, http.StatusNoContent)
+}
+
+func (c *Client) RevokeAPIKey(ctx context.Context, token, key string) error {
+	return c.do(ctx, http.MethodDelete, "/Auth/Keys/"+url.PathEscape(key), token, nil, nil, http.StatusNoContent)
+}
+
 func (c *Client) ValidateAPIKey(ctx context.Context, token string) error {
 	_, err := c.apiKeys(ctx, token)
 	return err
@@ -276,9 +289,14 @@ func (c *Client) Sessions(ctx context.Context, token string) ([]model.Session, e
 				device += " (" + item.DeviceName + ")"
 			}
 		}
-		sessions = append(sessions, model.Session{ID: item.ID, Status: status, User: item.UserName, Device: device, Media: media})
+		transcoding := len(item.TranscodingInfo) > 0 && string(item.TranscodingInfo) != "null"
+		sessions = append(sessions, model.Session{ID: item.ID, Status: status, User: item.UserName, Device: device, Media: media, Transcoding: transcoding})
 	}
 	return sessions, nil
+}
+
+func (c *Client) StopSession(ctx context.Context, token, sessionID string) error {
+	return c.do(ctx, http.MethodPost, "/Sessions/"+url.PathEscape(sessionID)+"/Playing/Stop", token, nil, nil, http.StatusNoContent)
 }
 
 func (c *Client) EnsureWatchdogUser(ctx context.Context, adminToken string, cfg config.UserLoginWatchdogConfig) error {

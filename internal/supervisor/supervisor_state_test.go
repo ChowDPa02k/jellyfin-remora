@@ -244,3 +244,58 @@ func TestStatusIncludesProcessStartAndPlayingUsers(t *testing.T) {
 		t.Fatalf("playing users=%v", status.PlayingUsers)
 	}
 }
+
+func TestManagementRedactsKeysAndStopsSessions(t *testing.T) {
+	keys := []jellyfin.AuthenticationInfo{{AccessToken: "remora-secret", AppName: "Jellyfin Remora", IsActive: true}}
+	stopped := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/Auth/Keys":
+			_ = json.NewEncoder(w).Encode(map[string]any{"Items": keys})
+		case r.Method == http.MethodPost && r.URL.Path == "/Auth/Keys":
+			keys = append(keys, jellyfin.AuthenticationInfo{AccessToken: "new-secret", AppName: r.URL.Query().Get("app"), IsActive: true})
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && r.URL.Path == "/Auth/Keys/new-secret":
+			keys = keys[:1]
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/Sessions":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"Id": "session-12345678", "UserName": "alice", "Client": "Web", "IsActive": true, "NowPlayingItem": map[string]string{"Name": "Movie"}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/Sessions/session-12345678/Playing/Stop":
+			stopped = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	s := stateSupervisor(t, &stateProcess{running: true})
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.setAPIKey("remora-secret")
+
+	listed, err := s.APIKeys(context.Background())
+	if err != nil || len(listed) != 1 || listed[0].ID == "remora-secret" || !listed[0].IsRemora {
+		t.Fatalf("listed=%+v err=%v", listed, err)
+	}
+	created, err := s.CreateAPIKey(context.Background(), "Living Room")
+	if err != nil || created.Name != "Living Room" || created.ID == "new-secret" {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+	if err := s.DeleteAPIKey(context.Background(), created.ID[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteAPIKey(context.Background(), listed[0].ID); err == nil {
+		t.Fatal("supervisor active key deletion succeeded")
+	}
+	if err := s.StopSession(context.Background(), "session-"); err != nil || !stopped {
+		t.Fatalf("stopped=%t err=%v", stopped, err)
+	}
+	types := map[string]bool{}
+	for _, event := range s.Events(256) {
+		types[event.Type] = true
+	}
+	for _, want := range []string{"api_key_created", "api_key_deleted", "session_stopped"} {
+		if !types[want] {
+			t.Fatalf("missing event %s: %+v", want, s.Events(256))
+		}
+	}
+}

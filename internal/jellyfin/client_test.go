@@ -71,7 +71,7 @@ func TestSessionsNormalizesPlaybackAndDevice(t *testing.T) {
 			{ID: "playing-id", UserName: "alice", Client: "Jellyfin Web", DeviceName: "Chrome", IsActive: true, NowPlayingItem: &struct {
 				Name       string `json:"Name"`
 				SeriesName string `json:"SeriesName"`
-			}{Name: "Pilot", SeriesName: "Example Series"}},
+			}{Name: "Pilot", SeriesName: "Example Series"}, TranscodingInfo: json.RawMessage(`{"VideoCodec":"h264"}`)},
 			{ID: "idle-id", UserName: "bob", Client: "Findroid", IsActive: true},
 			{ID: "paused-id", UserName: "carol", Client: "Jellyfin Media Player", IsActive: true, NowPlayingItem: &struct {
 				Name       string `json:"Name"`
@@ -88,7 +88,7 @@ func TestSessionsNormalizesPlaybackAndDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 3 || sessions[0].Status != "playing" || sessions[0].Device != "Jellyfin Web (Chrome)" || sessions[0].Media != "Example Series — Pilot" {
+	if len(sessions) != 3 || sessions[0].Status != "playing" || sessions[0].Device != "Jellyfin Web (Chrome)" || sessions[0].Media != "Example Series — Pilot" || !sessions[0].Transcoding {
 		t.Fatalf("sessions = %#v", sessions)
 	}
 	if sessions[1].Status != "idle" {
@@ -96,6 +96,47 @@ func TestSessionsNormalizesPlaybackAndDevice(t *testing.T) {
 	}
 	if sessions[2].Status != "paused" || sessions[2].Media != "The Matrix" {
 		t.Fatalf("paused session = %#v", sessions[2])
+	}
+}
+
+func TestAPIKeyManagementAndSessionStopRequests(t *testing.T) {
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		if !strings.Contains(r.Header.Get("Authorization"), `Token="admin-token"`) {
+			t.Errorf("missing token: %q", r.Header.Get("Authorization"))
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/Auth/Keys":
+			_ = json.NewEncoder(w).Encode(authenticationInfoQuery{Items: []AuthenticationInfo{{AccessToken: "key", AppName: "Kodi", IsActive: true}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/Auth/Keys":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && r.URL.Path == "/Auth/Keys/key":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/Sessions/session-id/Playing/Stop":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client := New(srv.URL, time.Second)
+	keys, err := client.APIKeys(context.Background(), "admin-token")
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("keys=%v err=%v", keys, err)
+	}
+	if err := client.CreateAPIKey(context.Background(), "admin-token", "Living Room"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RevokeAPIKey(context.Background(), "admin-token", "key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.StopSession(context.Background(), "admin-token", "session-id"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"GET /Auth/Keys", "POST /Auth/Keys?app=Living+Room", "DELETE /Auth/Keys/key", "POST /Sessions/session-id/Playing/Stop"}
+	if strings.Join(requests, "|") != strings.Join(want, "|") {
+		t.Fatalf("requests=%v, want %v", requests, want)
 	}
 }
 

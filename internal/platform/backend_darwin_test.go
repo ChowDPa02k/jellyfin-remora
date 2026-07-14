@@ -59,6 +59,19 @@ func TestParseElapsedProcessAge(t *testing.T) {
 	}
 }
 
+func TestCountDescendantFFmpegOnlyCountsManagedTree(t *testing.T) {
+	processes := `
+100 1 /Applications/Jellyfin
+101 100 /usr/local/bin/ffmpeg
+102 101 /bin/helper
+103 102 /opt/jellyfin-ffmpeg
+200 1 /usr/local/bin/ffmpeg
+`
+	if got := countDescendantFFmpeg(processes, 100); got != 2 {
+		t.Fatalf("ffmpeg descendants=%d, want 2", got)
+	}
+}
+
 func TestEnsureMountTargetRejectsUnsafeTargets(t *testing.T) {
 	for _, target := range []string{"", "relative", string(filepath.Separator)} {
 		t.Run(strings.ReplaceAll(target, string(filepath.Separator), "root"), func(t *testing.T) {

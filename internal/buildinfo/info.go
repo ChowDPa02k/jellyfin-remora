@@ -13,13 +13,13 @@ var (
 )
 
 type Info struct {
-	Name      string
-	Version   string
-	Commit    string
-	BuildDate string
-	GoVersion string
-	OS        string
-	Arch      string
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildDate string `json:"build_date"`
+	GoVersion string `json:"go_version"`
+	OS        string `json:"os"`
+	Arch      string `json:"arch"`
 }
 
 func Current(name string) Info {

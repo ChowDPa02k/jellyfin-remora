@@ -27,15 +27,16 @@ type Backend interface {
 }
 
 type ProcessInfo struct {
-	PID         int
-	PGID        int
-	State       string
-	Command     string
-	Arguments   []string
-	CPUPercent  float64
-	MemoryBytes uint64
-	Ports       []int
-	StartedAt   time.Time
+	PID             int
+	PGID            int
+	State           string
+	Command         string
+	Arguments       []string
+	CPUPercent      float64
+	MemoryBytes     uint64
+	FFmpegProcesses int
+	Ports           []int
+	StartedAt       time.Time
 }
 
 func New() Backend { return newBackend() }

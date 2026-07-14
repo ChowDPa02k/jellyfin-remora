@@ -48,11 +48,19 @@ type HealthResult struct {
 }
 
 type Session struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-	User   string `json:"user,omitempty"`
-	Device string `json:"device,omitempty"`
-	Media  string `json:"media,omitempty"`
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	User        string `json:"user,omitempty"`
+	Device      string `json:"device,omitempty"`
+	Media       string `json:"media,omitempty"`
+	Transcoding bool   `json:"transcoding"`
+}
+
+type APIKey struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Active   bool   `json:"active"`
+	IsRemora bool   `json:"is_remora"`
 }
 
 type Event struct {
@@ -64,26 +72,28 @@ type Event struct {
 }
 
 type Status struct {
-	State          State           `json:"state"`
-	DesiredState   DesiredState    `json:"desired_state"`
-	ManualStop     bool            `json:"manual_stop"`
-	UID            int             `json:"uid"`
-	Username       string          `json:"username,omitempty"`
-	PID            int             `json:"pid,omitempty"`
-	ProcessState   string          `json:"process_state,omitempty"`
-	UptimeSeconds  int64           `json:"uptime_seconds,omitempty"`
-	ProcessStarted time.Time       `json:"process_started_at,omitempty,omitzero"`
-	Executable     string          `json:"executable,omitempty"`
-	Version        string          `json:"version,omitempty"`
-	ServerName     string          `json:"server_name,omitempty"`
-	Arguments      []string        `json:"arguments,omitempty"`
-	Ports          []int           `json:"ports,omitempty"`
-	CPUPercent     float64         `json:"cpu_percent,omitempty"`
-	MemoryBytes    uint64          `json:"memory_bytes,omitempty"`
-	Storage        []StorageResult `json:"storage"`
-	Sessions       []Session       `json:"sessions,omitempty"`
-	PlayingUsers   []string        `json:"playing_users,omitempty"`
-	Jellyfin       HealthResult    `json:"jellyfin"`
-	LastError      string          `json:"last_error,omitempty"`
-	LastTransition time.Time       `json:"last_transition"`
+	State            State           `json:"state"`
+	DesiredState     DesiredState    `json:"desired_state"`
+	ManualStop       bool            `json:"manual_stop"`
+	UID              int             `json:"uid"`
+	Username         string          `json:"username,omitempty"`
+	PID              int             `json:"pid,omitempty"`
+	ProcessState     string          `json:"process_state,omitempty"`
+	UptimeSeconds    int64           `json:"uptime_seconds,omitempty"`
+	ProcessStarted   time.Time       `json:"process_started_at,omitempty,omitzero"`
+	Executable       string          `json:"executable,omitempty"`
+	Version          string          `json:"version,omitempty"`
+	ServerName       string          `json:"server_name,omitempty"`
+	Arguments        []string        `json:"arguments,omitempty"`
+	Ports            []int           `json:"ports,omitempty"`
+	CPUPercent       float64         `json:"cpu_percent,omitempty"`
+	MemoryBytes      uint64          `json:"memory_bytes,omitempty"`
+	FFmpegProcesses  int             `json:"ffmpeg_processes"`
+	ActiveTranscodes int             `json:"active_transcodes"`
+	Storage          []StorageResult `json:"storage"`
+	Sessions         []Session       `json:"sessions,omitempty"`
+	PlayingUsers     []string        `json:"playing_users,omitempty"`
+	Jellyfin         HealthResult    `json:"jellyfin"`
+	LastError        string          `json:"last_error,omitempty"`
+	LastTransition   time.Time       `json:"last_transition"`
 }

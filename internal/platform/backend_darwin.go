@@ -288,7 +288,7 @@ func (d *darwinBackend) ProcessInfo(ctx context.Context, pid int) (ProcessInfo, 
 	if elapsed, parseErr := parseElapsed(fields[5]); parseErr == nil {
 		startedAt = time.Now().Add(-elapsed)
 	}
-	return ProcessInfo{PID: parsedPID, PGID: pgid, State: fields[2], CPUPercent: cpu, MemoryBytes: rss * 1024, Command: command, Arguments: splitCommand(command), Ports: d.ports(ctx, parsedPID), StartedAt: startedAt}, nil
+	return ProcessInfo{PID: parsedPID, PGID: pgid, State: fields[2], CPUPercent: cpu, MemoryBytes: rss * 1024, FFmpegProcesses: d.ffmpegProcesses(ctx, parsedPID), Command: command, Arguments: splitCommand(command), Ports: d.ports(ctx, parsedPID), StartedAt: startedAt}, nil
 }
 
 func (d *darwinBackend) FindProcesses(ctx context.Context, executable string, requiredArgs []string) ([]ProcessInfo, error) {
@@ -387,6 +387,51 @@ func (d *darwinBackend) ports(ctx context.Context, pid int) []int {
 		}
 	}
 	return ports
+}
+
+func (d *darwinBackend) ffmpegProcesses(ctx context.Context, rootPID int) int {
+	b, err := run(ctx, "/bin/ps", "-ax", "-ww", "-o", "pid=,ppid=,comm=")
+	if err != nil {
+		return 0
+	}
+	return countDescendantFFmpeg(string(b), rootPID)
+}
+
+func countDescendantFFmpeg(processes string, rootPID int) int {
+	type process struct {
+		pid, parent int
+		command     string
+	}
+	var parsed []process
+	for _, line := range strings.Split(processes, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[0])
+		parent, parentErr := strconv.Atoi(fields[1])
+		if pidErr == nil && parentErr == nil {
+			parsed = append(parsed, process{pid: pid, parent: parent, command: fields[2]})
+		}
+	}
+	descendants := map[int]bool{rootPID: true}
+	for changed := true; changed; {
+		changed = false
+		for _, process := range parsed {
+			if descendants[process.parent] && !descendants[process.pid] {
+				descendants[process.pid] = true
+				changed = true
+			}
+		}
+	}
+	count := 0
+	for _, process := range parsed {
+		name := strings.ToLower(filepath.Base(process.command))
+		if descendants[process.pid] && process.pid != rootPID && strings.Contains(name, "ffmpeg") {
+			count++
+		}
+	}
+	return count
 }
 
 func splitCommand(command string) []string { return strings.Fields(command) }

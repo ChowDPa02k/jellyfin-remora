@@ -61,6 +61,7 @@ type ConfigurationReconciler interface {
 
 type Supervisor struct {
 	mu                   sync.RWMutex
+	managementMu         sync.Mutex
 	cfg                  *config.Config
 	process              ProcessManager
 	storage              StorageChecker
@@ -255,6 +256,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.status.PID = pi.PID
 		s.status.CPUPercent = pi.CPUPercent
 		s.status.MemoryBytes = pi.MemoryBytes
+		s.status.FFmpegProcesses = pi.FFmpegProcesses
 		s.status.ProcessState = pi.State
 		if len(pi.Ports) > 0 {
 			s.status.Ports = pi.Ports
@@ -271,6 +273,8 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.status.ProcessState = ""
 		s.status.CPUPercent = 0
 		s.status.MemoryBytes = 0
+		s.status.FFmpegProcesses = 0
+		s.status.ActiveTranscodes = 0
 		s.status.Sessions = nil
 		s.mu.Unlock()
 		s.sessionsInitialized = false
@@ -465,7 +469,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.status.ServerName = info.ServerName
 		s.mu.Unlock()
 	}
-	if infoErr == nil && s.apiKey == "" {
+	if infoErr == nil && s.currentAPIKey() == "" {
 		if err := s.ensureAPIKey(ctx); err != nil {
 			s.log.Warn("cannot provision Remora API key", "error", err)
 		}
@@ -482,12 +486,11 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	if !s.cfg.Remora.UserLoginWatchdog.Enabled {
 		credentialHeartbeat = max(1, s.cfg.Remora.HealthAPIHeartbeat)
 	}
-	if infoErr == nil && s.apiKey != "" && s.tick%uint64(credentialHeartbeat) == 0 {
-		if err := s.client.ValidateAPIKey(ctx, s.apiKey); err != nil {
+	if apiKey := s.currentAPIKey(); infoErr == nil && apiKey != "" && s.tick%uint64(credentialHeartbeat) == 0 {
+		if err := s.client.ValidateAPIKey(ctx, apiKey); err != nil {
 			var apiErr *jellyfin.APIError
 			if errors.As(err, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403) {
-				s.apiKey = ""
-				s.adminToken = ""
+				s.setCredentials("", "")
 				s.watchdogReady = false
 				if recoverErr := s.ensureAPIKey(ctx); recoverErr != nil {
 					s.transition(model.StateDegraded, "Remora API key recovery failed: "+recoverErr.Error())
@@ -510,8 +513,8 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		}
 		s.watchdogFailed = false
 	}
-	if infoErr == nil && s.apiKey != "" && (!s.sessionsInitialized || s.tick%uint64(max(1, s.cfg.Remora.HealthAPIHeartbeat)) == 0) {
-		sessions, err := s.client.Sessions(ctx, s.apiKey)
+	if apiKey := s.currentAPIKey(); infoErr == nil && apiKey != "" && (!s.sessionsInitialized || s.tick%uint64(max(1, s.cfg.Remora.HealthAPIHeartbeat)) == 0) {
+		sessions, err := s.client.Sessions(ctx, apiKey)
 		if err != nil {
 			s.log.Debug("cannot refresh Jellyfin sessions", "error", err)
 			s.mu.Lock()
@@ -581,7 +584,7 @@ func (s *Supervisor) initializeServer(ctx context.Context) error {
 			return err
 		}
 	}
-	s.adminToken = auth.AccessToken
+	s.setAdminToken(auth.AccessToken)
 	if err := s.ensureAPIKey(ctx); err != nil {
 		return err
 	}
@@ -594,8 +597,8 @@ func (s *Supervisor) ensureAPIKey(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		s.adminToken = auth.AccessToken
-		credential = s.adminToken
+		s.setAdminToken(auth.AccessToken)
+		credential = auth.AccessToken
 	}
 	key, err := s.client.EnsureAPIKey(ctx, credential)
 	if err != nil {
@@ -604,7 +607,7 @@ func (s *Supervisor) ensureAPIKey(ctx context.Context) error {
 	if err := atomicWrite(filepath.Join(s.cfg.Remora.DataDir, ".remora_api_key"), []byte(key+"\n"), 0600); err != nil {
 		return err
 	}
-	s.apiKey = key
+	s.setAPIKey(key)
 	return nil
 }
 func (s *Supervisor) ensureWatchdog(ctx context.Context) error {
@@ -618,12 +621,187 @@ func (s *Supervisor) ensureWatchdog(ctx context.Context) error {
 	return nil
 }
 func (s *Supervisor) adminCredential() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.adminToken != "" {
 		return s.adminToken
 	}
 	// A Remora API key can authorize administrative API calls, but watchdog
 	// login, /Users/Me, and logout always use the watchdog user's own session.
 	return s.apiKey
+}
+
+func (s *Supervisor) currentAPIKey() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.apiKey
+}
+
+func (s *Supervisor) setAPIKey(key string) {
+	s.mu.Lock()
+	s.apiKey = key
+	s.mu.Unlock()
+}
+
+func (s *Supervisor) setAdminToken(token string) {
+	s.mu.Lock()
+	s.adminToken = token
+	s.mu.Unlock()
+}
+
+func (s *Supervisor) setCredentials(apiKey, adminToken string) {
+	s.mu.Lock()
+	s.apiKey = apiKey
+	s.adminToken = adminToken
+	s.mu.Unlock()
+}
+
+func (s *Supervisor) APIKeys(ctx context.Context) ([]model.APIKey, error) {
+	s.managementMu.Lock()
+	defer s.managementMu.Unlock()
+	keys, err := s.client.APIKeys(ctx, s.adminCredential())
+	if err != nil {
+		return nil, err
+	}
+	return publicAPIKeys(keys, s.currentAPIKey()), nil
+}
+
+func (s *Supervisor) CreateAPIKey(ctx context.Context, name string) (model.APIKey, error) {
+	s.managementMu.Lock()
+	defer s.managementMu.Unlock()
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 64 {
+		return model.APIKey{}, errors.New("API key name must contain 1 to 64 characters")
+	}
+	if name == "Jellyfin Remora" {
+		return model.APIKey{}, errors.New("API key name Jellyfin Remora is reserved for the supervisor")
+	}
+	credential := s.adminCredential()
+	before, err := s.client.APIKeys(ctx, credential)
+	if err != nil {
+		return model.APIKey{}, err
+	}
+	known := make(map[string]bool, len(before))
+	for _, key := range before {
+		known[key.AccessToken] = true
+	}
+	if err := s.client.CreateAPIKey(ctx, credential, name); err != nil {
+		return model.APIKey{}, err
+	}
+	after, err := s.client.APIKeys(ctx, credential)
+	if err != nil {
+		return model.APIKey{}, err
+	}
+	for _, key := range after {
+		if key.AppName == name && !known[key.AccessToken] {
+			created := publicAPIKey(key, s.currentAPIKey())
+			s.recordEvent(model.Event{Type: "api_key_created", Message: name})
+			return created, nil
+		}
+	}
+	return model.APIKey{}, errors.New("Jellyfin created the API key but did not return it")
+}
+
+func (s *Supervisor) DeleteAPIKey(ctx context.Context, id string) error {
+	s.managementMu.Lock()
+	defer s.managementMu.Unlock()
+	if len(id) < 8 {
+		return errors.New("API key ID must contain at least 8 hexadecimal characters")
+	}
+	credential := s.adminCredential()
+	keys, err := s.client.APIKeys(ctx, credential)
+	if err != nil {
+		return err
+	}
+	var matched *jellyfin.AuthenticationInfo
+	for i := range keys {
+		if strings.HasPrefix(strings.ToLower(apiKeyID(keys[i].AccessToken)), strings.ToLower(id)) {
+			if matched != nil {
+				return errors.New("API key ID is ambiguous")
+			}
+			matched = &keys[i]
+		}
+	}
+	if matched == nil {
+		return errors.New("API key was not found")
+	}
+	if matched.AccessToken == s.currentAPIKey() {
+		return errors.New("refusing to revoke the supervisor's active API key")
+	}
+	if err := s.client.RevokeAPIKey(ctx, credential, matched.AccessToken); err != nil {
+		return err
+	}
+	s.recordEvent(model.Event{Type: "api_key_deleted", Message: matched.AppName})
+	return nil
+}
+
+func (s *Supervisor) Sessions(ctx context.Context) ([]model.Session, error) {
+	s.managementMu.Lock()
+	defer s.managementMu.Unlock()
+	return s.client.Sessions(ctx, s.currentAPIKey())
+}
+
+func (s *Supervisor) StopSession(ctx context.Context, id string) error {
+	s.managementMu.Lock()
+	defer s.managementMu.Unlock()
+	if len(id) < 8 {
+		return errors.New("session ID must contain at least 8 characters")
+	}
+	credential := s.currentAPIKey()
+	sessions, err := s.client.Sessions(ctx, credential)
+	if err != nil {
+		return err
+	}
+	var matched *model.Session
+	for i := range sessions {
+		if strings.HasPrefix(strings.ToLower(sessions[i].ID), strings.ToLower(id)) {
+			if matched != nil {
+				return errors.New("session ID is ambiguous")
+			}
+			matched = &sessions[i]
+		}
+	}
+	if matched == nil {
+		return errors.New("session was not found")
+	}
+	if err := s.client.StopSession(ctx, credential, matched.ID); err != nil {
+		return err
+	}
+	s.recordEvent(model.Event{Type: "session_stopped", Message: matched.User})
+	return nil
+}
+
+func publicAPIKeys(keys []jellyfin.AuthenticationInfo, current string) []model.APIKey {
+	out := make([]model.APIKey, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, publicAPIKey(key, current))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func publicAPIKey(key jellyfin.AuthenticationInfo, current string) model.APIKey {
+	return model.APIKey{ID: apiKeyID(key.AccessToken), Name: key.AppName, Active: key.IsActive, IsRemora: key.AccessToken == current}
+}
+
+func apiKeyID(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+func (s *Supervisor) recordEvent(event model.Event) {
+	s.mu.Lock()
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+	event.State = s.status.State
+	s.recordEventLocked(event)
+	s.mu.Unlock()
 }
 
 func (s *Supervisor) stop(ctx context.Context, force bool) error {
@@ -637,6 +815,8 @@ func (s *Supervisor) stop(ctx context.Context, force bool) error {
 		s.status.ProcessState = ""
 		s.status.CPUPercent = 0
 		s.status.MemoryBytes = 0
+		s.status.FFmpegProcesses = 0
+		s.status.ActiveTranscodes = 0
 		s.mu.Unlock()
 	}
 	s.wasRunning = stillRunning
@@ -692,9 +872,13 @@ func (s *Supervisor) Status() model.Status {
 		st.UptimeSeconds = int64(time.Since(st.ProcessStarted).Seconds())
 	}
 	users := make(map[string]bool)
+	st.ActiveTranscodes = 0
 	for _, session := range st.Sessions {
 		if session.User != "" && (session.Status == "playing" || session.Status == "paused") {
 			users[session.User] = true
+		}
+		if session.Transcoding {
+			st.ActiveTranscodes++
 		}
 	}
 	st.PlayingUsers = make([]string, 0, len(users))

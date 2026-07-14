@@ -53,7 +53,11 @@ func run() error {
 		fmt.Println(buildinfo.Current("jellyfin-remora"))
 		return nil
 	}
-	cfg, err := config.Load(*configPath)
+	activeConfigPath, err := resolveActiveConfigPath(*configPath)
+	if err != nil {
+		return fmt.Errorf("resolve configuration path: %w", err)
+	}
+	cfg, err := config.Load(activeConfigPath)
 	if err != nil {
 		return err
 	}
@@ -67,7 +71,7 @@ func run() error {
 		defer closer.Close()
 	}
 	slog.SetDefault(logger)
-	if st, statErr := os.Stat(*configPath); statErr == nil && st.Mode().Perm()&0077 != 0 {
+	if st, statErr := os.Stat(activeConfigPath); statErr == nil && st.Mode().Perm()&0077 != 0 {
 		logger.Warn("configuration file is readable by group or others; use chmod 0600 when it contains credentials", "mode", st.Mode().Perm())
 	}
 	backend := platform.New()
@@ -82,7 +86,7 @@ func run() error {
 	}
 	jc := jellyfin.New(cfg.JellyfinURL(), cfg.Remora.IOTimeout.Duration)
 	sup := supervisor.New(cfg, pm, sc, jc, logger)
-	api := control.New(cfg, sup, logger)
+	api := control.NewWithOptions(cfg, sup, logger, control.Options{ConfigPath: activeConfigPath, LogPath: safeLogPath(cfg)})
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	errCh := make(chan error, 2)
@@ -92,6 +96,10 @@ func run() error {
 	cancel()
 	<-errCh
 	return err
+}
+
+func resolveActiveConfigPath(path string) (string, error) {
+	return filepath.Abs(path)
 }
 
 type validationReport struct {

@@ -28,6 +28,14 @@ token or a durable distributed identifier.
 |---|---|---:|---|
 | `GET` | `/v1/status` | `200` | Current supervisor, process, storage, health, and session status |
 | `GET` | `/v1/events?limit=50` | `200` | Most recent state transitions; `limit` must be 1–256 |
+| `GET` | `/v1/logs?source=remora&lines=200` | `200` | Bounded tail of the Remora or newest Jellyfin log |
+| `GET` | `/v1/config` | `200` | Active configuration path and SHA-256 for conflict-aware local editing |
+| `GET` | `/v1/diagnostics` | `200` | Redacted structured local diagnostic bundle |
+| `GET` | `/v1/apikeys` | `200` | Jellyfin API keys represented by non-secret hash identifiers |
+| `POST` | `/v1/apikeys` | `201` | Create a Jellyfin API key from `{"name":"..."}` |
+| `DELETE` | `/v1/apikeys/{id}` | `200` | Revoke one non-Remora API key by an unambiguous ID prefix |
+| `GET` | `/v1/sessions` | `200` | Refresh and return active Jellyfin sessions |
+| `POST` | `/v1/sessions/{id}/stop` | `200` | Send Jellyfin's `Stop` playstate command to a session |
 | `POST` | `/v1/start` | `202` | Request desired running state and reset restart circuits |
 | `POST` | `/v1/stop?force=false` | `202` | Request desired stopped state; optionally force process termination |
 | `POST` | `/v1/restart?force=false` | `202` | Request one controlled replacement; optionally force termination |
@@ -52,8 +60,28 @@ an operator stop.
 
 The status document contains additive process identity and resource fields,
 storage results (including `latency_ms`), Jellyfin health, active sessions,
-`playing_users`, and transition/error metadata. Timestamps use RFC 3339 JSON time
+`playing_users`, Darwin managed-process-tree `ffmpeg_processes`, session-derived
+`active_transcodes`, and transition/error metadata. Timestamps use RFC 3339 JSON time
 encoding. Zero or unavailable optional values may be omitted.
+
+## Management safety
+
+Log reads accept `source=remora|jellyfin` and `lines=1..2000`, scan at most the
+last 4 MiB, and reject symlinks or non-regular files. API-key responses contain a
+16-hex-character SHA-256-derived ID rather than the access token. At least eight
+ID characters are required for deletion, ambiguous prefixes fail closed, and the
+credential currently used by Remora cannot revoke itself.
+
+`remoractl edit-config` uses `GET /v1/config` to identify the active file and its
+checksum, edits an owner-only temporary copy, parses it through the same strict
+configuration loader, checks that the source did not change while the editor was
+open, and atomically writes mode `0600`. The daemon must be restarted to load the
+new configuration. Configuration contents are never returned by the API.
+
+`GET /v1/diagnostics` contains build identity, status, the complete bounded event
+ring, a non-secret configuration summary, and a bounded Remora log tail. It does
+not contain YAML configuration contents or API-key access tokens. `remoractl
+diagnose --output FILE` writes the JSON bundle with mode `0600`.
 
 ## Events
 
@@ -96,8 +124,11 @@ Current stable codes are:
 | `invalid_argument` | `400` | A query or request value is invalid |
 | `not_found` | `404` | No v1 operation exists at the path |
 | `method_not_allowed` | `405` | The path exists but does not support the HTTP method |
+| `log_unavailable` | `404` | The selected safe log file is unavailable |
+| `config_unavailable` | `404` | The active configuration cannot be inspected |
 | `storage_fenced` | `409` | Storage safety prevents the requested start |
 | `operation_rejected` | `400` | The supervisor rejected the requested operation |
+| `jellyfin_error` | `502` | Jellyfin could not complete a management request |
 
 Clients should primarily branch on `code`, retain the operation ID for logs, and
 treat the human-readable message as diagnostic text rather than a stable value.
@@ -112,3 +143,8 @@ treat the human-readable message as diagnostic text rather than a stable value.
 | `3` | Daemon unavailable or server-side/API transport failure |
 | `4` | Requested operation conflicts with current safety/state constraints |
 | `5` | Accepted lifecycle operation did not converge before the deadline |
+
+All daemon-facing `remoractl` commands map to the operations above. `init` is an
+offline installation workflow; `edit-config` intentionally performs the final
+filesystem replacement locally after using `/v1/config` for daemon-authoritative
+path and concurrency metadata.

@@ -56,3 +56,10 @@ func TestPrepareRejectsUncoveredPath(t *testing.T) {
 		t.Fatal("expected uncovered path rejection")
 	}
 }
+
+func TestResolveActiveConfigPathIsAbsolute(t *testing.T) {
+	path, err := resolveActiveConfigPath("config.yaml")
+	if err != nil || !filepath.IsAbs(path) || filepath.Base(path) != "config.yaml" {
+		t.Fatalf("path=%q err=%v", path, err)
+	}
+}

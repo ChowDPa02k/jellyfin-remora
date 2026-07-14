@@ -45,6 +45,31 @@ func writeEvents(w io.Writer, events []model.Event, jsonOutput bool) error {
 	return err
 }
 
+func writeAPIKeys(w io.Writer, keys []model.APIKey, jsonOutput bool) error {
+	if jsonOutput {
+		return writeIndentedJSON(w, keys)
+	}
+	tw := newTable("Jellyfin API Keys", []table.ColumnConfig{column(1, 16, 16), column(2, 24, 48), column(3, 6, 8), column(4, 8, 10)})
+	tw.AppendHeader(table.Row{"id", "name", "active", "remora"})
+	for _, key := range keys {
+		tw.AppendRow(sanitizeRow(table.Row{key.ID, key.Name, key.Active, key.IsRemora}))
+	}
+	_, err := io.WriteString(w, tw.Render()+"\n")
+	return err
+}
+
+func writeSessions(w io.Writer, sessions []model.Session, jsonOutput bool) error {
+	if jsonOutput {
+		return writeIndentedJSON(w, sessions)
+	}
+	if len(sessions) == 0 {
+		_, err := io.WriteString(w, "No active sessions.\n")
+		return err
+	}
+	_, err := io.WriteString(w, renderSessions(sessions)+"\n")
+	return err
+}
+
 func renderStatus(status model.Status) string {
 	tables := []string{renderSummary(status), renderStorage(status)}
 	if len(status.Sessions) > 0 {
@@ -86,6 +111,8 @@ func renderSummary(status model.Status) string {
 		{"State", string(status.State)},
 		{"Desired State", string(status.DesiredState)},
 		{"Uptime", formatUptime(status.UptimeSeconds)},
+		{"FFmpeg Processes", status.FFmpegProcesses},
+		{"Active Transcodes", status.ActiveTranscodes},
 	}
 	if !status.ProcessStarted.IsZero() {
 		rows = append(rows, table.Row{"Process Started", status.ProcessStarted.Local().Format(time.RFC3339)})

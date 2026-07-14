@@ -66,7 +66,7 @@ func run() error {
 	}
 	args := global.Args()
 	if len(args) == 0 {
-		return &usageError{message: "usage: remoractl [--host URL] [--json] <init|start|stop|restart|status|events|healthcheck>"}
+		return &usageError{message: "usage: remoractl [--host URL] [--json] <init|start|stop|restart|status|events|logs|edit-config|apikey|session|diagnose|healthcheck>"}
 	}
 	if args[0] == "init" {
 		return runInit(args[1:])
@@ -76,6 +76,9 @@ func run() error {
 		return err
 	}
 	cmd := args[0]
+	if cmd == "logs" || cmd == "edit-config" || cmd == "apikey" || cmd == "session" || cmd == "diagnose" {
+		return runManagementCommand(client, base, cmd, args[1:], *jsonOutput)
+	}
 	if cmd == "events" {
 		fs := flag.NewFlagSet("remoractl events", flag.ContinueOnError)
 		limit := fs.Int("limit", 50, "maximum events to return (1-256)")
@@ -191,9 +194,24 @@ type eventResponse struct {
 }
 
 func requestJSON(c *http.Client, method, url string, out any) error {
-	req, err := http.NewRequest(method, url, bytes.NewReader(nil))
+	return requestJSONBody(c, method, url, nil, out)
+}
+
+func requestJSONBody(c *http.Client, method, url string, body, out any) error {
+	var encoded []byte
+	var err error
+	if body != nil {
+		encoded, err = json.Marshal(body)
+		if err != nil {
+			return err
+		}
+	}
+	req, err := http.NewRequest(method, url, bytes.NewReader(encoded))
 	if err != nil {
 		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.Do(req)
 	if err != nil {
@@ -215,6 +233,9 @@ func requestJSON(c *http.Client, method, url string, out any) error {
 			message = strings.TrimSpace(string(b))
 		}
 		return &HTTPError{StatusCode: resp.StatusCode, Code: envelope.Error.Code, Message: message, OperationID: envelope.Error.OperationID}
+	}
+	if out == nil || len(bytes.TrimSpace(b)) == 0 {
+		return nil
 	}
 	if err := json.Unmarshal(b, out); err != nil {
 		return err

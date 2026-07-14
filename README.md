@@ -107,9 +107,29 @@ document. Older clients safely ignore the new status fields.
 history; add `--json` for machine-readable output. Every `/v1` response exposes
 an API version and operation ID in headers, while failures use stable structured
 error codes. CLI exit codes distinguish usage errors, control-plane availability,
-state conflicts, and operation timeouts. API-key management, log querying,
-configuration editing, session termination, diagnostic bundles, and metrics are
-planned for later `v0.4.0-alpha` iterations.
+state conflicts, and operation timeouts.
+
+The Phase 3 local control plane also provides:
+
+```sh
+remoractl logs --source remora --lines 200
+remoractl logs --source jellyfin --lines 200
+remoractl edit-config
+remoractl apikey list
+remoractl apikey create "Living Room"
+remoractl apikey delete 01234567
+remoractl session list
+remoractl session stop a1b2c3d4
+remoractl diagnose --output remora-diagnostics.json
+```
+
+API-key output contains only SHA-256-derived identifiers, never access tokens;
+the active Remora key cannot be revoked through its own control API. Configuration
+editing verifies the daemon-observed checksum, validates the edited YAML, rejects
+symlinks and concurrent replacement, then performs an owner-only atomic write.
+Diagnostic bundles contain build/status/event data and bounded Remora log output,
+not configuration contents or stored credentials. This single-host project does
+not run a Prometheus or other network metrics exporter.
 
 ### macOS tarball installations
 
