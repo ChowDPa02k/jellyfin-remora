@@ -256,14 +256,18 @@ registration; NFS session isolation, fencing, and recovery; and automatic
 service recovery across reboot. A password-backed local service identity read a
 Generic Credential Manager entry, connected the real Unicode SMB share in
 Session 0, passed write/flush/delete probes, stayed fenced while TCP 445 was
-blocked, and reconnected after restoration. A second reboot changed both the
-SCM and Jellyfin PIDs while SMB and NFS returned healthy, proving that Explorer
-visibility is not required for service-owned storage. The unsigned MSI install,
-repair, injected rollback, major upgrade, downgrade rejection, and uninstall
-transactions all produced their expected Windows Installer exit codes and final
-filesystem state. When invoked through OpenSSH the wrapper channel remained
-attached after the completed MSI transactions, so the transaction logs and
-postconditions, rather than SSH channel closure, are the recorded evidence.
+blocked, and reconnected after restoration. Real Jellyfin 10.11.11 completed
+first-run initialization under Remora and reported port 8096. Its own
+`/Environment/Drives` API returned C:, F:, and Z:, and its directory-browser API
+listed 14 directories on the Unicode SMB root and opened the empty NFS root. A
+final reboot changed both the SCM and real Jellyfin PIDs while both browser
+checks still passed, proving that Explorer visibility is not required for
+service-owned storage. The unsigned MSI install, repair, injected rollback,
+major upgrade, downgrade rejection, and uninstall transactions all produced
+their expected Windows Installer exit codes and final filesystem state. When
+invoked through OpenSSH the wrapper channel remained attached after the
+completed MSI transactions, so the transaction logs and postconditions, rather
+than SSH channel closure, are the recorded evidence.
 
 Still required before the Phase 4 exit gate can pass: release-certificate
 Authenticode signing and verification, plus the Windows Server 2025 primary
