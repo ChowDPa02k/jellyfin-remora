@@ -53,7 +53,9 @@ var errOperationTimedOut = errors.New("operation timed out")
 func run() error {
 	global := flag.NewFlagSet("remoractl", flag.ContinueOnError)
 	host := global.String("host", "", "loopback Remora URL")
-	socket := global.String("socket", defaultLocalControlEndpoint(), "Remora local control endpoint")
+	var socket string
+	global.StringVar(&socket, "socket", defaultLocalControlEndpoint(), "Remora local control endpoint")
+	global.StringVar(&socket, "s", defaultLocalControlEndpoint(), "Remora local control endpoint (shorthand)")
 	jsonOutput := global.Bool("json", false, "print machine-readable JSON")
 	showVersion := global.Bool("version", false, "show version")
 	if err := global.Parse(os.Args[1:]); err != nil {
@@ -65,12 +67,12 @@ func run() error {
 	}
 	args := global.Args()
 	if len(args) == 0 {
-		return &usageError{message: "usage: remoractl [--host URL] [--json] <init|start|stop|restart|status|events|logs|edit-config|apikey|session|diagnose|healthcheck>"}
+		return &usageError{message: "usage: remoractl [--host URL | --socket PATH] [--json] <init|start|stop|restart|status|events|logs|edit-config|apikey|session|diagnose|healthcheck>"}
 	}
 	if args[0] == "init" {
 		return runInit(args[1:])
 	}
-	client, base, err := newClient(*host, *socket)
+	client, base, err := newClient(*host, socket)
 	if err != nil {
 		return err
 	}

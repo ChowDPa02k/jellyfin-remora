@@ -15,6 +15,9 @@ func TestDarwinSampleLoadsAsCurrentConfiguration(t *testing.T) {
 	if cfg.ConfigVersion != CurrentVersion {
 		t.Fatalf("config version = %d, want %d", cfg.ConfigVersion, CurrentVersion)
 	}
+	if cfg.RESTAPI.UnixSocket != "/tmp/.s.remora.8095" {
+		t.Fatalf("Unix socket = %q", cfg.RESTAPI.UnixSocket)
+	}
 	if len(cfg.Disks) != 1 || cfg.Disks[0].FailureThreshold != 1 {
 		t.Fatalf("sample disks = %+v", cfg.Disks)
 	}

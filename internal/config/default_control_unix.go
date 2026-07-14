@@ -2,13 +2,10 @@
 
 package config
 
-import (
-	"os"
-	"path/filepath"
-)
+import "fmt"
 
 func defaultPlatformControl(rest *RESTAPIConfig) {
 	if rest.UnixSocket == "" {
-		rest.UnixSocket = filepath.Join(os.TempDir(), "jellyfin-remora.sock")
+		rest.UnixSocket = fmt.Sprintf("/tmp/.s.remora.%d", rest.Port)
 	}
 }

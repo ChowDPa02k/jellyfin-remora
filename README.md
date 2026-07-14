@@ -171,7 +171,10 @@ Command-line parameters are Jellyfin-version-specific. Jellyfin 10.10.7 hosts
 the configured `--webdir` by default and rejects `--hostwebclient`; a compatible
 optional parameter is `package-name: jellyfin-remora-tar`.
 
-The REST listener accepts loopback addresses only. `remoractl` uses `/tmp/jellyfin-remora.sock` by default and accepts `--host http://127.0.0.1:8095` as a fallback.
+The REST listener accepts loopback addresses only. On Unix, the daemon defaults
+to `/tmp/.s.remora.<restapi.port>` and `remoractl` discovers that socket under
+`/tmp` automatically. Use `--socket`/`-s` to select among multiple non-default
+instances, or `--host http://127.0.0.1:8095` as a fallback.
 
 ## launchd
 

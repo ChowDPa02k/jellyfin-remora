@@ -11,8 +11,9 @@ restapi:
   listen: 127.0.0.1
   # Local TCP control port.
   port: 8095
-  # Preferred local Unix socket; parent directory must already be writable.
-  unix-socket: /tmp/jellyfin-remora.sock
+  # Preferred local Unix socket. Include restapi.port so remoractl can discover
+  # the endpoint automatically and multiple instances cannot collide.
+  unix-socket: /tmp/.s.remora.8095
 
 remora:
   # Maximum time allowed for Jellyfin to become healthy after process start.
