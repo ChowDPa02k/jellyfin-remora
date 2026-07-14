@@ -268,6 +268,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.scheduleRestart()
 	}
 	if !running {
+		s.hungSince = time.Time{}
 		s.mu.Lock()
 		s.status.PID = 0
 		s.status.ProcessState = ""
@@ -325,6 +326,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	if uninterruptible {
 		if s.hungSince.IsZero() {
 			s.hungSince = time.Now()
+			s.log.Debug("Jellyfin entered an uninterruptible process state", "process_state", pi.State)
 		}
 		if time.Since(s.hungSince) >= s.cfg.Remora.ServerStopTimeout.Duration {
 			if err := s.stop(ctx, true); err != nil {
@@ -339,11 +341,15 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			_ = s.persist()
 			return
 		}
-		s.transition(model.StateDegraded, "Jellyfin is in an uninterruptible process state")
-		_ = s.persist()
-		return
+		// A transient Darwin U state is common while Jellyfin scans a large
+		// library. Keep evaluating storage and /health; those debounced signals
+		// distinguish legitimate I/O waits from an actually unavailable server.
+	} else {
+		if !s.hungSince.IsZero() {
+			s.log.Debug("Jellyfin left the uninterruptible process state")
+		}
+		s.hungSince = time.Time{}
 	}
-	s.hungSince = time.Time{}
 	if restart && running {
 		if err := s.stop(ctx, force); err != nil {
 			s.processFailed = true
@@ -922,7 +928,11 @@ func (s *Supervisor) transition(state model.State, message string) {
 		s.status.LastTransition = time.Now()
 		s.eventSequence++
 		s.recordEventLocked(model.Event{Sequence: s.eventSequence, Timestamp: s.status.LastTransition, Type: "state_transition", State: state, Message: message})
-		s.log.Info("state transition", "state", state)
+		if message != "" {
+			s.log.Info("state transition", "state", state, "reason", message)
+		} else {
+			s.log.Info("state transition", "state", state)
+		}
 	}
 	if message != "" {
 		s.status.LastError = message

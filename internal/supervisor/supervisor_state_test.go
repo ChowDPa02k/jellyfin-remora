@@ -169,6 +169,33 @@ func TestUninterruptibleProcessKillFailureOpensProcessFailed(t *testing.T) {
 	}
 }
 
+func TestTransientUninterruptibleProcessRemainsRunningWhenHealthy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			complete := true
+			_ = json.NewEncoder(w).Encode(jellyfin.PublicInfo{StartupWizardCompleted: &complete})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	p := &stateProcess{running: true, state: "U", started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, p)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.cfg.Remora.HealthAPIHeartbeat = 100
+	s.tick = 1
+	s.sessionsInitialized = true
+	s.setAPIKey("api-key")
+	s.status.State = model.StateRunning
+	s.reconcile(context.Background())
+	if p.forceStop || !p.running || s.Status().State != model.StateRunning || s.hungSince.IsZero() {
+		t.Fatalf("force=%v running=%v state=%s hungSince=%s", p.forceStop, p.running, s.Status().State, s.hungSince)
+	}
+}
+
 func TestConfigurationFailurePreventsJellyfinStart(t *testing.T) {
 	p := &stateProcess{}
 	s := stateSupervisor(t, p)

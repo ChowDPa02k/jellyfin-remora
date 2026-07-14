@@ -175,6 +175,7 @@ SMB passwords in YAML are supported for the first milestone but can be visible t
 - Storage must pass three consecutive checks before automatic recovery.
 - Manual stop always overrides automatic recovery.
 - Five process failures in ten minutes open the restart circuit; `remoractl start` resets it.
+- Transient Darwin `U` waits during heavy library scans do not degrade an otherwise healthy server; a continuously uninterruptible process still reaches forced recovery after `server-stop-timeout`.
 
 ## Development checks
 
