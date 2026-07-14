@@ -84,7 +84,13 @@ func runDaemon(ctx context.Context, activeConfigPath string) error {
 		logger.Warn("configuration security warning", "warning", warning)
 	}
 	backend := platform.New()
-	pm, err := procmanager.New(cfg, backend, loggerWriter{logger, "jellyfin_stdout"}, loggerWriter{logger, "jellyfin_stderr"})
+	jellyfinLogPath := safeJellyfinLogPath(cfg)
+	jellyfinLog, err := logging.New(jellyfinLogPath, cfg.Remora.Logs.RotationSizeMB*1024*1024, cfg.Remora.Logs.RotationTime.Duration, cfg.Remora.Logs.PreserveTime.Duration)
+	if err != nil {
+		return fmt.Errorf("open Jellyfin console log: %w", err)
+	}
+	defer jellyfinLog.Close()
+	pm, err := procmanager.New(cfg, backend, jellyfinLog, jellyfinLog)
 	if err != nil {
 		return err
 	}
@@ -95,7 +101,7 @@ func runDaemon(ctx context.Context, activeConfigPath string) error {
 	}
 	jc := jellyfin.New(cfg.JellyfinURL(), cfg.Remora.IOTimeout.Duration)
 	sup := supervisor.New(cfg, pm, sc, jc, logger)
-	api := control.NewWithOptions(cfg, sup, logger, control.Options{ConfigPath: activeConfigPath, LogPath: safeLogPath(cfg)})
+	api := control.NewWithOptions(cfg, sup, logger, control.Options{ConfigPath: activeConfigPath, LogPath: safeLogPath(cfg), JellyfinLogPath: jellyfinLogPath})
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 2)
@@ -340,12 +346,6 @@ func safeLogPath(cfg *config.Config) string {
 	return configured
 }
 
-type loggerWriter struct {
-	log    *slog.Logger
-	stream string
-}
-
-func (w loggerWriter) Write(p []byte) (int, error) {
-	w.log.Info(w.stream, "message", string(p))
-	return len(p), nil
+func safeJellyfinLogPath(cfg *config.Config) string {
+	return filepath.Join(filepath.Dir(safeLogPath(cfg)), "jellyfin-console.log")
 }

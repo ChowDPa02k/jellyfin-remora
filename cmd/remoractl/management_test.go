@@ -65,6 +65,28 @@ func TestManagementCommandsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLogsPositionalSourceFollowPreservesANSI(t *testing.T) {
+	var requestURI string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, "\x1b[32mJellyfin\x1b[0m\n")
+	}))
+	defer server.Close()
+	output, err := captureOutput(func() error {
+		return runLogs(server.Client(), server.URL, []string{"jellyfin", "-f", "--lines", "2"}, false)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "\x1b[32mJellyfin\x1b[0m\n" {
+		t.Fatalf("output=%q", output)
+	}
+	if !strings.Contains(requestURI, "source=jellyfin") || !strings.Contains(requestURI, "follow=true") {
+		t.Fatalf("request URI=%q", requestURI)
+	}
+}
+
 func TestEditExistingConfigValidatesAndAtomicallyReplaces(t *testing.T) {
 	source := filepath.Join("..", "..", "sample", "config-darwin.yaml")
 	if runtime.GOOS == "windows" {

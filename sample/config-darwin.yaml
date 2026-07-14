@@ -47,13 +47,15 @@ remora:
   # Remora state directory. `default` resolves to jellyfin.data-dir.
   data-dir: default
   logs:
-    # Absolute path, or path relative to remora.data-dir.
+    # Absolute path, or path relative to remora.data-dir. Remora writes its own
+    # structured records to jellyfin-remora.log and captures Jellyfin stdout /
+    # stderr verbatim in jellyfin-console.log. The two files rotate independently.
     path: remora-log
     # debug, info, warning, warn, or error.
     level: info
-    # Rotate when this age is reached.
+    # Rotate each active log independently when this age is reached.
     rotation-time: 24h
-    # Rotate when this size in MiB is reached.
+    # Rotate each active log independently when this size in MiB is reached.
     rotation-size-mb: 30
     # Delete rotated logs older than this duration.
     preserve-time: 7d

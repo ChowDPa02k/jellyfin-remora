@@ -36,16 +36,39 @@ func runManagementCommand(client *http.Client, base, command string, args []stri
 }
 
 func runLogs(client *http.Client, base string, args []string, globalJSON bool) error {
+	args = normalizeLogArgs(args)
 	fs := flag.NewFlagSet("remoractl logs", flag.ContinueOnError)
 	lines := fs.Int("lines", 200, "number of trailing lines (1-2000)")
-	source := fs.String("source", "remora", "remora or jellyfin")
+	sourceFlag := fs.String("source", "", "remora or jellyfin")
+	followShort := fs.Bool("f", false, "follow appended log output")
+	followLong := fs.Bool("follow", false, "follow appended log output")
 	asJSON := fs.Bool("json", false, "print machine-readable JSON")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *lines < 1 || *lines > 2000 || (*source != "remora" && *source != "jellyfin") {
-		return &usageError{message: "usage: remoractl logs [--source remora|jellyfin] [--lines 1..2000] [--json]"}
+	if err := fs.Parse(args); err != nil || fs.NArg() > 1 || *lines < 1 || *lines > 2000 {
+		return &usageError{message: "usage: remoractl logs [remora|jellyfin] [-f|--follow] [--lines 1..2000] [--json]"}
+	}
+	source := "remora"
+	if *sourceFlag != "" {
+		source = *sourceFlag
+	}
+	if fs.NArg() == 1 {
+		if *sourceFlag != "" && *sourceFlag != fs.Arg(0) {
+			return &usageError{message: "log source was specified twice with different values"}
+		}
+		source = fs.Arg(0)
+	}
+	if source != "remora" && source != "jellyfin" {
+		return &usageError{message: "usage: remoractl logs [remora|jellyfin] [-f|--follow] [--lines 1..2000] [--json]"}
+	}
+	follow := *followShort || *followLong
+	if follow && (globalJSON || *asJSON) {
+		return &usageError{message: "--json cannot be combined with --follow"}
 	}
 	var response control.LogResponse
-	url := fmt.Sprintf("%s/v1/logs?source=%s&lines=%d", base, *source, *lines)
-	if err := requestJSON(client, http.MethodGet, url, &response); err != nil {
+	requestURL := fmt.Sprintf("%s/v1/logs?source=%s&lines=%d", base, source, *lines)
+	if follow {
+		return followLogs(client, requestURL+"&follow=true")
+	}
+	if err := requestJSON(client, http.MethodGet, requestURL, &response); err != nil {
 		return err
 	}
 	if globalJSON || *asJSON {
@@ -55,6 +78,33 @@ func runLogs(client *http.Client, base string, args []string, globalJSON bool) e
 		fmt.Fprintln(os.Stdout, line)
 	}
 	return nil
+}
+
+func normalizeLogArgs(args []string) []string {
+	if len(args) > 1 && (args[0] == "remora" || args[0] == "jellyfin") {
+		normalized := append([]string(nil), args[1:]...)
+		return append(normalized, args[0])
+	}
+	return args
+}
+
+func followLogs(client *http.Client, requestURL string) error {
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	if err != nil {
+		return err
+	}
+	streamingClient := *client
+	streamingClient.Timeout = 0
+	resp, err := streamingClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		return decodeHTTPError(resp)
+	}
+	_, err = io.Copy(os.Stdout, resp.Body)
+	return err
 }
 
 func runEditConfig(client *http.Client, base string, args []string) error {

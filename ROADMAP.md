@@ -103,7 +103,7 @@ Completed across `v0.4.0-alpha.1` through `v0.4.0-alpha.3`:
 - Added a 256-entry in-memory state-transition history through `GET /v1/events` and `remoractl events`, with bounded result selection and table/JSON rendering.
 - Defined deterministic `remoractl` exit codes for usage, local failures, daemon/API availability, state conflicts, and operation timeouts.
 - Preserved local-only control over owner-restricted Unix sockets or loopback REST and serialized lifecycle and Jellyfin-management mutations inside the supervisor boundary.
-- Completed `remoractl logs`, `edit-config`, `apikey list/create/delete`, and `session list/stop` with documented local API operations, strict request limits, redacted API-key identifiers, atomic conflict-aware configuration editing, and bounded log reads.
+- Completed source-selectable `remoractl logs remora|jellyfin` with rotation-aware `-f`, `edit-config`, `apikey list/create/delete`, and `session list/stop`; Jellyfin console output is captured verbatim outside Remora's structured stream and both log families use independent lumberjack rotation.
 - Added Darwin Jellyfin-process-tree ffmpeg accounting, active-transcode session summaries, and owner-only structured local diagnostic bundles.
 - Added concurrent-client operation-ID, real slow-header timeout, request cancellation, malformed/oversized request, socket permission, daemon restart, log trust-boundary, and old-client/new-daemon compatibility coverage.
 - Kept transient Darwin `U` waits in `RUNNING` when storage and `/health` remain healthy, preventing initial library scans from flapping status while retaining forced recovery for a continuously uninterruptible process beyond the stop timeout.

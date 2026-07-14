@@ -116,8 +116,9 @@ state conflicts, and operation timeouts.
 The Phase 3 local control plane also provides:
 
 ```sh
-remoractl logs --source remora --lines 200
-remoractl logs --source jellyfin --lines 200
+remoractl logs remora --lines 200
+remoractl logs jellyfin --lines 200
+remoractl logs jellyfin -f
 remoractl edit-config
 remoractl apikey list
 remoractl apikey create "Living Room"
@@ -126,6 +127,19 @@ remoractl session list
 remoractl session stop a1b2c3d4
 remoractl diagnose --output remora-diagnostics.json
 ```
+
+Remora's own structured records are stored in `jellyfin-remora.log`. Jellyfin
+stdout and stderr are never copied into that stream: they are preserved
+verbatim in `jellyfin-console.log`, with independent lumberjack rotation under
+the configured `remora.logs.path`. Rotated console files retain the
+`jellyfin-console-*.log` naming pattern. `remoractl logs` defaults to `remora`;
+the positional source and the older `--source` spelling are both supported.
+`-f`/`--follow` streams appended bytes and follows rotation. ANSI sequences
+emitted by Jellyfin are passed through unchanged. Remora defaults
+`DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=1` for the child process
+when the operator has not explicitly set that .NET switch; the installed
+Jellyfin version and its console formatter still decide whether colors are
+actually emitted.
 
 API-key output contains only SHA-256-derived identifiers, never access tokens;
 the active Remora key cannot be revoked through its own control API. Configuration

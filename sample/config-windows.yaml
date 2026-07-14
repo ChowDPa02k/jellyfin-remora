@@ -22,6 +22,8 @@ remora:
       enabled: false
   data-dir: default
   logs:
+    # Remora writes jellyfin-remora.log and captures Jellyfin stdout/stderr
+    # verbatim in jellyfin-console.log. The two files rotate independently.
     path: remora-log
     level: info
     rotation-time: 24h

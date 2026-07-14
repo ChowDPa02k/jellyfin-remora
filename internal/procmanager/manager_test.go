@@ -103,3 +103,14 @@ func TestResolveExecutableAndBuildArgs(t *testing.T) {
 		t.Fatalf("args=%v", args)
 	}
 }
+
+func TestAppendEnvDefaultPreservesExplicitColorPreference(t *testing.T) {
+	env := appendEnvDefault([]string{"PATH=/bin"}, "DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION", "1")
+	if got := env[len(env)-1]; got != "DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=1" {
+		t.Fatalf("default environment entry = %q", got)
+	}
+	explicit := []string{"DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=0"}
+	if got := appendEnvDefault(explicit, "DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION", "1"); !reflect.DeepEqual(got, explicit) {
+		t.Fatalf("explicit environment was overwritten: %v", got)
+	}
+}

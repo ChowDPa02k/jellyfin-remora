@@ -134,7 +134,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		return errors.New("Jellyfin is already managed")
 	}
 	cmd := exec.Command(m.executable, m.args...)
-	cmd.Env = os.Environ()
+	cmd.Env = appendEnvDefault(os.Environ(), "DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION", "1")
 	cmd.Stdout = m.stdout
 	cmd.Stderr = m.stderr
 	if err := m.backend.ConfigureProcess(cmd, m.cfg.Jellyfin.RunAsUser, m.cfg.Jellyfin.RunAsGroup); err != nil {
@@ -168,6 +168,16 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.mu.Unlock()
 	}()
 	return nil
+}
+
+func appendEnvDefault(env []string, name, value string) []string {
+	prefix := name + "="
+	for _, entry := range env {
+		if len(entry) >= len(prefix) && strings.EqualFold(entry[:len(prefix)], prefix) {
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }
 
 func (m *Manager) Adopt(ctx context.Context) (bool, error) {

@@ -1,32 +1,49 @@
 package logging
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+// RotatingWriter adds duration-based rotation to lumberjack's size and
+// retention policies. File naming, rollover, cleanup, and concurrent writes
+// remain owned by lumberjack.
 type RotatingWriter struct {
-	mu       sync.Mutex
-	path     string
-	maxBytes int64
-	interval time.Duration
-	preserve time.Duration
-	file     *os.File
-	size     int64
-	opened   time.Time
+	mu           sync.Mutex
+	logger       *lumberjack.Logger
+	interval     time.Duration
+	lastRotation time.Time
+	closed       bool
 }
 
 func New(path string, maxBytes int64, interval, preserve time.Duration) (*RotatingWriter, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, err
 	}
-	r := &RotatingWriter{path: path, maxBytes: maxBytes, interval: interval, preserve: preserve}
-	if err := r.open(); err != nil {
+	maxSizeMB := int((maxBytes + 1024*1024 - 1) / (1024 * 1024))
+	if maxSizeMB < 1 {
+		maxSizeMB = 1
+	}
+	maxAgeDays := int((preserve + 24*time.Hour - 1) / (24 * time.Hour))
+	r := &RotatingWriter{
+		logger: &lumberjack.Logger{
+			Filename:  path,
+			MaxSize:   maxSizeMB,
+			MaxAge:    maxAgeDays,
+			LocalTime: false,
+			Compress:  false,
+		},
+		interval:     interval,
+		lastRotation: time.Now(),
+	}
+	// Preserve the previous logger's fail-fast behavior: a daemon must learn
+	// that its configured log destination is unusable before starting Jellyfin.
+	if _, err := r.logger.Write(nil); err != nil {
+		_ = r.logger.Close()
 		return nil, err
 	}
 	return r, nil
@@ -35,87 +52,37 @@ func New(path string, maxBytes int64, interval, preserve time.Duration) (*Rotati
 func (r *RotatingWriter) Write(p []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.file == nil {
+	if r.closed {
 		return 0, os.ErrClosed
 	}
-	if (r.maxBytes > 0 && r.size+int64(len(p)) > r.maxBytes) || (r.interval > 0 && time.Since(r.opened) >= r.interval) {
-		if err := r.rotate(); err != nil {
+	if r.interval > 0 && time.Since(r.lastRotation) >= r.interval {
+		if err := r.logger.Rotate(); err != nil {
 			return 0, err
 		}
+		r.lastRotation = time.Now()
 	}
-	n, err := r.file.Write(p)
-	r.size += int64(n)
-	return n, err
+	return r.logger.Write(p)
 }
+
+func (r *RotatingWriter) Rotate() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return os.ErrClosed
+	}
+	if err := r.logger.Rotate(); err != nil {
+		return err
+	}
+	r.lastRotation = time.Now()
+	return nil
+}
+
 func (r *RotatingWriter) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.file == nil {
+	if r.closed {
 		return nil
 	}
-	err := r.file.Close()
-	r.file = nil
-	return err
-}
-func (r *RotatingWriter) open() error {
-	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
-	if err != nil {
-		return err
-	}
-	st, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return err
-	}
-	r.file = f
-	r.size = st.Size()
-	r.opened = time.Now()
-	return nil
-}
-func (r *RotatingWriter) rotate() error {
-	if err := r.file.Sync(); err != nil {
-		return err
-	}
-	if err := r.file.Close(); err != nil {
-		return err
-	}
-	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
-	rotated := fmt.Sprintf("%s.%s", r.path, stamp)
-	if err := os.Rename(r.path, rotated); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := r.open(); err != nil {
-		return err
-	}
-	r.cleanup()
-	return nil
-}
-func (r *RotatingWriter) cleanup() {
-	if r.preserve <= 0 {
-		return
-	}
-	entries, err := os.ReadDir(filepath.Dir(r.path))
-	if err != nil {
-		return
-	}
-	prefix := filepath.Base(r.path) + "."
-	type item struct {
-		name string
-		mod  time.Time
-	}
-	var old []item
-	cut := time.Now().Add(-r.preserve)
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
-			continue
-		}
-		info, err := e.Info()
-		if err == nil && info.ModTime().Before(cut) {
-			old = append(old, item{e.Name(), info.ModTime()})
-		}
-	}
-	sort.Slice(old, func(i, j int) bool { return old[i].mod.Before(old[j].mod) })
-	for _, v := range old {
-		_ = os.Remove(filepath.Join(filepath.Dir(r.path), v.name))
-	}
+	r.closed = true
+	return r.logger.Close()
 }

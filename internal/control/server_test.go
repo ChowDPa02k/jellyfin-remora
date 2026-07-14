@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -166,8 +167,12 @@ func TestAPIMethodAndForceValidationUseStructuredErrors(t *testing.T) {
 func TestManagementLogConfigDiagnosticKeyAndSessionEndpoints(t *testing.T) {
 	root := t.TempDir()
 	logPath := filepath.Join(root, "remora.log")
+	jellyfinLogPath := filepath.Join(root, "jellyfin-console.log")
 	configPath := filepath.Join(root, "config.yaml")
 	if err := os.WriteFile(logPath, []byte("Logging out access token secret-session password=secret-password\none\ntwo\nthree\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(jellyfinLogPath, []byte("jellyfin raw line\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(configPath, []byte("password: must-not-leak\n"), 0o600); err != nil {
@@ -175,7 +180,7 @@ func TestManagementLogConfigDiagnosticKeyAndSessionEndpoints(t *testing.T) {
 	}
 	f := &fakeController{keys: []model.APIKey{{ID: "abcdef0123456789", Name: "Kodi"}}, sessions: []model.Session{{ID: "session-12345678", User: "alice", Status: "playing"}}}
 	cfg := &config.Config{ConfigVersion: 2, RESTAPI: config.RESTAPIConfig{Listen: "127.0.0.1", Port: 8095, UnixSocket: filepath.Join(root, "control.sock")}, Remora: config.RemoraConfig{DataDir: root}, Jellyfin: config.JellyfinConfig{Path: "/Applications/Jellyfin", LogDir: root}}
-	s := NewWithOptions(cfg, f, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{ConfigPath: configPath, LogPath: logPath})
+	s := NewWithOptions(cfg, f, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{ConfigPath: configPath, LogPath: logPath, JellyfinLogPath: jellyfinLogPath})
 
 	for _, request := range []struct {
 		method, path string
@@ -184,6 +189,7 @@ func TestManagementLogConfigDiagnosticKeyAndSessionEndpoints(t *testing.T) {
 		contains     string
 	}{
 		{http.MethodGet, "/v1/logs?lines=2", "", http.StatusOK, `"two"`},
+		{http.MethodGet, "/v1/logs?source=jellyfin&lines=2", "", http.StatusOK, `"jellyfin raw line"`},
 		{http.MethodGet, "/v1/config", "", http.StatusOK, `"sha256"`},
 		{http.MethodGet, "/v1/diagnostics", "", http.StatusOK, `"generated_at"`},
 		{http.MethodGet, "/v1/apikeys", "", http.StatusOK, `"Kodi"`},
@@ -201,6 +207,53 @@ func TestManagementLogConfigDiagnosticKeyAndSessionEndpoints(t *testing.T) {
 		if request.path == "/v1/diagnostics" && (strings.Contains(w.Body.String(), "must-not-leak") || strings.Contains(w.Body.String(), "secret-session") || strings.Contains(w.Body.String(), "secret-password") || !strings.Contains(w.Body.String(), "[REDACTED]")) {
 			t.Fatal("diagnostics leaked configuration or log credentials")
 		}
+	}
+}
+
+func TestFollowLogStreamsRawANSIAndAppendedContent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "jellyfin-console.log")
+	if err := os.WriteFile(path, []byte("initial\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewWithOptions(&config.Config{}, &fakeController{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{JellyfinLogPath: path})
+	server := httptest.NewServer(s.handler())
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/logs?source=jellyfin&lines=1&follow=true", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	reader := bufio.NewReader(resp.Body)
+	if line, err := reader.ReadString('\n'); err != nil || line != "initial\n" {
+		t.Fatalf("initial line=%q err=%v", line, err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.WriteString(f, "\x1b[32mcolored\x1b[0m\n")
+	_ = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line, err := reader.ReadString('\n'); err != nil || line != "\x1b[32mcolored\x1b[0m\n" {
+		t.Fatalf("followed line=%q err=%v", line, err)
+	}
+	if err := os.Rename(path, path+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("after rotation\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := reader.ReadString('\n'); err != nil || line != "after rotation\n" {
+		t.Fatalf("rotated line=%q err=%v", line, err)
 	}
 }
 

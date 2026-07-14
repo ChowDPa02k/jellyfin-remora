@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -26,14 +25,16 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	supervisor Controller
-	log        *slog.Logger
-	tcp        *http.Server
-	local      *http.Server
-	operations atomic.Uint64
-	configPath string
-	logPath    string
+	cfg             *config.Config
+	supervisor      Controller
+	log             *slog.Logger
+	tcp             *http.Server
+	local           *http.Server
+	operations      atomic.Uint64
+	configPath      string
+	logPath         string
+	jellyfinLogPath string
+	followers       chan struct{}
 }
 
 type Controller interface {
@@ -62,8 +63,9 @@ type EventResponse struct {
 }
 
 type Options struct {
-	ConfigPath string
-	LogPath    string
+	ConfigPath      string
+	LogPath         string
+	JellyfinLogPath string
 }
 
 type LogResponse struct {
@@ -121,7 +123,10 @@ func NewWithOptions(cfg *config.Config, s Controller, log *slog.Logger, options 
 	if options.LogPath == "" {
 		options.LogPath = filepath.Join(cfg.Remora.Logs.Path, "jellyfin-remora.log")
 	}
-	return &Server{cfg: cfg, supervisor: s, log: log, configPath: options.ConfigPath, logPath: options.LogPath}
+	if options.JellyfinLogPath == "" {
+		options.JellyfinLogPath = filepath.Join(cfg.Remora.Logs.Path, "jellyfin-console.log")
+	}
+	return &Server{cfg: cfg, supervisor: s, log: log, configPath: options.ConfigPath, logPath: options.LogPath, jellyfinLogPath: options.JellyfinLogPath, followers: make(chan struct{}, 8)}
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -218,14 +223,25 @@ func (s *Server) listLogs(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "remora"
 	}
-	path := s.logPath
-	if source == "jellyfin" {
-		path, err = newestLog(s.cfg.Jellyfin.LogDir)
-	} else if source != "remora" {
-		err = errors.New("source must be remora or jellyfin")
-	}
+	path, err := s.logPathForSource(source)
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "log_unavailable", err.Error(), operationID(r))
+		writeAPIError(w, http.StatusBadRequest, "invalid_argument", err.Error(), operationID(r))
+		return
+	}
+	follow, err := strictBool(r, "follow", false)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_argument", err.Error(), operationID(r))
+		return
+	}
+	if follow {
+		select {
+		case s.followers <- struct{}{}:
+			defer func() { <-s.followers }()
+		default:
+			writeAPIError(w, http.StatusTooManyRequests, "follow_limit_reached", "too many concurrent log followers", operationID(r))
+			return
+		}
+		s.followLog(w, r, source, path, lines)
 		return
 	}
 	logLines, truncated, err := tailLines(path, lines)
@@ -234,6 +250,89 @@ func (s *Server) listLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, LogResponse{Source: source, Path: path, Lines: logLines, Truncated: truncated})
+}
+
+func (s *Server) logPathForSource(source string) (string, error) {
+	switch source {
+	case "remora":
+		return s.logPath, nil
+	case "jellyfin":
+		return s.jellyfinLogPath, nil
+	default:
+		return "", errors.New("source must be remora or jellyfin")
+	}
+}
+
+func (s *Server) followLog(w http.ResponseWriter, r *http.Request, source, path string, lines int) {
+	f, info, err := openRegularLog(path)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "log_unavailable", err.Error(), operationID(r))
+		return
+	}
+	defer f.Close()
+	initial, _, err := tailLinesFromOpenFile(f, info, lines)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "log_unavailable", err.Error(), operationID(r))
+		return
+	}
+	offset := info.Size()
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		writeAPIError(w, http.StatusNotFound, "log_unavailable", err.Error(), operationID(r))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Remora-Log-Source", source)
+	// Streaming responses intentionally outlive the server's ordinary bounded
+	// response deadline. The request context still terminates the stream.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	w.WriteHeader(http.StatusOK)
+	for _, line := range initial {
+		if _, err := io.WriteString(w, line+"\n"); err != nil {
+			return
+		}
+	}
+	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
+	}
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			current, statErr := f.Stat()
+			if statErr != nil {
+				return
+			}
+			if current.Size() < offset {
+				if _, err := f.Seek(0, io.SeekStart); err != nil {
+					return
+				}
+				offset = 0
+			}
+			n, copyErr := io.Copy(w, f)
+			offset += n
+			if copyErr != nil {
+				return
+			}
+			if n > 0 && flusher != nil {
+				flusher.Flush()
+			}
+			pathInfo, pathErr := os.Lstat(path)
+			if pathErr != nil || pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() || os.SameFile(current, pathInfo) {
+				continue
+			}
+			replacement, _, openErr := openRegularLog(path)
+			if openErr != nil {
+				continue
+			}
+			_ = f.Close()
+			f = replacement
+			offset = 0
+		}
+	}
 }
 
 func (s *Server) configInfo(w http.ResponseWriter, r *http.Request) {
@@ -337,57 +436,61 @@ func boundedInt(r *http.Request, name string, fallback, minimum, maximum int) (i
 	return value, nil
 }
 
-func newestLog(directory string) (string, error) {
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		return "", err
+func strictBool(r *http.Request, name string, fallback bool) (bool, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return fallback, nil
 	}
-	var newest string
-	var newestTime time.Time
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(strings.ToLower(entry.Name()), ".log") {
-			continue
-		}
-		info, infoErr := entry.Info()
-		if infoErr == nil && (newest == "" || info.ModTime().After(newestTime)) {
-			newest = filepath.Join(directory, entry.Name())
-			newestTime = info.ModTime()
-		}
+	if raw == "true" {
+		return true, nil
 	}
-	if newest == "" {
-		return "", errors.New("no Jellyfin log file found")
+	if raw == "false" {
+		return false, nil
 	}
-	return newest, nil
+	return false, fmt.Errorf("%s must be true or false", name)
 }
 
 func tailLines(path string, limit int) ([]string, bool, error) {
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return nil, false, err
-	}
-	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
-		return nil, false, errors.New("log path must be a regular non-symlink file")
-	}
-	f, err := os.Open(path)
+	f, info, err := openRegularLog(path)
 	if err != nil {
 		return nil, false, err
 	}
 	defer f.Close()
-	const maxBytes = 4 << 20
+	return tailLinesFromOpenFile(f, info, limit)
+}
+
+func openRegularLog(path string) (*os.File, os.FileInfo, error) {
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
+		return nil, nil, errors.New("log path must be a regular non-symlink file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
 	info, err := f.Stat()
 	if err != nil {
-		return nil, false, err
+		f.Close()
+		return nil, nil, err
 	}
 	if !os.SameFile(pathInfo, info) {
-		return nil, false, errors.New("log path changed while it was opened")
+		f.Close()
+		return nil, nil, errors.New("log path changed while it was opened")
 	}
+	return f, info, nil
+}
+
+func tailLinesFromOpenFile(f *os.File, info os.FileInfo, limit int) ([]string, bool, error) {
+	const maxBytes = 4 << 20
+	start := int64(0)
 	truncated := info.Size() > maxBytes
 	if truncated {
-		if _, err := f.Seek(-maxBytes, 2); err != nil {
-			return nil, false, err
-		}
+		start = info.Size() - maxBytes
 	}
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(io.NewSectionReader(f, start, info.Size()-start))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	if truncated {
 		_ = scanner.Scan() // Drop the possibly partial first line after the seek.

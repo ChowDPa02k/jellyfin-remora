@@ -214,22 +214,10 @@ func requestJSONBody(c *http.Client, method, url string, body, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		var envelope struct {
-			Error struct {
-				Code        string `json:"code"`
-				Message     string `json:"message"`
-				OperationID string `json:"operation_id"`
-			} `json:"error"`
-		}
-		_ = json.Unmarshal(b, &envelope)
-		message := envelope.Error.Message
-		if message == "" {
-			message = strings.TrimSpace(string(b))
-		}
-		return &HTTPError{StatusCode: resp.StatusCode, Code: envelope.Error.Code, Message: message, OperationID: envelope.Error.OperationID}
+		return decodeHTTPError(resp)
 	}
+	b, _ := io.ReadAll(resp.Body)
 	if out == nil || len(bytes.TrimSpace(b)) == 0 {
 		return nil
 	}
@@ -237,6 +225,23 @@ func requestJSONBody(c *http.Client, method, url string, body, out any) error {
 		return err
 	}
 	return nil
+}
+
+func decodeHTTPError(resp *http.Response) error {
+	b, _ := io.ReadAll(resp.Body)
+	var envelope struct {
+		Error struct {
+			Code        string `json:"code"`
+			Message     string `json:"message"`
+			OperationID string `json:"operation_id"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(b, &envelope)
+	message := envelope.Error.Message
+	if message == "" {
+		message = strings.TrimSpace(string(b))
+	}
+	return &HTTPError{StatusCode: resp.StatusCode, Code: envelope.Error.Code, Message: message, OperationID: envelope.Error.OperationID}
 }
 func wait(c *http.Client, base, command string, initialPID int, output io.Writer, jsonOutput bool) error {
 	started := time.Now()
