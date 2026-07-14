@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,7 +57,7 @@ func TestManagementCommandsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(output)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("diagnostic file info=%v err=%v", info, err)
 	}
 	if len(requests) != 7 {
@@ -66,6 +67,9 @@ func TestManagementCommandsRoundTrip(t *testing.T) {
 
 func TestEditExistingConfigValidatesAndAtomicallyReplaces(t *testing.T) {
 	source := filepath.Join("..", "..", "sample", "config-darwin.yaml")
+	if runtime.GOOS == "windows" {
+		source = filepath.Join("..", "..", "sample", "config-windows.yaml")
+	}
 	data, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +90,11 @@ func TestEditExistingConfigValidatesAndAtomicallyReplaces(t *testing.T) {
 	}
 	t.Cleanup(func() { editConfigFile = oldEditor })
 	location := control.ConfigResponse{Path: path, SHA256: digest(data)}
-	if _, err := captureOutput(func() error { return editExistingConfig(location, "true") }); err != nil {
+	editor, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureOutput(func() error { return editExistingConfig(location, editor) }); err != nil {
 		t.Fatal(err)
 	}
 	edited, err := os.ReadFile(path)
@@ -94,7 +102,7 @@ func TestEditExistingConfigValidatesAndAtomicallyReplaces(t *testing.T) {
 		t.Fatalf("edited=%q err=%v", edited, err)
 	}
 	info, _ := os.Stat(path)
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode=%o", info.Mode().Perm())
 	}
 }

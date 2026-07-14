@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ type stateProcess struct {
 	forceStop bool
 	stopErr   error
 	started   time.Time
+	ports     []int
 }
 
 func TestFirstStartInitializationBacksOffAndOpensCircuit(t *testing.T) {
@@ -102,6 +104,33 @@ func TestReconcilePerformsOneHealthRequestPerTick(t *testing.T) {
 	}
 }
 
+func TestHealthySetupListenerDoesNotReportRunningBeforePublicInfoIsReady(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			http.Error(w, "core is still starting", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	process := &stateProcess{running: true, started: time.Now()}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.cfg.Remora.ServerStartTimeout = config.Duration{Duration: time.Minute}
+	s.reconcile(context.Background())
+	status := s.Status()
+	if status.State != model.StateStarting {
+		t.Fatalf("state=%s, want %s", status.State, model.StateStarting)
+	}
+	if status.Jellyfin.Healthy || !strings.Contains(status.Jellyfin.Error, "public information is unavailable") {
+		t.Fatalf("application health=%+v", status.Jellyfin)
+	}
+}
+
 func (p *stateProcess) Executable() string  { return "/fake/jellyfin" }
 func (p *stateProcess) Arguments() []string { return nil }
 func (p *stateProcess) PID() int {
@@ -116,7 +145,7 @@ func (p *stateProcess) Info(context.Context) (platform.ProcessInfo, bool) {
 	if !p.running {
 		return platform.ProcessInfo{}, false
 	}
-	return platform.ProcessInfo{PID: 42, PGID: 42, State: p.state}, true
+	return platform.ProcessInfo{PID: 42, PGID: 42, State: p.state, Ports: append([]int(nil), p.ports...)}, true
 }
 func (p *stateProcess) Start(context.Context) error { p.running = true; return nil }
 func (p *stateProcess) Stop(_ context.Context, force bool, _ time.Duration) error {
@@ -147,6 +176,31 @@ func stateSupervisor(t *testing.T, process *stateProcess) *Supervisor {
 	d := t.TempDir()
 	cfg := &config.Config{Remora: config.RemoraConfig{ServerStopTimeout: config.Duration{Duration: 10 * time.Millisecond}, DataDir: d, RecoverySuccesses: 1, HealthAPIHeartbeat: 1, APIFailureThreshold: 1}, Jellyfin: config.JellyfinConfig{DataDir: filepath.Join(d, "data")}}
 	return New(cfg, process, stateStorage{}, jellyfin.New("http://127.0.0.1:1", time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func TestStatusPortsAreObservedAndCleared(t *testing.T) {
+	process := &stateProcess{running: true, ports: []int{8096}, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	if ports := s.Status().Ports; len(ports) != 0 {
+		t.Fatalf("initial status guessed ports from configuration: %v", ports)
+	}
+	s.reconcile(context.Background())
+	if ports := s.Status().Ports; len(ports) != 1 || ports[0] != 8096 {
+		t.Fatalf("observed ports = %v", ports)
+	}
+	process.ports = nil
+	s.reconcile(context.Background())
+	if ports := s.Status().Ports; len(ports) != 0 {
+		t.Fatalf("closed listener left stale ports: %v", ports)
+	}
+	process.running = false
+	s.mu.Lock()
+	s.status.Ports = []int{8096}
+	s.mu.Unlock()
+	s.reconcile(context.Background())
+	if ports := s.Status().Ports; len(ports) != 0 {
+		t.Fatalf("stopped process left stale ports: %v", ports)
+	}
 }
 
 func TestUninterruptibleProcessIsForceKilledAfterTimeout(t *testing.T) {

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -54,7 +53,7 @@ var errOperationTimedOut = errors.New("operation timed out")
 func run() error {
 	global := flag.NewFlagSet("remoractl", flag.ContinueOnError)
 	host := global.String("host", "", "loopback Remora URL")
-	socket := global.String("socket", filepath.Join(os.TempDir(), "jellyfin-remora.sock"), "Remora unix socket")
+	socket := global.String("socket", defaultLocalControlEndpoint(), "Remora local control endpoint")
 	jsonOutput := global.Bool("json", false, "print machine-readable JSON")
 	showVersion := global.Bool("version", false, "show version")
 	if err := global.Parse(os.Args[1:]); err != nil {
@@ -178,10 +177,7 @@ func newClient(host, socket string) (*http.Client, string, error) {
 		transport.Proxy = nil
 		return &http.Client{Transport: transport, Timeout: 10 * time.Second}, strings.TrimRight(host, "/"), nil
 	}
-	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	}}
-	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, "http://unix", nil
+	return newLocalClient(socket)
 }
 func request(c *http.Client, method, url string) (model.Status, error) {
 	var status model.Status

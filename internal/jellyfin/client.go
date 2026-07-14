@@ -314,6 +314,13 @@ func (c *Client) StopSession(ctx context.Context, token, sessionID string) error
 	return c.do(ctx, http.MethodPost, "/Sessions/"+url.PathEscape(sessionID)+"/Playing/Stop", token, nil, nil, http.StatusNoContent)
 }
 
+func (c *Client) Shutdown(ctx context.Context, token string) error {
+	if strings.TrimSpace(token) == "" {
+		return errors.New("Jellyfin API key is unavailable")
+	}
+	return c.do(ctx, http.MethodPost, "/System/Shutdown", token, nil, nil, http.StatusNoContent, http.StatusOK)
+}
+
 func (c *Client) EnsureWatchdogUser(ctx context.Context, adminToken string, cfg config.UserLoginWatchdogConfig) error {
 	if !cfg.Enabled {
 		return nil

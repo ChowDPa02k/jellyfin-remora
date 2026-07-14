@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -73,7 +74,7 @@ func TestReconcilePreservesUnmanagedFieldsBacksUpAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o640 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
 		t.Fatalf("system mode = %v", info.Mode().Perm())
 	}
 	assertScalar(t, filepath.Join(cfg.Jellyfin.ConfigDir, "system.xml"), "ServerConfiguration", "ServerName", "Managed")

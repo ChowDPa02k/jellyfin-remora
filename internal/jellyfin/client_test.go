@@ -340,6 +340,27 @@ func TestValidateAPIKeyRejectsRevokedKey(t *testing.T) {
 	}
 }
 
+func TestShutdownUsesAuthenticatedSystemEndpoint(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodPost || r.URL.Path != "/System/Shutdown" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if !strings.Contains(r.Header.Get("Authorization"), `Token="api-key"`) {
+			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	if err := New(srv.URL, time.Second).Shutdown(context.Background(), "api-key"); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("shutdown endpoint was not called")
+	}
+}
+
 func TestEnsureWatchdogUserCreatesMissingUserAndLogsIn(t *testing.T) {
 	created := false
 	logouts := 0

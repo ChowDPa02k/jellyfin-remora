@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,14 +47,14 @@ func New(cfg *config.Config, backend platform.Backend, stdout, stderr io.Writer)
 func resolveExecutable(path string) (string, error) {
 	st, err := os.Stat(path)
 	if err == nil && !st.IsDir() {
-		if runtime.GOOS != "windows" && st.Mode()&0111 == 0 {
+		if !platformExecutableModeOK(st.Mode()) {
 			return "", fmt.Errorf("Jellyfin executable is not executable: %s", path)
 		}
 		return canonicalExecutable(path)
 	}
 	entries, readErr := os.ReadDir(path)
 	if readErr == nil {
-		candidates := []string{"Jellyfin", "jellyfin", "jellyfin.exe"}
+		candidates := platformExecutableCandidates()
 		for _, exact := range []bool{true, false} {
 			for _, name := range candidates {
 				for _, entry := range entries {
@@ -82,7 +81,7 @@ func validateExecutable(path string) (string, error) {
 	if err != nil || st.IsDir() {
 		return "", fmt.Errorf("Jellyfin executable not found: %s", path)
 	}
-	if runtime.GOOS != "windows" && st.Mode()&0111 == 0 {
+	if !platformExecutableModeOK(st.Mode()) {
 		return "", fmt.Errorf("Jellyfin executable is not executable: %s", path)
 	}
 	return canonicalExecutable(path)
@@ -104,15 +103,7 @@ func resolveWebDir(executable, configured string) (string, error) {
 	if configured != "default" {
 		return configured, nil
 	}
-	macOSDir := filepath.Dir(executable)
-	if filepath.Base(macOSDir) != "MacOS" || filepath.Base(filepath.Dir(macOSDir)) != "Contents" {
-		return "", nil
-	}
-	candidate := filepath.Clean(filepath.Join(macOSDir, "..", "Resources", "jellyfin-web"))
-	if st, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil && !st.IsDir() {
-		return candidate, nil
-	}
-	return "", fmt.Errorf("Jellyfin web resources not found under app bundle: %s", candidate)
+	return platformDefaultWebDir(executable)
 }
 
 func buildArgs(cfg *config.Config, webDir string) []string {
@@ -152,6 +143,13 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start Jellyfin: %w", err)
 	}
+	if attacher, ok := m.backend.(interface{ AttachProcess(int) error }); ok {
+		if err := attacher.AttachProcess(cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return fmt.Errorf("attach Jellyfin process: %w", err)
+		}
+	}
 	m.cmd = cmd
 	m.pid = cmd.Process.Pid
 	m.startedAt = time.Now()
@@ -188,6 +186,11 @@ func (m *Manager) Adopt(ctx context.Context) (bool, error) {
 	}
 	if len(processes) > 1 {
 		return false, fmt.Errorf("multiple matching Jellyfin processes found")
+	}
+	if attacher, ok := m.backend.(interface{ AttachProcess(int) error }); ok {
+		if err := attacher.AttachProcess(processes[0].PID); err != nil {
+			return false, fmt.Errorf("attach adopted Jellyfin process: %w", err)
+		}
 	}
 	m.mu.Lock()
 	m.pid = processes[0].PID
@@ -226,7 +229,13 @@ func (m *Manager) Stop(ctx context.Context, force bool, timeout time.Duration) e
 		return nil
 	}
 	if err := m.backend.SignalGroup(pid, force); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return err
+		if force {
+			return err
+		}
+		if forceErr := m.backend.SignalGroup(pid, true); forceErr != nil && !errors.Is(forceErr, os.ErrProcessDone) {
+			return fmt.Errorf("graceful stop failed: %v; force stop failed: %w", err, forceErr)
+		}
+		return m.waitForExit(ctx, pid, 5*time.Second)
 	}
 	if force {
 		return m.waitForExit(ctx, pid, 5*time.Second)
