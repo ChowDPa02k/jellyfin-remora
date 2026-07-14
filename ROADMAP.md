@@ -247,17 +247,36 @@ SMB contents at T: and successfully opens the empty NFS root at Z:. This proves
 the Dashboard media-library picker can use both mappings without requiring them
 to appear in Explorer.
 
+Windows Server 2022 Datacenter build 20348 passed the clean-host amd64 matrix on
+2026-07-14. Evidence covers clean volume discovery and initialization without
+third-party disk tools; offline native `go test ./...` and `go vet ./...`; live
+NTFS identity failures on a disposable VHDX; service installation and account
+change under Windows PowerShell 5.1; named-pipe status; Application event log
+registration; NFS session isolation, fencing, and recovery; and automatic
+service recovery across reboot. A password-backed local service identity read a
+Generic Credential Manager entry, connected the real Unicode SMB share in
+Session 0, passed write/flush/delete probes, stayed fenced while TCP 445 was
+blocked, and reconnected after restoration. A second reboot changed both the
+SCM and Jellyfin PIDs while SMB and NFS returned healthy, proving that Explorer
+visibility is not required for service-owned storage. The unsigned MSI install,
+repair, injected rollback, major upgrade, downgrade rejection, and uninstall
+transactions all produced their expected Windows Installer exit codes and final
+filesystem state. When invoked through OpenSSH the wrapper channel remained
+attached after the completed MSI transactions, so the transaction logs and
+postconditions, rather than SSH channel closure, are the recorded evidence.
+
 Still required before the Phase 4 exit gate can pass: release-certificate
-Authenticode signing and verification, plus successful results from the primary
-Windows Server 2022/2025 compatibility matrix. The completed Windows 11 Pro run
-satisfies the desktop-client requirement; a separate Windows 10 run is not
-required. Windows arm64 remains build-only and is not a released target until
-its complete native dependency and Jellyfin matrix passes.
+Authenticode signing and verification, plus the Windows Server 2025 primary
+compatibility matrix. Windows Server 2022 and Windows 11 Pro are complete; the
+Windows 11 Pro run satisfies the desktop-client requirement, so a separate
+Windows 10 run is not required. Windows arm64 remains build-only and is not a
+released target until its complete native dependency and Jellyfin matrix passes.
 
 Exit gate:
 
 - Windows 11 Pro passes the desktop/workstation amd64 matrix; its recorded clean-VM evidence satisfies the client baseline without a duplicate Windows 10 run.
-- Windows Server 2022 and 2025 pass the primary amd64 compatibility matrix, including native service lifecycle, clean initialization, storage fault recovery, reboot, upgrade/rollback, and MSI uninstall behavior; arm64 is released only if the complete native dependency and Jellyfin test matrix passes.
+- Windows Server 2022 passes the primary amd64 compatibility matrix, including native service lifecycle, clean initialization, storage fault recovery, reboot, upgrade/rollback, and MSI uninstall behavior.
+- Windows Server 2025 passes the same primary amd64 compatibility matrix; arm64 is released only if the complete native dependency and Jellyfin test matrix passes.
 - A clean Windows installation can produce a valid physical-volume configuration through `remoractl init` without third-party tools, registry browsing, or prior knowledge of volume GUIDs; the documented `mountvol` and PowerShell procedures produce the same identity.
 - Physical-volume identity tests prove that a reused drive letter cannot make the wrong disk healthy and that a configured volume remains identifiable across drive-letter changes.
 - Reboot, service-account change, SMB credential expiry, share disconnect, NFS mount loss where supported, drive-letter change, hung process, forced stop, and upgrade tests pass.
