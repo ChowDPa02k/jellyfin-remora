@@ -58,6 +58,18 @@ function Wait-ControlStatus([string]$Control, [int]$TimeoutSeconds = 30) {
   throw "named-pipe status was unavailable within $TimeoutSeconds seconds"
 }
 
+function Set-ServiceIdentity([string]$Account) {
+  $service = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+  if ($null -eq $service) { throw "service does not exist: $serviceName" }
+  $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{
+    StartName = $Account
+    StartPassword = $null
+  }
+  if ([int]$result.ReturnValue -ne 0) {
+    throw "changing $serviceName to $Account failed with Win32 error $($result.ReturnValue)"
+  }
+}
+
 function Grant-ServiceAccess([string]$Account, [string]$Config, [string]$InstallDirectory) {
   & icacls.exe $Config /grant "${Account}:R" | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "failed to grant config access to $Account" }
@@ -83,8 +95,9 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'failed to restrict copied configuration ACL' }
 
   $binaryPath = "`"$daemon`" --service -c `"$config`""
-  $null = Invoke-Sc @('create', $serviceName, 'binPath=', $binaryPath, 'start=', 'demand', 'obj=', $firstAccount, 'DisplayName=', 'Jellyfin Remora Phase 4 Test')
+  New-Service -Name $serviceName -BinaryPathName $binaryPath -StartupType Manual -DisplayName 'Jellyfin Remora Phase 4 Test' | Out-Null
   $created = $true
+  Set-ServiceIdentity $firstAccount
   Grant-ServiceAccess $firstAccount $config $sandbox
   $null = Invoke-Sc @('start', $serviceName)
   Wait-ServiceState 'Running'
@@ -96,7 +109,7 @@ try {
 
   $null = Invoke-Sc @('stop', $serviceName)
   Wait-ServiceState 'Stopped'
-  $null = Invoke-Sc @('config', $serviceName, 'obj=', $secondAccount, 'password=', '')
+  Set-ServiceIdentity $secondAccount
   Grant-ServiceAccess $secondAccount $config $sandbox
   $null = Invoke-Sc @('start', $serviceName)
   Wait-ServiceState 'Running'

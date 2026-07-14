@@ -133,6 +133,18 @@ namespace Remora {
   [Remora.LsaRights]::AddServiceLogon($Account)
 }
 
+function Set-ServiceIdentity([string]$Name, [string]$Account) {
+  $service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+  if ($null -eq $service) { throw "Service $Name was not created." }
+  $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{
+    StartName = $Account
+    StartPassword = $null
+  }
+  if ([int]$result.ReturnValue -ne 0) {
+    throw "Changing service $Name to account $Account failed with Win32 error $($result.ReturnValue)."
+  }
+}
+
 if ($Action -eq 'Uninstall') {
   Stop-Service -Name $serviceName -ErrorAction SilentlyContinue
   sc.exe delete $serviceName | Out-Host
@@ -178,10 +190,10 @@ if ($null -ne $ServiceCredential) {
   Grant-ServiceLogonRight $ServiceAccount
   New-Service -Name $serviceName -BinaryPathName $binaryPath -DisplayName $displayName -StartupType Automatic -Credential $ServiceCredential | Out-Null
 } else {
-  sc.exe create $serviceName binPath= $binaryPath start= auto obj= $ServiceAccount DisplayName= $displayName | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw 'sc.exe create failed' }
+  New-Service -Name $serviceName -BinaryPathName $binaryPath -DisplayName $displayName -StartupType Automatic | Out-Null
+  Set-ServiceIdentity $serviceName $ServiceAccount
 }
-sc.exe description $serviceName 'Supervises Jellyfin and fences it when required storage is unhealthy.' | Out-Host
+Set-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName" -Name Description -Value 'Supervises Jellyfin and fences it when required storage is unhealthy.'
 sc.exe failure $serviceName reset= 86400 actions= restart/5000/restart/15000/restart/60000 | Out-Host
 sc.exe failureflag $serviceName 1 | Out-Host
 if (-not [System.Diagnostics.EventLog]::SourceExists($serviceName)) {

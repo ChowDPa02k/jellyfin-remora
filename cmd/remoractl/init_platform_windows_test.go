@@ -29,7 +29,7 @@ func TestGenerateWindowsServiceInstaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(data)
-	for _, required := range []string{"#Requires -RunAsAdministrator", "--service -c", "NT SERVICE\\JellyfinRemora", "sc.exe create", "failureflag", "Start-Service", "InstallTask", "Stop-ScheduledTask", "Register-ScheduledTask", "Uninstall it before installing the service", "New-EventLog", "$installDir", "(OI)(CI)RX", "Grant-ServiceLogonRight", "LsaAddAccountRights", "SeServiceLogonRight"} {
+	for _, required := range []string{"#Requires -RunAsAdministrator", "--service -c", "NT SERVICE\\JellyfinRemora", "New-Service", "Set-ServiceIdentity", "Invoke-CimMethod", "failureflag", "Start-Service", "InstallTask", "Stop-ScheduledTask", "Register-ScheduledTask", "Uninstall it before installing the service", "New-EventLog", "$installDir", "(OI)(CI)RX", "Grant-ServiceLogonRight", "LsaAddAccountRights", "SeServiceLogonRight"} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("installer omitted %q", required)
 		}
