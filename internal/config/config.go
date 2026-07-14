@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -124,6 +123,7 @@ type RESTAPIConfig struct {
 	Listen     string `yaml:"listen"`
 	Port       int    `yaml:"port"`
 	UnixSocket string `yaml:"unix-socket"`
+	NamedPipe  string `yaml:"named-pipe"`
 }
 
 type RemoraConfig struct {
@@ -181,10 +181,15 @@ type DiskConfig struct {
 	Type             string `yaml:"type"`
 	Device           string `yaml:"device"`
 	UUID             string `yaml:"uuid"`
+	VolumeGUID       string `yaml:"volume-guid"`
+	VolumeLabel      string `yaml:"volume-label"`
+	Filesystem       string `yaml:"filesystem"`
 	Options          string `yaml:"options"`
 	User             string `yaml:"user"`
 	Password         string `yaml:"password"`
+	Credential       string `yaml:"credential"`
 	Target           string `yaml:"target"`
+	ProbePath        string `yaml:"probe-path"`
 	Permission       string `yaml:"permission"`
 	Heartbeat        int    `yaml:"heartbeat"`
 	Hearbeat         int    `yaml:"hearbeat,omitempty"`
@@ -378,9 +383,7 @@ func (c *Config) defaults() {
 	if c.RESTAPI.Port == 0 {
 		c.RESTAPI.Port = 8095
 	}
-	if c.RESTAPI.UnixSocket == "" {
-		c.RESTAPI.UnixSocket = filepath.Join(os.TempDir(), "jellyfin-remora.sock")
-	}
+	defaultPlatformControl(&c.RESTAPI)
 	if c.Remora.ServerStartTimeout.Duration == 0 {
 		c.Remora.ServerStartTimeout.Duration = 30 * time.Second
 	}
@@ -493,21 +496,47 @@ func (c *Config) Validate() error {
 		if d.Target == "" || !filepath.IsAbs(d.Target) {
 			return fmt.Errorf("disk[%d].target must be absolute", i)
 		}
+		if d.ProbePath != "" {
+			if !filepath.IsAbs(d.ProbePath) {
+				return fmt.Errorf("disk[%d].probe-path must be absolute", i)
+			}
+			rel, err := filepath.Rel(d.Target, d.ProbePath)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("disk[%d].probe-path must be beneath target", i)
+			}
+		}
 		if d.Permission != "r" && d.Permission != "rw" {
 			return fmt.Errorf("disk[%d].permission must be r or rw", i)
 		}
 		if d.FailureThreshold < 1 {
 			return fmt.Errorf("disk[%d].failure-threshold must be positive", i)
 		}
-		if d.Type == "physical" && (d.Device == "") == (d.UUID == "") {
-			return fmt.Errorf("disk[%d] physical disk requires exactly one of device or uuid", i)
+		if d.Type == "physical" {
+			identities := 0
+			for _, identity := range []string{d.Device, d.UUID, d.VolumeGUID} {
+				if identity != "" {
+					identities++
+				}
+			}
+			if identities != 1 {
+				return fmt.Errorf("disk[%d] physical disk requires exactly one of device, uuid, or volume-guid", i)
+			}
 		}
 		if d.Type != "physical" && d.Device == "" {
 			return fmt.Errorf("disk[%d].device is required", i)
 		}
+		if d.Type != "physical" && (d.VolumeGUID != "" || d.VolumeLabel != "" || d.Filesystem != "") {
+			return fmt.Errorf("disk[%d] volume-guid, volume-label, and filesystem are only valid for physical disks", i)
+		}
+		if d.Type != "smb" && d.Credential != "" {
+			return fmt.Errorf("disk[%d].credential is only valid for SMB disks", i)
+		}
+		if err := validatePlatformDisk(i, d); err != nil {
+			return err
+		}
 	}
-	if runtime.GOOS == "darwin" && c.Jellyfin.RunAsUser == "root" {
-		return errors.New("refusing to run Jellyfin as root")
+	if err := validatePlatformConfig(c); err != nil {
+		return err
 	}
 	network := c.Jellyfin.Networking.ServerAddressSettings
 	if network.LocalHTTPPortConfigured && (network.LocalHTTPPort < 1 || network.LocalHTTPPort > 65535) {

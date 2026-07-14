@@ -76,7 +76,10 @@ Completed in the `test/test.yaml` iterations:
 - Replacement processes clear the preceding PID's health sample before entering `STARTING`, preventing a stale healthy result from erasing crash history before the new PID is checked.
 - `remoractl` renders go-pretty-backed Unicode-safe process/storage/session tables by default while retaining additive JSON output; status now includes the run-as UID, Jellyfin version/server name, and normalized active sessions for both supported server lines, and omits the sessions table when no client is active.
 - Configuration schema v2 replaces mixed heartbeat multipliers with explicit `monitoring.jellyfin-api` and `monitoring.user-login` intervals, preserves v1 timing through in-memory migration, and adds independently debounced disk failure thresholds.
-- `remoractl init` validates an edited platform template before atomically replacing `jellyfin.config-dir/config.yaml`; Darwin emits a path-correct launchd plist, while systemd and Task Scheduler generation remain platform-phase stubs.
+- `remoractl init` validates an edited platform template before atomically
+  replacing `jellyfin.config-dir/config.yaml`; Darwin emits a path-correct
+  launchd plist, Windows emits a native-service installer with Task Scheduler
+  compatibility, and systemd generation remains a Phase 5 stub.
 - Setup selection fields accept the exact labels shown by the installed Jellyfin Web UI instead of internal API codes. Remora resolves the server-provided catalogs at setup time, preserves omitted defaults, and fails closed on labels unsupported by that Jellyfin version.
 - First-start API failures now use bounded exponential backoff; five consecutive failures stop the incomplete server and open the administrative-reset circuit instead of retrying setup every supervisor tick.
 - Runtime health readiness and failure accounting share one sample per tick, Darwin adoption uses exact kernel argv boundaries and the discovered process age, and `remoractl --host localhost` pins the validated loopback address.
@@ -112,10 +115,181 @@ Exit gate:
 - API compatibility tests demonstrate that an older supported `remoractl` can control a newer daemon within the same major version.
 
 Phase 3 exit gate passed on macOS arm64 on 2026-07-14. Platform-native process
-accounting remains implemented only for Darwin until the Linux and Windows phases;
-the shared API and CLI contract cross-builds for all declared targets.
+accounting is implemented for Darwin and Windows; Linux remains part of Phase 5.
+The shared API and CLI contract cross-builds for all declared targets.
 
-## Phase 4 — Linux support (`v0.6.0-alpha`)
+## Phase 4 — Windows support (`v0.6.0-alpha`)
+
+Windows precedes native Linux support because Linux users are more likely to run
+Jellyfin through Docker, while Windows users need a native supervisor. Windows
+Server is the primary compatibility target for native Jellyfin deployments;
+Windows 11 Pro provides the desktop/workstation baseline. The first deliverable
+is therefore a Windows-safe storage configuration and probe backend; process and
+service integration build on that storage boundary.
+
+Implemented on the initial Windows development host:
+
+- Strict Windows configuration validation, volume-GUID/label/filesystem identity,
+  separate writable probe paths, native volume resolution, and fail-closed target
+  verification are covered by unit and live NTFS tests.
+- `remoractl init` enumerates local fixed/removable volumes through Win32 APIs,
+  displays mount paths, labels, filesystems, total/free capacity and GUIDs, and
+  supports interactive selection or unattended `--volume D:\` preparation
+  without requiring the operator to copy a GUID. A guarded clean-init harness
+  also proves `--no-edit`/`--data-root`, rejects unresolved placeholders, compares
+  the generated identity with `mountvol`, runs `validate-config`, and cleans up.
+- Directory initialization resolves reparse points and the nearest existing
+  ancestor through `GetVolumePathNameW` before and after creation. A live junction
+  fixture proves a syntactically in-tree path that escapes to another volume is
+  rejected before it can become a Jellyfin data tree.
+- SMB drive discovery and reconnect use MPR APIs. When requested, the Windows
+  backend reads a Generic Credential from the exact service identity with
+  `CredReadW`, passes it to `WNetAddConnection2W`, and clears the in-memory
+  password buffer after use. Live validation covers the configured Unicode UNC
+  even when the service token cannot see the Explorer mapping. A temporary
+  unused drive-letter fixture proves connect, write/flush/delete, forced
+  disconnect, reconnect, and cleanup without disturbing the operator's existing
+  mapping. Windows rejects SMB `user`/`password` fields in YAML.
+- Windows NFS uses only the optional system Client for NFS `mount.exe`, rejects
+  plaintext YAML credentials, merges the native NFS mount table with MPR drive
+  discovery, and validates the configured server/export plus bounded I/O. The
+  installed system client proves an unreachable export fails within the
+  configured context deadline and leaves no drive mapping; a live export proves
+  mount, read probe, forced unmount, and reconnect.
+- Local control uses an ACL-protected named pipe, duplicate daemon instances use
+  a Windows file lock, and process adoption uses exact executable/argument
+  matching.
+- Supported-platform decisions are isolated in build-tagged files: signal
+  handling, init sample/binary naming, executable mode/candidates, default web
+  assets, storage, IPC, service, ACL, and process behavior no longer accumulate
+  `runtime.GOOS` branches in shared lifecycle code.
+- Jellyfin process trees are assigned to a kill-on-close Job Object; CPU/RSS and
+  descendant ffmpeg accounting are native, API shutdown is preferred for graceful
+  stop, and Job termination is the forced fallback. Native process-manager tests
+  cover exact adoption, duplicate-match rejection, stale-PID non-interference,
+  and descendant cleanup.
+- IPv4/IPv6 listening ports are read by owning PID through the native IP Helper
+  API instead of being guessed from configuration. Synthetic table tests, a real
+  listener, and Jellyfin 10.11.11 prove port `8096` appears only while the process
+  is actually listening and is cleared after stop.
+- The daemon has an SCM service handler and `remoractl init` emits an
+  administrator-reviewed PowerShell service installer. Native tests, real
+  Jellyfin 10.11.11 start/restart/stop/adoption, amd64 builds, and Windows arm64
+  cross-builds pass. The installer grants `SeServiceLogonRight` through the LSA
+  API when a custom service credential is supplied, so a clean host does not
+  require a manual `secpol.msc` step.
+- The generated installer also retains an interactive/highest Task Scheduler
+  deployment for workstations. It prevents coexistence with the SCM service,
+  stops the running task before unregistering it, and has a disposable Win11
+  harness covering principal SID, action process, named-pipe status, a real
+  Jellyfin PID, and process cleanup.
+- A real SCM run under `NT SERVICE\JellyfinRemora` verifies the service identity,
+  dynamic named-pipe ACL, physical-volume access, and fail-closed rejection of
+  the interactive user's unavailable SMB credential. Service lifecycle and
+  daemon warning/error records are written to the Application event log.
+- A repeatable elevated account-change test starts the native service under its
+  virtual account, reads status through the named pipe, stops it, changes SCM to
+  `LocalService`, reapplies ACLs, starts it again, proves the daemon identity
+  changed, and removes all service/test artifacts.
+- A two-stage reboot harness records an already healthy automatic service's boot
+  time, SCM/Jellyfin process identity, service account, named-pipe status, and
+  storage baseline. Post-boot verification requires new processes and every
+  configured storage result healthy; it deliberately never initiates a reboot.
+  The harness passes on a clean Windows 11 VM with a local NTFS volume and live
+  NFS export.
+- The Windows packaging script produces reproducible unsigned development ZIPs,
+  checksums, manifests, optional WiX MSI output, and an explicit Authenticode
+  path; two independent fixed-epoch builds produce byte-identical ZIP hashes,
+  and CI never labels unsigned artifacts as release-signed. A temporary
+  Code Signing certificate proves SDK discovery, private-key/EKU preflight,
+  RFC3161 signing and verification for both executables and the MSI, and that
+  the ZIP contains the exact signed executable bytes. This development evidence
+  does not replace release-certificate validation.
+- Local and clean-VM WiX validation covers MSI install, repair, injected
+  transactional rollback with old-version restoration, major upgrade, downgrade
+  blocking, and uninstall with complete Program Files cleanup; the lifecycle is
+  captured in `packaging/windows/test-msi.ps1` for disposable elevated hosts.
+- CI pins explicit Windows Server 2022 and 2025 runners as the primary Windows
+  compatibility matrix for native tests, clean-volume initialization, and the
+  complete unsigned MSI lifecycle instead of relying on the moving
+  `windows-latest` label.
+
+Windows 11 Pro 23H2 build 22631 is the desktop compatibility baseline and its VM
+evidence recorded on 2026-07-14 replaces a separate Windows 10 run. It covers
+clean init without third-party tools; a temporary NTFS VHD wrong-volume/reused-letter,
+missing target, reassignment, read-only, zero-free-space, detach, and recovery
+matrix; live Generic-Credential SMB connect/write/disconnect/reconnect and
+credential deletion/fail-closed/restoration recovery under a password-backed
+service identity; live NFS mount/unmount/reconnect and firewall-induced
+`DEGRADED -> STORAGE_FENCED -> RUNNING` recovery with a new Jellyfin PID; custom
+service-account installation, named-pipe status, automatic reboot recovery,
+Task Scheduler install/uninstall with a real Jellyfin PID, real Jellyfin 10.11.11
+on observed port 8096, and the complete unsigned MSI lifecycle. A native hung
+health-endpoint test proves bounded checks, forced Job Object cleanup, and
+restart with a new PID. The full Go test suite, vet, Windows arm64 build, and
+Darwin/Linux amd64/arm64 cross-builds pass after these changes.
+
+The repository-root `config.yaml` also passes native validation on the Windows
+development host with its real D: physical volume, Unicode SMB source at F:,
+and four Jellyfin data paths. A complete foreground lifecycle with Jellyfin
+10.11.11 observes PID and port 8096, all six storage checks healthy, and the
+strict transition sequence `PREFLIGHT -> STOPPED -> STARTING -> RUNNING ->
+STOPPING -> STOPPED`. A real setup-listener race found during this run is now
+covered: `/health` alone cannot report RUNNING until `/System/Info/Public` also
+succeeds, preventing an early green state followed by a STARTING regression.
+
+Service-session visibility is validated separately from Explorer. In a Win11
+desktop session, Explorer and a non-elevated interactive task correctly do not
+see the service-created SMB T: or NFS Z: mappings. While those mappings remain
+absent from Session 1, Jellyfin 10.11.11 in service Session 0 returns C:, T:, and
+Z: from `/Environment/Drives`; its directory-browser API lists the real Unicode
+SMB contents at T: and successfully opens the empty NFS root at Z:. This proves
+the Dashboard media-library picker can use both mappings without requiring them
+to appear in Explorer.
+
+Windows Server 2022 Datacenter build 20348 passed the clean-host amd64 matrix on
+2026-07-14. Evidence covers clean volume discovery and initialization without
+third-party disk tools; offline native `go test ./...` and `go vet ./...`; live
+NTFS identity failures on a disposable VHDX; service installation and account
+change under Windows PowerShell 5.1; named-pipe status; Application event log
+registration; NFS session isolation, fencing, and recovery; and automatic
+service recovery across reboot. A password-backed local service identity read a
+Generic Credential Manager entry, connected the real Unicode SMB share in
+Session 0, passed write/flush/delete probes, stayed fenced while TCP 445 was
+blocked, and reconnected after restoration. Real Jellyfin 10.11.11 completed
+first-run initialization under Remora and reported port 8096. Its own
+`/Environment/Drives` API returned C:, F:, and Z:, and its directory-browser API
+listed 14 directories on the Unicode SMB root and opened the empty NFS root. A
+final reboot changed both the SCM and real Jellyfin PIDs while both browser
+checks still passed, proving that Explorer visibility is not required for
+service-owned storage. The unsigned MSI install, repair, injected rollback,
+major upgrade, downgrade rejection, and uninstall transactions all produced
+their expected Windows Installer exit codes and final filesystem state. When
+invoked through OpenSSH the wrapper channel remained attached after the
+completed MSI transactions, so the transaction logs and postconditions, rather
+than SSH channel closure, are the recorded evidence.
+
+Still required before the Phase 4 exit gate can pass: release-certificate
+Authenticode signing and verification, plus the Windows Server 2025 primary
+compatibility matrix. Windows Server 2022 and Windows 11 Pro are complete; the
+Windows 11 Pro run satisfies the desktop-client requirement, so a separate
+Windows 10 run is not required. Windows arm64 remains build-only and is not a
+released target until its complete native dependency and Jellyfin matrix passes.
+
+Exit gate:
+
+- Windows 11 Pro passes the desktop/workstation amd64 matrix; its recorded clean-VM evidence satisfies the client baseline without a duplicate Windows 10 run.
+- Windows Server 2022 passes the primary amd64 compatibility matrix, including native service lifecycle, clean initialization, storage fault recovery, reboot, upgrade/rollback, and MSI uninstall behavior.
+- Windows Server 2025 passes the same primary amd64 compatibility matrix; arm64 is released only if the complete native dependency and Jellyfin test matrix passes.
+- A clean Windows installation can produce a valid physical-volume configuration through `remoractl init` without third-party tools, registry browsing, or prior knowledge of volume GUIDs; the documented `mountvol` and PowerShell procedures produce the same identity.
+- Physical-volume identity tests prove that a reused drive letter cannot make the wrong disk healthy and that a configured volume remains identifiable across drive-letter changes.
+- Reboot, service-account change, SMB credential expiry, share disconnect, NFS mount loss where supported, drive-letter change, hung process, forced stop, and upgrade tests pass.
+
+## Phase 5 — Native Linux support (`v0.8.0-alpha`)
+
+Native Linux support follows Windows because Linux operators commonly deploy
+Jellyfin through Docker. This phase adds a supported bare-metal/systemd path for
+operators who need Remora to own the host process and storage fence directly.
 
 - Implement the Linux platform backend using `/proc`, pidfd where available, process groups, child-subreeper behavior, mountinfo/statfs, and cgroup awareness without imposing CPU/GPU limits.
 - Support physical filesystems, `mount.cifs`, and NFS; add libsecret/file-based credential-provider interfaces and protocol-specific timeout guidance.
@@ -127,20 +301,6 @@ Exit gate:
 
 - Integration matrices pass on representative current Debian/Ubuntu, Fedora/RHEL-family, and one rolling distribution, on amd64 and arm64.
 - SMB/NFS disconnect, read-only remount, stale mount, full disk, permission loss, process hang, systemd restart, and host reboot tests pass.
-
-## Phase 5 — Windows support (`v0.8.0-alpha`)
-
-- Implement a native Windows Service as the supported deployment and retain Task Scheduler compatibility for non-service installations.
-- Use `CreateProcess` semantics with an explicit inherited environment, restricted service identity, Job Objects for process-tree ownership, graceful console/service control, and forced termination fallback.
-- Implement volume discovery by drive/volume GUID, filesystem and write probes, UNC/SMB reachability, reconnect handling, and Windows Credential Manager integration.
-- Replace Unix sockets with a secured named pipe while retaining loopback REST; use Windows ACLs for configuration, state, socket/pipe, logs, and secrets.
-- Collect process CPU/RSS, listening ports, child ffmpeg processes, and service events through supported Windows APIs; integrate with Windows Event Log.
-- Produce signed `.zip` and MSI artifacts with install, repair, upgrade, rollback, and uninstall coverage.
-
-Exit gate:
-
-- Windows 10/11 and supported Windows Server VM matrices pass on amd64; arm64 is released only if the complete native dependency and Jellyfin test matrix passes.
-- Reboot, service-account change, SMB credential expiry, share disconnect, drive-letter change, hung process, forced stop, and upgrade tests pass.
 
 ## Phase 6 — Cross-platform beta hardening (`v0.9.x-beta`)
 
@@ -159,7 +319,7 @@ Exit gate:
 
 ## Phase 7 — Release candidate and stable release (`v1.0.0-rc.1` → `v1.0.0`)
 
-- Build reproducible release artifacts for macOS arm64/amd64, Linux arm64/amd64, and Windows amd64; add Windows arm64 only after its Phase 5 gate passes.
+- Build reproducible release artifacts for macOS arm64/amd64, Linux arm64/amd64, and Windows amd64; add Windows arm64 only after its Phase 4 gate passes.
 - Sign and notarize macOS artifacts, Authenticode-sign Windows artifacts, publish checksums, SBOMs, provenance attestations, changelog, compatibility table, and upgrade notes.
 - Run the complete clean-install, upgrade, rollback, uninstall, storage-fault, process-fault, reboot, and 30-day soak gates against the release commit.
 - Publish GitHub Releases and platform packages from an immutable tag through CI; verify downloaded artifacts independently before marking the release stable.

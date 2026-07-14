@@ -37,7 +37,11 @@ func TestRunInitValidatesAndWritesConfiguration(t *testing.T) {
 		locateRemoraExecutable = oldLocate
 	})
 
-	if err := runInit([]string{"--sample-dir", sampleDir, "--editor", "vi"}); err != nil {
+	editor, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runInit([]string{"--sample-dir", sampleDir, "--editor", editor}); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(configDir, "config.yaml")
@@ -52,7 +56,7 @@ func TestRunInitValidatesAndWritesConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("configuration mode = %o, want 600", info.Mode().Perm())
 	}
 	if runtime.GOOS == "darwin" {
@@ -98,7 +102,11 @@ func TestRunInitRejectsInvalidEditWithoutReplacingConfiguration(t *testing.T) {
 	}
 	t.Cleanup(func() { editConfigFile = oldEdit })
 
-	err = runInit([]string{"--sample-dir", sampleDir, "--editor", "vi"})
+	editor, executableErr := os.Executable()
+	if executableErr != nil {
+		t.Fatal(executableErr)
+	}
+	err = runInit([]string{"--sample-dir", sampleDir, "--editor", editor})
 	if err == nil || !strings.Contains(err.Error(), "no files were changed") {
 		t.Fatalf("runInit error = %v, want validation failure", err)
 	}
@@ -108,6 +116,56 @@ func TestRunInitRejectsInvalidEditWithoutReplacingConfiguration(t *testing.T) {
 	}
 	if string(written) != original {
 		t.Fatalf("invalid edit replaced configuration: %q", written)
+	}
+}
+
+func TestRunInitNoEditUsesPreparedSample(t *testing.T) {
+	root := t.TempDir()
+	sampleDir := filepath.Join(root, "sample")
+	configDir := filepath.Join(root, "jellyfin-config")
+	if err := os.MkdirAll(sampleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sampleName, err := platformSampleName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sampleDir, sampleName), []byte(minimalInitConfig(configDir)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldEdit := editConfigFile
+	oldLocate := locateRemoraExecutable
+	editConfigFile = func(_, _ string) error { return fmt.Errorf("editor must not run") }
+	locateRemoraExecutable = func() (string, error) { return filepath.Join(root, "jellyfin-remora"), nil }
+	t.Cleanup(func() {
+		editConfigFile = oldEdit
+		locateRemoraExecutable = oldLocate
+	})
+
+	if err := runInit([]string{"--sample-dir", sampleDir, "--no-edit"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "config.yaml")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunInitNoEditRejectsPlaceholders(t *testing.T) {
+	sampleDir := t.TempDir()
+	sampleName, err := platformSampleName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sampleDir, sampleName), []byte("value: REPLACE-WITH-SECRET\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = runInit([]string{"--sample-dir", sampleDir, "--no-edit"})
+	if err == nil || !strings.Contains(err.Error(), "fully prepared sample") {
+		t.Fatalf("runInit error = %v", err)
 	}
 }
 

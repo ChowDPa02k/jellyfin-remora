@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -31,7 +30,7 @@ type Server struct {
 	supervisor Controller
 	log        *slog.Logger
 	tcp        *http.Server
-	unix       *http.Server
+	local      *http.Server
 	operations atomic.Uint64
 	configPath string
 	logPath    string
@@ -100,6 +99,7 @@ type DiagnosticConfig struct {
 	Version      int      `json:"version"`
 	Control      string   `json:"control"`
 	UnixSocket   string   `json:"unix_socket"`
+	NamedPipe    string   `json:"named_pipe,omitempty"`
 	DataDir      string   `json:"data_dir"`
 	JellyfinPath string   `json:"jellyfin_path"`
 	Storage      []string `json:"storage"`
@@ -127,33 +127,27 @@ func NewWithOptions(cfg *config.Config, s Controller, log *slog.Logger, options 
 func (s *Server) Run(ctx context.Context) error {
 	h := s.handler()
 	s.tcp = managedHTTPServer(net.JoinHostPort(s.cfg.RESTAPI.Listen, strconv.Itoa(s.cfg.RESTAPI.Port)), h)
-	s.unix = managedHTTPServer("", h)
-	if err := safeRemoveSocket(s.cfg.RESTAPI.UnixSocket); err != nil {
-		return err
-	}
-	ul, err := net.Listen("unix", s.cfg.RESTAPI.UnixSocket)
+	s.local = managedHTTPServer("", h)
+	localListener, localDescription, err := listenLocalControl(s.cfg, s.log)
 	if err != nil {
-		return fmt.Errorf("listen unix socket: %w", err)
-	}
-	if err := setSocketOwner(s.cfg.RESTAPI.UnixSocket, s.cfg.Jellyfin.RunAsUser, s.cfg.Jellyfin.RunAsGroup); err != nil {
-		s.log.Warn("cannot set unix socket owner", "error", err)
+		return err
 	}
 	tl, err := net.Listen("tcp", s.tcp.Addr)
 	if err != nil {
-		ul.Close()
+		localListener.Close()
 		return fmt.Errorf("listen REST API: %w", err)
 	}
 	errCh := make(chan error, 2)
-	go func() { errCh <- s.unix.Serve(ul) }()
+	go func() { errCh <- s.local.Serve(localListener) }()
 	go func() { errCh <- s.tcp.Serve(tl) }()
-	s.log.Info("control API listening", "tcp", s.tcp.Addr, "unix", s.cfg.RESTAPI.UnixSocket)
+	s.log.Info("control API listening", "tcp", s.tcp.Addr, "local", localDescription)
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.tcp.Shutdown(shutdownCtx)
-		_ = s.unix.Shutdown(shutdownCtx)
-		_ = os.Remove(s.cfg.RESTAPI.UnixSocket)
+		_ = s.local.Shutdown(shutdownCtx)
+		cleanupLocalControl(s.cfg)
 		return nil
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -314,7 +308,7 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 		Build:       buildinfo.Current("jellyfin-remora"),
 		Status:      s.supervisor.Status(),
 		Events:      s.supervisor.Events(256),
-		Config:      DiagnosticConfig{Version: s.cfg.ConfigVersion, Control: net.JoinHostPort(s.cfg.RESTAPI.Listen, strconv.Itoa(s.cfg.RESTAPI.Port)), UnixSocket: s.cfg.RESTAPI.UnixSocket, DataDir: s.cfg.Remora.DataDir, JellyfinPath: s.cfg.Jellyfin.Path, Storage: storage},
+		Config:      DiagnosticConfig{Version: s.cfg.ConfigVersion, Control: net.JoinHostPort(s.cfg.RESTAPI.Listen, strconv.Itoa(s.cfg.RESTAPI.Port)), UnixSocket: s.cfg.RESTAPI.UnixSocket, NamedPipe: s.cfg.RESTAPI.NamedPipe, DataDir: s.cfg.Remora.DataDir, JellyfinPath: s.cfg.Jellyfin.Path, Storage: storage},
 		Logs:        LogResponse{Source: "remora", Path: s.logPath, Lines: logs, Truncated: truncated},
 	}
 	writeJSON(w, http.StatusOK, bundle)
@@ -486,40 +480,4 @@ func writeAPIError(w http.ResponseWriter, status int, code, message, operation s
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
-}
-func safeRemoveSocket(path string) error {
-	st, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if st.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("refusing to remove non-socket path %s", path)
-	}
-	return os.Remove(path)
-}
-func setSocketOwner(path, username, groupname string) error {
-	if err := os.Chmod(path, 0660); err != nil {
-		return err
-	}
-	if os.Geteuid() != 0 || username == "" {
-		return nil
-	}
-	u, err := user.Lookup(username)
-	if err != nil {
-		return err
-	}
-	uid, _ := strconv.Atoi(u.Uid)
-	gidText := u.Gid
-	if groupname != "" {
-		g, err := user.LookupGroup(groupname)
-		if err != nil {
-			return err
-		}
-		gidText = g.Gid
-	}
-	gid, _ := strconv.Atoi(gidText)
-	return os.Chown(path, uid, gid)
 }

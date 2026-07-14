@@ -9,6 +9,9 @@ import (
 	"howett.net/plist"
 )
 
+func platformSampleName() (string, error) { return "config-darwin.yaml", nil }
+func remoraExecutableName() string        { return "jellyfin-remora" }
+
 func generatePlatformService(cfg *config.Config, executable, configPath string) (*serviceArtifact, error) {
 	payload := map[string]any{
 		"Label":             "io.github.chowdpa02k.jellyfin-remora",

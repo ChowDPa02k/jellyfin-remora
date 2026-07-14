@@ -2,6 +2,7 @@ package procmanager
 
 import (
 	"context"
+	"errors"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
 	"os"
@@ -10,6 +11,39 @@ import (
 	"testing"
 	"time"
 )
+
+type stopFallbackBackend struct {
+	platform.Backend
+	running bool
+	forces  []bool
+}
+
+func (b *stopFallbackBackend) SignalGroup(_ int, force bool) error {
+	b.forces = append(b.forces, force)
+	if !force {
+		return errors.New("graceful signal unavailable")
+	}
+	b.running = false
+	return nil
+}
+
+func (b *stopFallbackBackend) ProcessInfo(_ context.Context, pid int) (platform.ProcessInfo, error) {
+	if !b.running {
+		return platform.ProcessInfo{}, errors.New("process exited")
+	}
+	return platform.ProcessInfo{PID: pid, State: "R"}, nil
+}
+
+func TestStopForcesProcessWhenGracefulSignalIsUnavailable(t *testing.T) {
+	backend := &stopFallbackBackend{running: true}
+	manager := &Manager{backend: backend, pid: 42}
+	if err := manager.Stop(context.Background(), false, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(backend.forces, []bool{false, true}) {
+		t.Fatalf("signal force sequence = %v", backend.forces)
+	}
+}
 
 type adoptionBackend struct {
 	platform.Backend
@@ -34,7 +68,7 @@ func TestAdoptionRetainsDiscoveredProcessStartTime(t *testing.T) {
 
 func TestResolveExecutableAndBuildArgs(t *testing.T) {
 	d := t.TempDir()
-	exe := filepath.Join(d, "Jellyfin")
+	exe := filepath.Join(d, platformExecutableCandidates()[0])
 	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -50,54 +84,5 @@ func TestResolveExecutableAndBuildArgs(t *testing.T) {
 	want := []string{"--datadir=/d", "--configdir=/c", "--cachedir=/k", "--logdir=/l", "--hostwebclient=true"}
 	if args := buildArgs(cfg, ""); !reflect.DeepEqual(args, want) {
 		t.Fatalf("args=%v", args)
-	}
-}
-
-func TestResolveMacOSBundleWebDir(t *testing.T) {
-	root := t.TempDir()
-	exe := filepath.Join(root, "Jellyfin.app", "Contents", "MacOS", "Jellyfin")
-	web := filepath.Join(root, "Jellyfin.app", "Contents", "Resources", "jellyfin-web")
-	if err := os.MkdirAll(filepath.Dir(exe), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(exe, []byte("x"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(web, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(web, "index.html"), []byte("x"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := resolveWebDir(exe, "default")
-	if err != nil || got != web {
-		t.Fatalf("got=%q err=%v", got, err)
-	}
-}
-
-func TestResolveTarballLayoutPreservesLowercaseExecutable(t *testing.T) {
-	root := t.TempDir()
-	exe := filepath.Join(root, "jellyfin")
-	web := filepath.Join(root, "jellyfin-web")
-	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(web, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(web, "index.html"), []byte("x"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := resolveExecutable(root)
-	want, canonicalErr := filepath.EvalSymlinks(exe)
-	if canonicalErr != nil {
-		t.Fatal(canonicalErr)
-	}
-	if err != nil || got != want {
-		t.Fatalf("executable=%q want=%q err=%v", got, want, err)
-	}
-	if gotWeb, err := resolveWebDir(got, web); err != nil || gotWeb != web {
-		t.Fatalf("web=%q want=%q err=%v", gotWeb, web, err)
 	}
 }

@@ -1,12 +1,14 @@
-//go:build !darwin
+//go:build !darwin && !windows
 
 package main
 
 import (
 	"io"
 	"os"
+
+	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 )
 
-func acquireInstanceLock(string) (io.Closer, error) {
+func acquireInstanceLock(*config.Config) (io.Closer, error) {
 	return os.Open(os.DevNull)
 }

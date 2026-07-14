@@ -5,16 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 func main() {
 	port := 8096
 	healthFile := ""
 	childPIDFile := ""
+	childMode := false
 	startupMarker := ""
 	wizardFalseCount := int64(0)
 	for _, arg := range os.Args[1:] {
@@ -25,14 +26,20 @@ func main() {
 			healthFile = strings.TrimPrefix(arg, "--healthfile=")
 		case strings.HasPrefix(arg, "--childpidfile="):
 			childPIDFile = strings.TrimPrefix(arg, "--childpidfile=")
+		case arg == "--child=true":
+			childMode = true
 		case strings.HasPrefix(arg, "--startupmarker="):
 			startupMarker = strings.TrimPrefix(arg, "--startupmarker=")
 		case strings.HasPrefix(arg, "--wizardfalsecount="):
 			wizardFalseCount, _ = strconv.ParseInt(strings.TrimPrefix(arg, "--wizardfalsecount="), 10, 64)
 		}
 	}
+	if childMode {
+		time.Sleep(5 * time.Minute)
+		return
+	}
 	if childPIDFile != "" {
-		child := exec.Command("/bin/sleep", "300")
+		child := childCommand()
 		if err := child.Start(); err != nil {
 			panic(err)
 		}
@@ -41,9 +48,16 @@ func main() {
 	var publicCalls atomic.Int64
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if healthFile != "" {
-			if b, err := os.ReadFile(healthFile); err == nil && strings.TrimSpace(string(b)) != "healthy" {
-				http.Error(w, "Unhealthy", http.StatusServiceUnavailable)
-				return
+			if b, err := os.ReadFile(healthFile); err == nil {
+				switch strings.TrimSpace(string(b)) {
+				case "hang":
+					<-r.Context().Done()
+					return
+				case "healthy":
+				default:
+					http.Error(w, "Unhealthy", http.StatusServiceUnavailable)
+					return
+				}
 			}
 		}
 		w.WriteHeader(http.StatusOK)

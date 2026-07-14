@@ -13,7 +13,8 @@
       "properties": {
         "listen": { "type": "string", "default": "127.0.0.1" },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8095 },
-        "unix-socket": { "type": "string" }
+        "unix-socket": { "type": "string" },
+        "named-pipe": { "type": "string" }
       }
     },
     "remora": {
@@ -73,10 +74,15 @@
           "type": { "enum": ["physical", "smb", "nfs"] },
           "device": { "type": "string" },
           "uuid": { "type": "string" },
+          "volume-guid": { "type": "string" },
+          "volume-label": { "type": "string" },
+          "filesystem": { "type": "string" },
           "options": { "type": "string" },
           "user": { "type": "string" },
           "password": { "type": "string" },
+          "credential": { "enum": ["windows-credential-manager"] },
           "target": { "type": "string" },
+          "probe-path": { "type": "string" },
           "permission": { "enum": ["r", "rw"] },
           "heartbeat": { "type": "integer", "minimum": 1 },
           "hearbeat": { "type": "integer", "minimum": 1, "deprecated": true },

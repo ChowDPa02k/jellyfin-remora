@@ -100,7 +100,7 @@ func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.
 		s.apiKey = strings.TrimSpace(string(b))
 	}
 	uid, username := runtimeIdentity(cfg.Jellyfin.RunAsUser)
-	s.status = model.Status{State: model.StateInit, DesiredState: model.DesiredRunning, UID: uid, Username: username, Executable: pm.Executable(), Arguments: pm.Arguments(), Ports: []int{cfg.Jellyfin.Networking.ServerAddressSettings.LocalHTTPPort}, LastTransition: now}
+	s.status = model.Status{State: model.StateInit, DesiredState: model.DesiredRunning, UID: uid, Username: username, Executable: pm.Executable(), Arguments: pm.Arguments(), LastTransition: now}
 	s.recordEventLocked(model.Event{Timestamp: now, Type: "state_transition", State: model.StateInit})
 	if manualStop(filepath.Join(runtimeStateDir(cfg), "jellyfin.state")) || manualStop(filepath.Join(cfg.Remora.DataDir, "jellyfin.state")) {
 		s.status.ManualStop = true
@@ -258,9 +258,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.status.MemoryBytes = pi.MemoryBytes
 		s.status.FFmpegProcesses = pi.FFmpegProcesses
 		s.status.ProcessState = pi.State
-		if len(pi.Ports) > 0 {
-			s.status.Ports = pi.Ports
-		}
+		s.status.Ports = append(s.status.Ports[:0], pi.Ports...)
 		s.mu.Unlock()
 	}
 	if s.wasRunning && !running {
@@ -275,6 +273,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.status.CPUPercent = 0
 		s.status.MemoryBytes = 0
 		s.status.FFmpegProcesses = 0
+		s.status.Ports = nil
 		s.status.ActiveTranscodes = 0
 		s.status.Sessions = nil
 		s.mu.Unlock()
@@ -409,9 +408,6 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	previousHealthCheck := s.status.Jellyfin.CheckedAt
 	s.mu.RUnlock()
 	readiness := s.client.Health(ctx)
-	s.mu.Lock()
-	s.status.Jellyfin = readiness
-	s.mu.Unlock()
 	var info jellyfin.PublicInfo
 	var infoErr error
 	if readiness.Healthy {
@@ -419,6 +415,14 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	} else {
 		infoErr = errors.New("Jellyfin core is not ready")
 	}
+	applicationHealth := readiness
+	if readiness.Healthy && infoErr != nil {
+		applicationHealth.Healthy = false
+		applicationHealth.Error = "Jellyfin public information is unavailable: " + infoErr.Error()
+	}
+	s.mu.Lock()
+	s.status.Jellyfin = applicationHealth
+	s.mu.Unlock()
 	if infoErr == nil && info.StartupWizardCompleted != nil && !*info.StartupWizardCompleted {
 		s.wizardIncompleteRuns++
 		if age < 10*time.Second || s.wizardIncompleteRuns < 3 {
@@ -537,13 +541,13 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	healthCountDue := s.tick%uint64(max(1, s.cfg.Remora.HealthAPIHeartbeat)) == 0 ||
 		(age >= s.cfg.Remora.ServerStartTimeout.Duration && previousHealthCheck.IsZero())
 	if healthCountDue {
-		if readiness.Healthy {
+		if applicationHealth.Healthy {
 			s.apiFailures = 0
 		} else {
 			s.apiFailures++
 		}
 	}
-	health := readiness
+	health := applicationHealth
 	if health.Healthy {
 		if s.watchdogFailed {
 			s.transition(model.StateDegraded, "login watchdog remains unhealthy")
@@ -812,6 +816,13 @@ func (s *Supervisor) recordEvent(event model.Event) {
 
 func (s *Supervisor) stop(ctx context.Context, force bool) error {
 	s.transition(model.StateStopping, "")
+	if !force {
+		shutdownCtx, cancel := context.WithTimeout(ctx, s.cfg.Remora.IOTimeout.Duration)
+		if err := s.client.Shutdown(shutdownCtx, s.currentAPIKey()); err != nil {
+			s.log.Debug("Jellyfin API shutdown unavailable; falling back to process signal", "error", err)
+		}
+		cancel()
+	}
 	err := s.process.Stop(ctx, force, s.cfg.Remora.ServerStopTimeout.Duration)
 	_, stillRunning := s.process.Info(ctx)
 	if !stillRunning {

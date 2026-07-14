@@ -8,9 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 )
 
-func acquireInstanceLock(socketPath string) (io.Closer, error) {
+func acquireInstanceLock(cfg *config.Config) (io.Closer, error) {
+	socketPath := cfg.RESTAPI.UnixSocket
 	lockPath := socketPath + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0750); err != nil {
 		return nil, err

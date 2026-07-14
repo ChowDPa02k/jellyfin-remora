@@ -26,9 +26,10 @@ that the intended storage is present. Remora therefore validates the live mount 
 expected source identity, permissions, and a timed real I/O probe.
 
 Remora does not create missing Jellyfin data, configuration, cache, or log directories
-during normal supervision. This prevents a disappeared `/Volumes` mount from becoming
-a new local directory tree. The explicit `validate-config --prepare` operation creates
-those directories only after their configured storage has passed validation.
+during normal supervision. On Darwin, init also requires those paths to exist so a
+disappeared `/Volumes` mount cannot become a new local directory tree. Windows init may
+create them only after resolving every configured target to its native source identity;
+it resolves reparse points and verifies the actual Volume GUID before and after creation.
 
 The platform mount backend may recreate a missing mount-point directory before a mount
 attempt. It rejects relative paths, the filesystem root, symlinks, and non-directory
@@ -60,27 +61,45 @@ group, and supplementary groups. It runs in a distinct process group so graceful
 forced shutdown apply to Jellyfin and its descendants without signaling unrelated
 processes.
 
+On Windows, `run-as-user` and `run-as-group` are rejected. The Service Control Manager
+owns the daemon identity, `CreateProcess` receives an explicit inherited environment,
+and Jellyfin plus descendants are attached to a kill-on-close Job Object.
+
 Privilege is used for service lifecycle and mounting, not for changing Jellyfin's CPU,
 GPU, NPU, NUMA, cgroup, or scheduler policy. Future platform backends must preserve this
 separation unless an explicit opt-in resource policy is added.
 
 ## Secrets threat model
 
-The current configuration may contain SMB and Jellyfin passwords. Operator
-configuration must be owner-only (`0600`); Remora warns when group or other access is
-present. Inline SMB credentials are a compatibility mechanism and may be transiently
-visible to privileged process inspection on macOS. Keychain-backed credentials remain
-required before stable release.
+The current configuration may contain Jellyfin passwords. On macOS, inline SMB
+credentials remain a compatibility mechanism and may be transiently visible to
+privileged process inspection; owner-only (`0600`) configuration is required. Windows
+rejects SMB `user`/`password` fields and uses the service account's network identity or
+a Generic Credential read from its Credential Manager profile. Windows configuration
+DACLs are checked for broad readers, and the generated installer grants only the
+selected service identity.
 
 The Remora-owned Jellyfin API key is written atomically with owner-only permissions.
 Passwords and API keys must never be logged. Mount errors redact the configured SMB
 password, and control endpoints return status rather than credentials.
 
-The REST listener is restricted to syntactic loopback addresses and the Unix socket is
-local. Remote control is out of scope for v1; adding it requires TLS, scoped
+The REST listener is restricted to syntactic loopback addresses. Darwin uses a local
+Unix socket; Windows uses an ACL-protected named pipe whose DACL includes the actual
+service identity. Remote control is out of scope for v1; adding it requires TLS, scoped
 authentication, authorization tests, and a separate threat-model review. Jellyfin
 administrator or watchdog credentials must not be reused as Remora control-plane
 credentials.
+
+## Platform isolation
+
+Supported-platform behavior is selected by build-tagged files, not by accumulating
+`runtime.GOOS` branches in shared lifecycle code. Storage discovery, service handling,
+signals, local IPC, process ownership, executable rules, default web assets, filesystem
+ACLs, and credential behavior remain platform implementations behind shared contracts.
+Cross-platform configuration fields and status models may be shared, but each platform
+validator must reject fields whose semantics do not exist on that host. Platform fault
+tests use matching build tags so a passing test cannot accidentally exercise another
+platform's fallback behavior.
 
 ## Change review checklist
 

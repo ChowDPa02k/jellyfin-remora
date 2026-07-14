@@ -124,7 +124,11 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 		r.Message = fmt.Sprintf("mount source mismatch: got %s", mi.Source)
 		return r
 	}
-	if err := c.probePath(ctx, disk.Target, disk.Permission); err != nil {
+	probePath := disk.ProbePath
+	if probePath == "" {
+		probePath = disk.Target
+	}
+	if err := c.probePath(ctx, probePath, disk.Permission); err != nil {
 		r.Fatal = true
 		r.Message = err.Error()
 		return r

@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-latest]
+        os: [macos-15, windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -44,6 +44,33 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - run: go test ./...
+
+  windows-clean-init:
+    name: Clean init (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Build Windows binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build\clean-init | Out-Null
+          go build -o build\clean-init\jellyfin-remora.exe .\cmd\jellyfin-remora
+          go build -o build\clean-init\remoractl.exe .\cmd\remoractl
+      - name: Discover volume and validate clean init
+        shell: pwsh
+        run: |
+          .\packaging\windows\test-clean-init.ps1 `
+            -DaemonPath .\build\clean-init\jellyfin-remora.exe `
+            -ControlPath .\build\clean-init\remoractl.exe `
+            -WorkingDirectory $env:RUNNER_TEMP
 
   cross-build:
     name: Cross-build
@@ -67,3 +94,38 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: plutil -lint packaging/io.github.chowdpa02k.jellyfin-remora.plist
+
+  windows-package:
+    name: Windows package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore pinned WiX tool
+        run: dotnet tool restore
+      - name: Build unsigned development ZIPs and MSIs
+        shell: pwsh
+        run: |
+          .\packaging\windows\package.ps1 -Version 0.6.0-alpha -OutputDirectory build\windows\old -BuildMsi
+          .\packaging\windows\package.ps1 -Version 0.6.1-alpha -OutputDirectory build\windows\new -BuildMsi
+      - name: Test MSI rollback and lifecycle
+        shell: pwsh
+        run: |
+          .\packaging\windows\test-msi.ps1 `
+            -OldMsi (Resolve-Path '.\build\windows\old\*.msi') `
+            -NewMsi (Resolve-Path '.\build\windows\new\*.msi')
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-packages-unsigned-${{ matrix.os }}
+          path: build/windows/**/*-unsigned.*
+          if-no-files-found: error
