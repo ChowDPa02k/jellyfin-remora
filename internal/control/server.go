@@ -467,7 +467,7 @@ func openRegularLog(path string) (*os.File, os.FileInfo, error) {
 	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
 		return nil, nil, errors.New("log path must be a regular non-symlink file")
 	}
-	f, err := os.Open(path)
+	f, err := openLogForRead(path)
 	if err != nil {
 		return nil, nil, err
 	}
