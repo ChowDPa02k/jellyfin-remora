@@ -38,17 +38,37 @@ has passed.
 ## Build
 
 ```sh
-go build -o build/jellyfin-remora ./cmd/jellyfin-remora
-go build -o build/remoractl ./cmd/remoractl
+make build
 ```
 
-The platform templates are [`sample/config-darwin.yaml`](sample/config-darwin.yaml)
-and [`sample/config-windows.yaml`](sample/config-windows.yaml). For an installed
-pair of binaries, place `remoractl` and `jellyfin-remora` in the same directory
-and run `remoractl init`. Init refuses to open the editor if the sibling daemon
-is absent. It selects the host template, edits and strictly validates a `0600`
-temporary YAML copy, verifies every configured disk, and atomically writes
-`remora-config.yaml` in the directory from which the command was invoked.
+Local builds always keep the daemon and control CLI together under a normalized
+platform/architecture directory. `amd64` is named `x86_64` on disk:
+
+```text
+build/
+├── darwin/arm64/
+├── linux/arm64/
+├── linux/x86_64/
+├── windows/arm64/
+└── windows/x86_64/
+```
+
+`make build` creates only the native leaf directory. `make cross-build` creates
+all five supported or planned target directories. GitHub workflow layout is
+unchanged for now.
+
+Every `sample/*.yaml` platform template, including
+[`sample/config-darwin.yaml`](sample/config-darwin.yaml) and
+[`sample/config-windows.yaml`](sample/config-windows.yaml), is embedded in
+`remoractl` at build time. Release packages may retain the external files for
+inspection, but init does not depend on them. `--sample-dir` explicitly
+overrides the embedded platform template for development or customized builds.
+For an installed pair of binaries, place `remoractl` and `jellyfin-remora` in
+the same directory and run `remoractl init`. Init refuses to open the editor if
+the sibling daemon is absent. It selects the embedded host template, edits and
+strictly validates a `0600` temporary YAML copy, verifies every configured disk,
+and atomically writes `remora-config.yaml` in the directory from which the
+command was invoked.
 
 For each configured disk, init leaves an existing mount in place and performs
 the requested real read or write/fsync/delete probe. A missing mount is mounted
@@ -100,13 +120,13 @@ from 12.x back to 10.11.x.
 Run in the foreground during initial validation:
 
 ```sh
-sudo ./build/remoractl init
-./build/jellyfin-remora validate-config -c "$PWD/remora-config.yaml"
+sudo ./build/darwin/arm64/remoractl init
+./build/darwin/arm64/jellyfin-remora validate-config -c "$PWD/remora-config.yaml"
 # Optional: create missing directories only after their configured storage passes validation.
-./build/jellyfin-remora validate-config -c "$PWD/remora-config.yaml" --prepare
-./build/jellyfin-remora -c "$PWD/remora-config.yaml"
-./build/remoractl status
-./build/remoractl healthcheck
+./build/darwin/arm64/jellyfin-remora validate-config -c "$PWD/remora-config.yaml" --prepare
+./build/darwin/arm64/jellyfin-remora -c "$PWD/remora-config.yaml"
+./build/darwin/arm64/remoractl status
+./build/darwin/arm64/remoractl healthcheck
 ```
 
 Configuration schema v2 groups health settings by what they observe:

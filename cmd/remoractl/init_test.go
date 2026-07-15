@@ -189,6 +189,17 @@ func TestRunInitChecksSiblingDaemonBeforeReadingSample(t *testing.T) {
 	}
 }
 
+func TestLoadPlatformSampleUsesEmbeddedTemplateOutsideRepository(t *testing.T) {
+	useInitWorkingDirectory(t, t.TempDir())
+	template, err := loadPlatformSample("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(template), "config-version: 2") {
+		t.Fatalf("embedded platform template is unexpected: %q", template)
+	}
+}
+
 func TestRunInitInstallsArtifactAndStartsAfterConfirmation(t *testing.T) {
 	root := t.TempDir()
 	useInitWorkingDirectory(t, root)

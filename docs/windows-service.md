@@ -166,8 +166,10 @@ but it does not satisfy the release-certificate gate deferred to `v1.0.0`.
 The harness creates a unique four-hour CurrentUser certificate, trusts it only
 for the duration of the test, and removes it by exact thumbprint in `finally`.
 
-The MSI installs binaries, the Windows sample, documentation, and license under
-Program Files. Run `remoractl init` after installation, then install the service
+The MSI installs binaries, the inspectable Windows sample, documentation, and
+license under Program Files. The sample is also embedded in `remoractl`, so init
+does not depend on the external copy. Run `remoractl init` after installation,
+then install the service
 using its generated script. This keeps storage selection and credentials out of
 the MSI transaction.
 

@@ -17,6 +17,7 @@ import (
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/storage"
+	"github.com/ChowDPa02K/jellyfin-remora/sample"
 )
 
 type serviceArtifact struct {
@@ -66,13 +67,9 @@ func runInit(args []string) error {
 		return fmt.Errorf("resolve working directory: %w", err)
 	}
 
-	sample, err := findPlatformSample(*sampleDir)
+	template, err := loadPlatformSample(*sampleDir)
 	if err != nil {
 		return err
-	}
-	template, err := os.ReadFile(sample)
-	if err != nil {
-		return fmt.Errorf("read platform sample: %w", err)
 	}
 	template, err = preparePlatformTemplate(template, *volume, *dataRoot)
 	if err != nil {
@@ -261,35 +258,24 @@ func hasUnresolvedInitPlaceholder(template []byte) bool {
 	return strings.Contains(strings.ToUpper(string(template)), "REPLACE-WITH")
 }
 
-func findPlatformSample(configuredDir string) (string, error) {
+func loadPlatformSample(configuredDir string) ([]byte, error) {
 	name, err := platformSampleName()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if configuredDir != "" {
 		path := filepath.Join(configuredDir, name)
-		if _, err := os.Stat(path); err != nil {
-			return "", fmt.Errorf("platform sample %s: %w", path, err)
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read platform sample override %s: %w", path, err)
 		}
-		return path, nil
+		return contents, nil
 	}
-	executable, err := os.Executable()
+	contents, err := sample.Files.ReadFile(name)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("read embedded platform sample %s: %w", name, err)
 	}
-	executableDir := filepath.Dir(executable)
-	workingDir, _ := os.Getwd()
-	candidates := []string{
-		filepath.Join(executableDir, "..", "share", "jellyfin-remora", "sample", name),
-		filepath.Join(executableDir, "..", "sample", name),
-		filepath.Join(workingDir, "sample", name),
-	}
-	for _, candidate := range candidates {
-		if st, statErr := os.Stat(candidate); statErr == nil && !st.IsDir() {
-			return filepath.Clean(candidate), nil
-		}
-	}
-	return "", fmt.Errorf("cannot find %s; searched %s", name, strings.Join(candidates, ", "))
+	return contents, nil
 }
 
 func chooseEditor(configured string) (string, error) {

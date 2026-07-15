@@ -3,7 +3,7 @@ param(
   [Parameter(Mandatory)]
   [ValidatePattern('^\d+\.\d+\.\d+([-.+][0-9A-Za-z.-]+)?$')]
   [string]$Version,
-  [string]$OutputDirectory = 'build\windows',
+  [string]$OutputDirectory = 'build\windows\x86_64',
   [switch]$BuildMsi,
   [string]$CertificateThumbprint,
   [string]$SignToolPath,

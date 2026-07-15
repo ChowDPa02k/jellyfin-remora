@@ -37,14 +37,14 @@ then opens the configured editor for review. The validated result is written as
 installer.
 
 ```powershell
-remoractl init --sample-dir .\sample
+remoractl init
 ```
 
 For unattended preparation, specify the familiar mount point instead of copying
 a GUID:
 
 ```powershell
-remoractl init --sample-dir .\sample --volume 'D:\' --editor notepad.exe
+remoractl init --volume 'D:\' --editor notepad.exe
 ```
 
 Automated image preparation can supply a fully reviewed sample and skip the
