@@ -11,6 +11,30 @@ Supervisor invariants and trust boundaries are defined in [docs/architecture-saf
 The local control-plane contract is documented in [docs/api-v1.md](docs/api-v1.md).
 Build and review requirements are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Platform support
+
+The macOS target is Apple Silicon (`arm64`) only. Intel (`x86_64`/`amd64`)
+Macs are not supported, and there are no plans to add Intel macOS support or
+publish Intel macOS artifacts.
+
+## Platform adaptation test status
+
+The status below records native platform and Jellyfin adaptation testing. A
+passed adaptation test does not by itself mean that every stable-release gate,
+such as long-running soak tests, signing, packaging, upgrade, and uninstall,
+has passed.
+
+| Platform | Architecture | Status | Tested scope or plan |
+|---|---|---|---|
+| macOS | Apple Silicon (`arm64`) | Passed（已通过） | Native clean-install and destructive HA tests with Jellyfin 10.10.7, 10.11.11, and 12.0.0 |
+| macOS | Intel (`x86_64`/`amd64`) | Not planned（不计划） | No adaptation, testing, support, or release artifacts are planned |
+| Windows 11 Pro | `amd64` | Passed（已通过） | Native service/task lifecycle, storage faults, reboot recovery, MSI lifecycle, and Jellyfin 10.11.11 |
+| Windows Server 2022 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
+| Windows Server 2025 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
+| Windows | `arm64` | Not started（未开始） | Cross-build only; native dependencies and the Jellyfin compatibility matrix have not been tested |
+| Linux | `amd64` | Not started（未开始） | Native systemd/process/storage implementation is planned for Phase 5 |
+| Linux | `arm64` | Not started（未开始） | Native systemd/process/storage implementation is planned for Phase 5 |
+
 ## Build
 
 ```sh
@@ -177,6 +201,65 @@ The REST listener accepts loopback addresses only. On Unix, the daemon defaults
 to `/tmp/.s.remora.<restapi.port>` and `remoractl` discovers that socket under
 `/tmp` automatically. Use `--socket`/`-s` to select among multiple non-default
 instances, or `--host http://127.0.0.1:8095` as a fallback.
+
+## NFS locking on macOS
+
+For media-only NFS shares, remote file locking usually adds no value: Jellyfin
+opens media files for streaming rather than coordinating cross-client writes.
+On Darwin, Remora therefore adds macOS's `nolocks` option by default to NFSv2/v3
+mounts when `disk.options` does not already select a locking policy. This also
+avoids the separate NFSv3 status and lock-manager RPC dependency. A typical
+media-share entry is:
+
+```yaml
+disk:
+  - type: nfs
+    device: 192.168.1.109:/media
+    target: /Volumes/jellyfin-media
+    probe-path: /Volumes/jellyfin-media/remora-probe
+    permission: rw
+    options: vers=3,resvport,nolocks,rsize=65536,wsize=65536,intr,soft
+```
+
+If `options` is omitted, Darwin uses the recommended media-share defaults
+`vers=3,resvport,nolocks,rsize=65536,wsize=65536,intr,soft`. If custom NFSv2/v3
+options omit a locking choice, Remora appends `nolocks`; all other explicit
+values are preserved. Remora does not add `nolocks` to an explicit NFSv4 version
+because macOS defines that option only for NFSv2/v3.
+
+Do not apply the media-share default blindly to Jellyfin's data, configuration,
+metadata, or database directories when multiple clients may write them. Use
+NFSv4, which integrates locking into the protocol, or explicitly request remote
+locking for NFSv3 in that case.
+
+With NFSv3, macOS remote locking requires the server to provide `rpc.statd` and
+the Network Lock Manager. If the server is missing `rpc.statd`, `mount_nfs` fails
+with an error similar to:
+
+```text
+can't mount with remote locks when server is not running rpc.statd
+```
+
+On a Rocky Linux or RHEL NFS server, install the NFS utilities and enable the
+NFSv3 status service together with the server:
+
+```sh
+sudo dnf install nfs-utils
+sudo systemctl enable --now rpc-statd nfs-server
+rpcinfo -p | grep -E 'status|nlockmgr'
+```
+
+The final command should list RPC program `100024` (`status`/`rpc.statd`) and
+`100021` (`nlockmgr`). When a firewall separates the client and server, pin and
+allow the `mountd`, `statd`, and `lockd` ports in `/etc/nfs.conf`; NFSv4 normally
+needs only TCP port 2049. See the
+[RHEL NFS firewall guidance](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/securing_networks/securing-network-services_securing-networks).
+
+For media-only shares, `nolocks` is the recommended production mode and avoids
+unnecessary lock traffic. `locallocks` is different: it creates locks visible
+only to the current Mac and can mislead applications into assuming other clients
+are coordinated. For shared writable Jellyfin application data, start
+`rpc.statd` for NFSv3 or use NFSv4 instead.
 
 ## launchd
 

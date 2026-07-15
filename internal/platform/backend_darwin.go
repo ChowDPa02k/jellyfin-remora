@@ -25,6 +25,8 @@ import (
 
 type darwinBackend struct{}
 
+const darwinDefaultNFSOptions = "vers=3,resvport,nolocks,rsize=65536,wsize=65536,intr,soft"
+
 func newBackend() Backend { return &darwinBackend{} }
 
 func run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -149,7 +151,7 @@ func (d *darwinBackend) Mount(ctx context.Context, disk config.DiskConfig) error
 			source = source[:i] + ":" + source[i:]
 		}
 		args := []string{"-t", "nfs"}
-		options := disk.Options
+		options := darwinNFSOptions(disk.Options)
 		if disk.Permission == "r" {
 			if options != "" {
 				options += ","
@@ -165,6 +167,43 @@ func (d *darwinBackend) Mount(ctx context.Context, disk config.DiskConfig) error
 	default:
 		return fmt.Errorf("unsupported disk type %q", disk.Type)
 	}
+}
+
+// darwinNFSOptions defaults media-oriented NFSv2/v3 mounts to no remote
+// locking. macOS only defines nolocks for NFSv2/v3; NFSv4 integrates locking
+// into the protocol, so an explicit v4-capable version selection is preserved.
+// Any explicit locking policy also takes precedence over the default.
+func darwinNFSOptions(configured string) string {
+	options := strings.TrimSpace(configured)
+	if options == "" {
+		return darwinDefaultNFSOptions
+	}
+	hasLockPolicy := false
+	hasNFSv4 := false
+	for _, raw := range strings.Split(options, ",") {
+		option := strings.ToLower(strings.TrimSpace(raw))
+		if option == "" {
+			continue
+		}
+		key, value, _ := strings.Cut(option, "=")
+		switch key {
+		case "lock", "locks", "lockd", "nlm", "locallocks", "nolocallocks", "nolocks", "nolockd", "nolock", "nonlm":
+			hasLockPolicy = true
+		case "nfsv4":
+			hasNFSv4 = true
+		case "vers", "nfsvers":
+			for _, version := range strings.Split(value, "-") {
+				major, _, _ := strings.Cut(strings.TrimSpace(version), ".")
+				if major == "4" {
+					hasNFSv4 = true
+				}
+			}
+		}
+	}
+	if hasLockPolicy || hasNFSv4 {
+		return options
+	}
+	return options + ",nolocks"
 }
 
 func ensureMountTarget(target string) error {

@@ -26,6 +26,29 @@ func TestEnsureMountTargetCreatesMissingDirectory(t *testing.T) {
 	}
 }
 
+func TestDarwinNFSOptionsDefaultToNoRemoteLocks(t *testing.T) {
+	tests := map[string]string{
+		"":                         darwinDefaultNFSOptions,
+		"soft,resvport":            "soft,resvport,nolocks",
+		"vers=3,resvport":          "vers=3,resvport,nolocks",
+		"nfsvers=2-3":              "nfsvers=2-3,nolocks",
+		"vers=3,nolocks":           "vers=3,nolocks",
+		"vers=3,locallocks":        "vers=3,locallocks",
+		"vers=3,locks":             "vers=3,locks",
+		"vers=4,resvport":          "vers=4,resvport",
+		"nfsvers=4.0,soft":         "nfsvers=4.0,soft",
+		"vers=3-4,resvport":        "vers=3-4,resvport",
+		"nfsv4,resvport":           "nfsv4,resvport",
+		"  vers=3,resvport  ":      "vers=3,resvport,nolocks",
+		"vers=3,nolocallocks,soft": "vers=3,nolocallocks,soft",
+	}
+	for configured, want := range tests {
+		if got := darwinNFSOptions(configured); got != want {
+			t.Errorf("darwinNFSOptions(%q) = %q, want %q", configured, got, want)
+		}
+	}
+}
+
 func TestRequiredArgumentMatchingUsesTokenBoundaries(t *testing.T) {
 	arguments := []string{"/Applications/Jellyfin", "--datadir=/Volumes/App Data", "--configdir=/config"}
 	for _, arg := range []string{"--datadir=/Volumes/App Data", "--configdir=/config"} {

@@ -11,7 +11,7 @@ The repository currently contains 111 top-level tests. HA-specific coverage incl
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, single-sample health accounting, transient startup-wizard rejection, bounded first-start initialization retries, five-failure setup/process circuit breakers, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, original adopted-process uptime, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, kernel argv-boundary identity (including paths with spaces), and macOS environment preservation.
-- Required mount-source matching for physical, SMB, NFS, Unicode/escaped SMB shares, isolated timed I/O probes, read-only probes, missing paths, secret redaction, and consecutive per-disk failure thresholds that reset after recovery while preserving fail-closed startup.
+- Required mount-source matching for physical, SMB, NFS, Unicode/escaped SMB shares, isolated timed I/O probes, read-only probes, missing paths, secret redaction, Darwin's media-oriented `vers=3,resvport,nolocks,rsize=65536,wsize=65536,intr,soft` default with explicit-policy/NFSv4 preservation, and consecutive per-disk failure thresholds that reset after recovery while preserving fail-closed startup.
 - macOS mount-target recreation after Disk Arbitration removes `/Volumes/<share>`, including unsafe-path and symlink rejection.
 - Darwin `com.apple.provenance` detection, advisory validation output, and structured daemon warning logging.
 - Fenced start rejection, force-stop routing, socket-file safety, duplicate Remora instance locking, and CLI convergence across `PROCESS_FAILED`, `STORAGE_FENCED`, and restart PID replacement.
@@ -122,6 +122,30 @@ Jellyfin outage. Live SMB disappearance fenced the service; restoring the user
 mount returned one process to `RUNNING`. Foreground non-root automatic mount
 could not recreate the deleted `/Volumes` target, matching the documented
 LaunchDaemon privilege requirement.
+
+## Real Darwin NFSv4 fault run
+
+A live NFS export at `192.168.1.109:/data` was tested on 2026-07-15 with
+Jellyfin 12.0.0. macOS mounted it with `vers=4,resvport`; the configured mount
+target identified the NFS filesystem while `probe-path` selected an exported
+writable subdirectory. Remora's create, write, fsync, close, and delete probe
+passed, and all configured storage entered the test healthy.
+
+The baseline reached `RUNNING` with Jellyfin PID `82392`. A normal
+`diskutil unmount` transitioned through `STOPPING` to `STORAGE_FENCED`, removed
+the old PID, and reported the export reachable but not mounted. The foreground
+non-root Remora could not remount it and did not treat the recreated local mount
+directory as healthy. After an administrator remounted the same NFSv4 export,
+the configured three-check recovery streak completed and exactly one
+replacement Jellyfin process, PID `86208`, returned to `RUNNING`. The test ended
+with a controlled stop, no Jellyfin or Remora process, and the NFS export
+unmounted.
+
+An initial NFSv3 mount exposed a server configuration failure rather than a
+Remora failure: macOS rejected remote locks because the Rocky Linux server was
+not running `rpc.statd`. The README now recommends NFSv4 and documents how to
+enable and verify `rpc.statd`/`nlockmgr` when NFSv3 is required; local or
+disabled locking remains explicitly unsuitable for production Jellyfin data.
 
 ## Deliberately non-destructive substitutions
 

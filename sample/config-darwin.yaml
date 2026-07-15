@@ -88,11 +88,14 @@ disk:
   #   heartbeat: 3
   #   failure-threshold: 2
 
-  # NFS example. SysV init is not supported on future Linux builds.
+  # Media-only NFS example. Darwin NFSv2/v3 mounts default to `nolocks` when no
+  # locking policy is supplied; it is explicit here so the intent is visible.
+  # Use NFSv4 or an explicit `locks` policy for shared application data that
+  # requires cross-client locking. SysV init is not supported on future Linux builds.
   # - type: nfs
-  #   device: 192.168.1.20:/exports/AppData
-  #   options: vers=4,soft
-  #   target: /Volumes/AppData-NFS
+  #   device: 192.168.1.20:/exports/Media
+  #   options: vers=3,resvport,nolocks,rsize=65536,wsize=65536,intr,soft
+  #   target: /Volumes/Media-NFS
   #   permission: rw
   #   heartbeat: 3
   #   failure-threshold: 2

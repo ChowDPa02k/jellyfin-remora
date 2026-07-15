@@ -1,6 +1,6 @@
 # Jellyfin Remora development roadmap
 
-This roadmap takes the project from the current macOS prototype to a supported, reproducible release on macOS, Linux, and Windows. Versions are milestone labels rather than promised dates. A phase is complete only when its exit gate passes.
+This roadmap takes the project from the current Apple Silicon macOS prototype to a supported, reproducible release on macOS arm64, Linux, and Windows. Intel macOS is explicitly out of scope and is not planned. Versions are milestone labels rather than promised dates. A phase is complete only when its exit gate passes.
 
 ## Release principles
 
@@ -50,13 +50,14 @@ Exit gate:
 - Add Keychain-backed SMB credentials. Keep inline YAML passwords only as an explicitly insecure compatibility mode with redaction tests.
 - Add mount retry limits, jittered restart backoff, and explicit administrative un-fence/reset operations. Per-disk consecutive-failure and global recovery thresholds are implemented.
 - Build `install`, `uninstall`, and extended `diagnose` workflows; validated `remoractl init`, `validate-config`, protected directory preparation, and Darwin launchd-plist generation are already available.
-- Test both Apple Silicon and Intel builds against Jellyfin 10.11.x and the current 12.x-compatible API surface.
+- Test Apple Silicon builds against Jellyfin 10.11.x and the current 12.x-compatible API surface.
+- Real Darwin NFSv4 loss and recovery passed against `192.168.1.109:/data`: the writable probe established a healthy baseline, unmount fenced and stopped the old Jellyfin PID, and remount completed the configured recovery streak before starting exactly one replacement PID. NFSv3 server-side `rpc.statd` requirements and the NFSv4-preferred macOS configuration are documented.
 
 Exit gate:
 
 - Real APFS/removable-volume, SMB, and NFS fault tests demonstrate: disconnect causes fencing, no false local data tree is created, the old process exits, and recovery requires the configured healthy streak.
 - A 7-day soak test covers media playback/transcoding, sleep/wake, network interruption, Remora restarts, log rotation, and repeated Jellyfin crashes.
-- Signed development artifacts install, upgrade, and uninstall cleanly through launchd on arm64 and amd64 macOS.
+- Signed development artifacts install, upgrade, and uninstall cleanly through launchd on arm64 macOS.
 
 ## Phase 2 — Jellyfin lifecycle and configuration management (`v0.3.0-alpha.8`)
 
@@ -90,9 +91,8 @@ Exit gate:
 - Existing-server tests prove unspecified settings and user-managed data remain unchanged.
 - Contract tests pass against supported 10.11.x and 12.x server fixtures.
 
-Phase 2 exit gate passed on macOS arm64 on 2026-07-13. Native Intel macOS
-coverage remains part of the Phase 1 platform release gate rather than this
-feature milestone.
+Phase 2 exit gate passed on macOS arm64 on 2026-07-13. Intel macOS is not a
+supported or planned target.
 
 ## Phase 3 — Complete control plane and observability (`v0.4.0-alpha`)
 
@@ -335,7 +335,7 @@ Exit gate:
 
 ## Phase 7 — Release candidate and stable release (`v1.0.0-rc.1` → `v1.0.0`)
 
-- Build reproducible release artifacts for macOS arm64/amd64, Linux arm64/amd64, and Windows amd64; add Windows arm64 only after its Phase 4 gate passes.
+- Build reproducible release artifacts for macOS arm64, Linux arm64/amd64, and Windows amd64; add Windows arm64 only after its Phase 4 gate passes.
 - Sign and notarize macOS artifacts, Authenticode-sign Windows artifacts with the release certificate, publish checksums, SBOMs, provenance attestations, changelog, compatibility table, and upgrade notes.
 - Run the complete clean-install, upgrade, rollback, uninstall, storage-fault, process-fault, reboot, and 30-day soak gates against the release commit.
 - Publish GitHub Releases and platform packages from an immutable tag through CI; verify downloaded artifacts independently before marking the release stable.
