@@ -204,7 +204,7 @@ Implemented on the initial Windows development host:
   Code Signing certificate proves SDK discovery, private-key/EKU preflight,
   RFC3161 signing and verification for both executables and the MSI, and that
   the ZIP contains the exact signed executable bytes. This development evidence
-  does not replace release-certificate validation.
+  does not replace the release-certificate validation deferred to `v1.0.0`.
 - Local and clean-VM WiX validation covers MSI install, repair, injected
   transactional rollback with old-version restoration, major upgrade, downgrade
   blocking, and uninstall with complete Program Files cleanup; the lifecycle is
@@ -285,12 +285,12 @@ expected exit codes and no remaining Program Files directory. The run also found
 that the portable Windows sample must not assume a D: transcode directory, so it
 now retains Jellyfin's default transcode path.
 
-Still required before the Phase 4 exit gate can pass: release-certificate
-Authenticode signing and verification. Windows Server 2022, Windows Server 2025,
-and Windows 11 Pro are complete; the Windows 11 Pro run satisfies the
+The Phase 4 exit gate passed on 2026-07-15. Windows Server 2022, Windows Server
+2025, and Windows 11 Pro are complete; the Windows 11 Pro run satisfies the
 desktop-client requirement, so a separate Windows 10 run is not required.
-Windows arm64 remains build-only and is not a released target until its complete
-native dependency and Jellyfin matrix passes.
+Release-certificate Authenticode signing and verification are deferred to the
+`v1.0.0` release gate. Windows arm64 remains build-only and is not a released
+target until its complete native dependency and Jellyfin matrix passes.
 
 Exit gate:
 
@@ -336,7 +336,7 @@ Exit gate:
 ## Phase 7 — Release candidate and stable release (`v1.0.0-rc.1` → `v1.0.0`)
 
 - Build reproducible release artifacts for macOS arm64/amd64, Linux arm64/amd64, and Windows amd64; add Windows arm64 only after its Phase 4 gate passes.
-- Sign and notarize macOS artifacts, Authenticode-sign Windows artifacts, publish checksums, SBOMs, provenance attestations, changelog, compatibility table, and upgrade notes.
+- Sign and notarize macOS artifacts, Authenticode-sign Windows artifacts with the release certificate, publish checksums, SBOMs, provenance attestations, changelog, compatibility table, and upgrade notes.
 - Run the complete clean-install, upgrade, rollback, uninstall, storage-fault, process-fault, reboot, and 30-day soak gates against the release commit.
 - Publish GitHub Releases and platform packages from an immutable tag through CI; verify downloaded artifacts independently before marking the release stable.
 - Define the maintenance policy: supported Jellyfin/OS versions, security-fix process, deprecation window, patch-release cadence, and `v1` API/config compatibility promise.

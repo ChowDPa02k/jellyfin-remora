@@ -152,7 +152,7 @@ select another trusted SDK installation explicitly.
 
 A transient self-signed certificate can test the mechanics on a disposable
 development host, including RFC3161 timestamps and ZIP/MSI byte verification,
-but it never satisfies the release-certificate gate.
+but it does not satisfy the release-certificate gate deferred to `v1.0.0`.
 
 ```powershell
 .\packaging\windows\test-authenticode.ps1
