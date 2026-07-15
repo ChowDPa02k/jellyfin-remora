@@ -145,6 +145,8 @@ treat the human-readable message as diagnostic text rather than a stable value.
 | `5` | Accepted lifecycle operation did not converge before the deadline |
 
 All daemon-facing `remoractl` commands map to the operations above. `init` is an
-offline installation workflow; `edit-config` intentionally performs the final
+interactive local installation workflow that writes `$PWD/remora-config.yaml`,
+validates configured storage, and installs or emits the platform service
+definition; `edit-config` intentionally performs the final
 filesystem replacement locally after using `/v1/config` for daemon-authoritative
 path and concurrency metadata.

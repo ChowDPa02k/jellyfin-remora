@@ -51,7 +51,7 @@ Exit gate:
 - Add mount retry limits, jittered restart backoff, and explicit administrative un-fence/reset operations. Per-disk consecutive-failure and global recovery thresholds are implemented.
 - Build `install`, `uninstall`, and extended `diagnose` workflows; validated `remoractl init`, `validate-config`, protected directory preparation, and Darwin launchd-plist generation are already available.
 - Test Apple Silicon builds against Jellyfin 10.11.x and the current 12.x-compatible API surface.
-- Real Darwin NFSv4 loss and recovery passed against `192.168.1.109:/data`: the writable probe established a healthy baseline, unmount fenced and stopped the old Jellyfin PID, and remount completed the configured recovery streak before starting exactly one replacement PID. NFSv3 server-side `rpc.statd` requirements and the NFSv4-preferred macOS configuration are documented.
+- Real Darwin NFSv4 loss and recovery passed against `192.168.1.109:/data`: the writable probe established a healthy baseline, unmount fenced and stopped the old Jellyfin PID, and remount completed the configured recovery streak before starting exactly one replacement PID. NFSv3 server-side `rpc.statd` requirements, the media-oriented `nolocks` default, and explicit locking guidance for shared application data are documented.
 
 Exit gate:
 
@@ -77,10 +77,13 @@ Completed in the `test/test.yaml` iterations:
 - Replacement processes clear the preceding PID's health sample before entering `STARTING`, preventing a stale healthy result from erasing crash history before the new PID is checked.
 - `remoractl` renders go-pretty-backed Unicode-safe process/storage/session tables by default while retaining additive JSON output; status now includes the run-as UID, Jellyfin version/server name, and normalized active sessions for both supported server lines, and omits the sessions table when no client is active.
 - Configuration schema v2 replaces mixed heartbeat multipliers with explicit `monitoring.jellyfin-api` and `monitoring.user-login` intervals, preserves v1 timing through in-memory migration, and adds independently debounced disk failure thresholds.
-- `remoractl init` validates an edited platform template before atomically
-  replacing `jellyfin.config-dir/config.yaml`; Darwin emits a path-correct
-  launchd plist, Windows emits a native-service installer with Task Scheduler
-  compatibility, and systemd generation remains a Phase 5 stub.
+- `remoractl init` requires sibling binaries, validates an edited platform
+  template and its real mount/read/write behavior, then atomically writes
+  `$PWD/remora-config.yaml`. It generates platform service definitions beside
+  the configuration, installs them idempotently when privileged, asks before
+  startup, and otherwise prints exact manual deployment instructions. Darwin
+  uses launchd, Windows uses Task Scheduler with native-service compatibility,
+  and the systemd path activates with the Phase 5 Linux backend and sample.
 - Setup selection fields accept the exact labels shown by the installed Jellyfin Web UI instead of internal API codes. Remora resolves the server-provided catalogs at setup time, preserves omitted defaults, and fails closed on labels unsupported by that Jellyfin version.
 - First-start API failures now use bounded exponential backoff; five consecutive failures stop the incomplete server and open the administrative-reset circuit instead of retrying setup every supervisor tick.
 - Runtime health readiness and failure accounting share one sample per tick, Darwin adoption uses exact kernel argv boundaries and the discovered process age, and `remoractl --host localhost` pins the validated loopback address.
@@ -96,7 +99,7 @@ supported or planned target.
 
 ## Phase 3 — Complete control plane and observability (`v0.4.0-alpha`)
 
-Completed across `v0.4.0-alpha.1` through `v0.4.0-alpha.3`:
+Completed across `v0.4.0-alpha.1` through `v0.4.0-alpha.4`:
 
 - Documented the additive local `/v1` contract, status enums, compatibility rules, response-version metadata, per-request operation IDs, and structured stable error codes.
 - Retained the status response shape used by older clients while extending it with process start time, storage-probe latency, and sorted playing-user summaries; CPU/RSS, listening endpoints, and active session details remain available.

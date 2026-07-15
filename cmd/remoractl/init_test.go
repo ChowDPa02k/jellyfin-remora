@@ -1,16 +1,23 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 )
 
 func TestRunInitValidatesAndWritesConfiguration(t *testing.T) {
 	root := t.TempDir()
+	useInitWorkingDirectory(t, root)
 	sampleDir := filepath.Join(root, "sample")
 	configDir := filepath.Join(root, "jellyfin-config")
 	if err := os.MkdirAll(sampleDir, 0o755); err != nil {
@@ -29,13 +36,9 @@ func TestRunInitValidatesAndWritesConfiguration(t *testing.T) {
 	}
 
 	oldEdit := editConfigFile
-	oldLocate := locateRemoraExecutable
 	editConfigFile = func(_, _ string) error { return nil }
-	locateRemoraExecutable = func() (string, error) { return filepath.Join(root, "jellyfin-remora"), nil }
-	t.Cleanup(func() {
-		editConfigFile = oldEdit
-		locateRemoraExecutable = oldLocate
-	})
+	stubInitLifecycle(t, filepath.Join(root, "jellyfin-remora"))
+	t.Cleanup(func() { editConfigFile = oldEdit })
 
 	editor, err := os.Executable()
 	if err != nil {
@@ -44,7 +47,7 @@ func TestRunInitValidatesAndWritesConfiguration(t *testing.T) {
 	if err := runInit([]string{"--sample-dir", sampleDir, "--editor", editor}); err != nil {
 		t.Fatal(err)
 	}
-	destination := filepath.Join(configDir, "config.yaml")
+	destination := filepath.Join(root, "remora-config.yaml")
 	written, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +63,7 @@ func TestRunInitValidatesAndWritesConfiguration(t *testing.T) {
 		t.Fatalf("configuration mode = %o, want 600", info.Mode().Perm())
 	}
 	if runtime.GOOS == "darwin" {
-		plistPath := filepath.Join(configDir, "io.github.chowdpa02k.jellyfin-remora.plist")
+		plistPath := filepath.Join(root, "io.github.chowdpa02k.jellyfin-remora.plist")
 		plist, readErr := os.ReadFile(plistPath)
 		if readErr != nil {
 			t.Fatal(readErr)
@@ -75,6 +78,8 @@ func TestRunInitValidatesAndWritesConfiguration(t *testing.T) {
 
 func TestRunInitRejectsInvalidEditWithoutReplacingConfiguration(t *testing.T) {
 	root := t.TempDir()
+	useInitWorkingDirectory(t, root)
+	stubInitLifecycle(t, filepath.Join(root, "jellyfin-remora"))
 	sampleDir := filepath.Join(root, "sample")
 	configDir := filepath.Join(root, "jellyfin-config")
 	if err := os.MkdirAll(sampleDir, 0o755); err != nil {
@@ -90,7 +95,7 @@ func TestRunInitRejectsInvalidEditWithoutReplacingConfiguration(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sampleDir, sampleName), []byte(minimalInitConfig(configDir)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	destination := filepath.Join(configDir, "config.yaml")
+	destination := filepath.Join(root, "remora-config.yaml")
 	const original = "existing configuration\n"
 	if err := os.WriteFile(destination, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
@@ -121,6 +126,7 @@ func TestRunInitRejectsInvalidEditWithoutReplacingConfiguration(t *testing.T) {
 
 func TestRunInitNoEditUsesPreparedSample(t *testing.T) {
 	root := t.TempDir()
+	useInitWorkingDirectory(t, root)
 	sampleDir := filepath.Join(root, "sample")
 	configDir := filepath.Join(root, "jellyfin-config")
 	if err := os.MkdirAll(sampleDir, 0o755); err != nil {
@@ -138,24 +144,26 @@ func TestRunInitNoEditUsesPreparedSample(t *testing.T) {
 	}
 
 	oldEdit := editConfigFile
-	oldLocate := locateRemoraExecutable
 	editConfigFile = func(_, _ string) error { return fmt.Errorf("editor must not run") }
-	locateRemoraExecutable = func() (string, error) { return filepath.Join(root, "jellyfin-remora"), nil }
-	t.Cleanup(func() {
-		editConfigFile = oldEdit
-		locateRemoraExecutable = oldLocate
-	})
+	stubInitLifecycle(t, filepath.Join(root, "jellyfin-remora"))
+	t.Cleanup(func() { editConfigFile = oldEdit })
 
 	if err := runInit([]string{"--sample-dir", sampleDir, "--no-edit"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(configDir, "config.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "remora-config.yaml")); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRunInitNoEditRejectsPlaceholders(t *testing.T) {
-	sampleDir := t.TempDir()
+	root := t.TempDir()
+	useInitWorkingDirectory(t, root)
+	stubInitLifecycle(t, filepath.Join(root, "jellyfin-remora"))
+	sampleDir := filepath.Join(root, "sample")
+	if err := os.Mkdir(sampleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	sampleName, err := platformSampleName()
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +174,136 @@ func TestRunInitNoEditRejectsPlaceholders(t *testing.T) {
 	err = runInit([]string{"--sample-dir", sampleDir, "--no-edit"})
 	if err == nil || !strings.Contains(err.Error(), "fully prepared sample") {
 		t.Fatalf("runInit error = %v", err)
+	}
+}
+
+func TestRunInitChecksSiblingDaemonBeforeReadingSample(t *testing.T) {
+	root := t.TempDir()
+	useInitWorkingDirectory(t, root)
+	oldLocate := locateRemoraExecutable
+	locateRemoraExecutable = func() (string, error) { return "", errors.New("jellyfin-remora not found") }
+	t.Cleanup(func() { locateRemoraExecutable = oldLocate })
+	err := runInit([]string{"--sample-dir", filepath.Join(root, "missing"), "--no-edit"})
+	if err == nil || !strings.Contains(err.Error(), "jellyfin-remora not found") {
+		t.Fatalf("runInit error = %v", err)
+	}
+}
+
+func TestRunInitInstallsArtifactAndStartsAfterConfirmation(t *testing.T) {
+	root := t.TempDir()
+	useInitWorkingDirectory(t, root)
+	sampleDir := filepath.Join(root, "sample")
+	configDir := filepath.Join(root, "jellyfin-config")
+	if err := os.MkdirAll(sampleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sampleName, err := platformSampleName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sampleDir, sampleName), []byte(minimalInitConfig(configDir)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stubInitLifecycle(t, filepath.Join(root, "jellyfin-remora"))
+	oldEdit := editConfigFile
+	oldConfirm := confirmInitAction
+	editConfigFile = func(_, _ string) error { return nil }
+	confirmInitAction = func(string) (bool, error) { return true, nil }
+	initServicePrivileged = func() bool { return true }
+	installed := 0
+	started := 0
+	installInitService = func(*serviceArtifact) error { installed++; return nil }
+	startInitService = func(*serviceArtifact) error { started++; return nil }
+	t.Cleanup(func() {
+		editConfigFile = oldEdit
+		confirmInitAction = oldConfirm
+	})
+	editor, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runInit([]string{"--sample-dir", sampleDir, "--editor", editor}); err != nil {
+		t.Fatal(err)
+	}
+	if installed != 1 || started != 1 {
+		t.Fatalf("installed=%d started=%d", installed, started)
+	}
+}
+
+func TestValidateInitStorageConfirmsMismatchWithoutWeakeningRuntime(t *testing.T) {
+	checker := &fakeInitChecker{
+		inspect: model.StorageResult{Mounted: true, Fatal: true, Message: "mount source mismatch: got /dev/disk9s1"},
+		check:   model.StorageResult{Mounted: true, Healthy: true, Writable: true, Message: "mount source mismatch: got /dev/disk9s1"},
+	}
+	oldCreate := createInitStorageChecker
+	oldConfirm := confirmInitAction
+	createInitStorageChecker = func(*config.Config, string) (initStorageChecker, error) { return checker, nil }
+	confirmInitAction = func(string) (bool, error) { return true, nil }
+	t.Cleanup(func() {
+		createInitStorageChecker = oldCreate
+		confirmInitAction = oldConfirm
+	})
+	cfg := initStorageConfig()
+	accepted, err := validateInitStorage(cfg, "/path/to/jellyfin-remora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !accepted[0] {
+		t.Fatalf("accepted mismatches = %v", accepted)
+	}
+	if len(checker.allowMismatch) != 1 || !checker.allowMismatch[0] {
+		t.Fatalf("allowMismatch calls = %v", checker.allowMismatch)
+	}
+}
+
+func TestValidateInitStorageStopsWhenMismatchIsDeclined(t *testing.T) {
+	checker := &fakeInitChecker{inspect: model.StorageResult{Mounted: true, Fatal: true, Message: "mount source mismatch: got /dev/disk9s1"}}
+	oldCreate := createInitStorageChecker
+	oldConfirm := confirmInitAction
+	createInitStorageChecker = func(*config.Config, string) (initStorageChecker, error) { return checker, nil }
+	confirmInitAction = func(string) (bool, error) { return false, nil }
+	t.Cleanup(func() {
+		createInitStorageChecker = oldCreate
+		confirmInitAction = oldConfirm
+	})
+	_, err := validateInitStorage(initStorageConfig(), "/path/to/jellyfin-remora")
+	if err == nil || !strings.Contains(err.Error(), "was not accepted") {
+		t.Fatalf("validateInitStorage error = %v", err)
+	}
+	if len(checker.allowMismatch) != 0 {
+		t.Fatalf("declined mismatch was probed: %v", checker.allowMismatch)
+	}
+}
+
+func TestValidateInitStorageMountsOnlyMissingTarget(t *testing.T) {
+	checker := &fakeInitChecker{
+		inspect: model.StorageResult{Mounted: false, Fatal: true, Message: "target is not mounted"},
+		check:   model.StorageResult{Mounted: true, Healthy: true, Writable: true},
+	}
+	oldCreate := createInitStorageChecker
+	createInitStorageChecker = func(*config.Config, string) (initStorageChecker, error) { return checker, nil }
+	t.Cleanup(func() { createInitStorageChecker = oldCreate })
+	if _, err := validateInitStorage(initStorageConfig(), "/path/to/jellyfin-remora"); err != nil {
+		t.Fatal(err)
+	}
+	if len(checker.allowMismatch) != 1 || checker.allowMismatch[0] {
+		t.Fatalf("allowMismatch calls = %v", checker.allowMismatch)
+	}
+}
+
+func TestValidateInitStorageLeavesExistingHealthyMountAlone(t *testing.T) {
+	checker := &fakeInitChecker{inspect: model.StorageResult{Mounted: true, Healthy: true, Writable: true}}
+	oldCreate := createInitStorageChecker
+	createInitStorageChecker = func(*config.Config, string) (initStorageChecker, error) { return checker, nil }
+	t.Cleanup(func() { createInitStorageChecker = oldCreate })
+	if _, err := validateInitStorage(initStorageConfig(), "/path/to/jellyfin-remora"); err != nil {
+		t.Fatal(err)
+	}
+	if len(checker.allowMismatch) != 0 {
+		t.Fatalf("existing healthy mount was remounted: %v", checker.allowMismatch)
 	}
 }
 
@@ -200,4 +338,61 @@ jellyfin:
   cache-dir: %s
   log-dir: %s
 `, filepath.Join(configDir, "data"), configDir, filepath.Join(configDir, "cache"), filepath.Join(configDir, "logs"))
+}
+
+type fakeInitChecker struct {
+	inspect       model.StorageResult
+	check         model.StorageResult
+	allowMismatch []bool
+}
+
+func (f *fakeInitChecker) InspectDisk(context.Context, int) model.StorageResult {
+	return f.inspect
+}
+
+func (f *fakeInitChecker) CheckDiskForInit(_ context.Context, _ int, allowMismatch bool) model.StorageResult {
+	f.allowMismatch = append(f.allowMismatch, allowMismatch)
+	return f.check
+}
+
+func initStorageConfig() *config.Config {
+	return &config.Config{
+		Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: time.Second}},
+		Disks: []config.DiskConfig{{
+			Type:       "physical",
+			Device:     "/dev/disk5s1",
+			Target:     "/Volumes/AppData",
+			Permission: "rw",
+		}},
+	}
+}
+
+func useInitWorkingDirectory(t *testing.T, directory string) {
+	t.Helper()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(directory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+}
+
+func stubInitLifecycle(t *testing.T, executable string) {
+	t.Helper()
+	oldLocate := locateRemoraExecutable
+	oldPrivileged := initServicePrivileged
+	oldInstall := installInitService
+	oldStart := startInitService
+	locateRemoraExecutable = func() (string, error) { return executable, nil }
+	initServicePrivileged = func() bool { return false }
+	installInitService = func(*serviceArtifact) error { return nil }
+	startInitService = func(*serviceArtifact) error { return nil }
+	t.Cleanup(func() {
+		locateRemoraExecutable = oldLocate
+		initServicePrivileged = oldPrivileged
+		installInitService = oldInstall
+		startInitService = oldStart
+	})
 }

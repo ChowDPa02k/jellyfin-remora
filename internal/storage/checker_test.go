@@ -92,3 +92,49 @@ func TestDiskFailureThresholdRequiresConsecutiveFailuresAfterHealthyCheck(t *tes
 		t.Fatalf("success did not reset threshold: %+v", got)
 	}
 }
+
+func TestInitMismatchAllowanceDoesNotChangeRuntimeCheck(t *testing.T) {
+	cfg := &config.Config{
+		Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: time.Second}},
+		Disks: []config.DiskConfig{{
+			Type:       "physical",
+			Device:     "/dev/expected",
+			Target:     "/Volumes/AppData",
+			Permission: "rw",
+		}},
+	}
+	backend := &mismatchBackend{mounts: []platform.MountInfo{{Source: "/dev/actual", Target: "/Volumes/AppData", FSType: "apfs"}}}
+	checker := &Checker{
+		cfg:           cfg,
+		backend:       backend,
+		failureCounts: make([]int, 1), confirmedHealthy: make([]bool, 1),
+		probeOverride: func(context.Context, string, string) error { return nil },
+	}
+	if got := checker.CheckDisk(context.Background(), 0); !got.Fatal || !strings.Contains(got.Message, "mount source mismatch") {
+		t.Fatalf("runtime check = %+v", got)
+	}
+	if got := checker.CheckDiskForInit(context.Background(), 0, true); !got.Healthy || got.Fatal || !strings.Contains(got.Message, "mount source mismatch") {
+		t.Fatalf("accepted init check = %+v", got)
+	}
+}
+
+type mismatchBackend struct {
+	mounts []platform.MountInfo
+}
+
+func (b *mismatchBackend) Mounts(context.Context) ([]platform.MountInfo, error) {
+	return append([]platform.MountInfo(nil), b.mounts...), nil
+}
+func (*mismatchBackend) Mount(context.Context, config.DiskConfig) error { return nil }
+func (*mismatchBackend) ResolvePhysical(context.Context, config.DiskConfig) (string, error) {
+	return "/dev/expected", nil
+}
+func (*mismatchBackend) ExecutableProvenance(string) (bool, error)        { return false, nil }
+func (*mismatchBackend) ConfigureProcess(*exec.Cmd, string, string) error { return nil }
+func (*mismatchBackend) SignalGroup(int, bool) error                      { return nil }
+func (*mismatchBackend) ProcessInfo(context.Context, int) (platform.ProcessInfo, error) {
+	return platform.ProcessInfo{}, nil
+}
+func (*mismatchBackend) FindProcesses(context.Context, string, []string) ([]platform.ProcessInfo, error) {
+	return nil, nil
+}

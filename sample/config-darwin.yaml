@@ -109,7 +109,7 @@ jellyfin:
   run-as-group: staff
   # Jellyfin database and application-data directory.
   data-dir: /Volumes/AppData/Jellyfin/data
-  # Jellyfin XML configuration directory. remoractl init writes config.yaml here.
+  # Jellyfin XML configuration directory. Init keeps remora-config.yaml in its invocation directory.
   config-dir: /Volumes/AppData/Jellyfin/config
   # Jellyfin cache and image-processing directory.
   cache-dir: /Volumes/AppData/Jellyfin/cache

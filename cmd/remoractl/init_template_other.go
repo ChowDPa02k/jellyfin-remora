@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 )
@@ -18,4 +19,8 @@ func preparePlatformTemplate(template []byte, requestedVolume, requestedDataRoot
 	return template, nil
 }
 
-func preparePlatformInitDirectories(*config.Config) error { return nil }
+func preparePlatformInitDirectories(*config.Config, map[int]bool) error { return nil }
+
+func initExecutableUsable(info os.FileInfo) bool {
+	return !info.IsDir() && info.Mode().Perm()&0o111 != 0
+}

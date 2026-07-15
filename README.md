@@ -44,20 +44,28 @@ go build -o build/remoractl ./cmd/remoractl
 
 The platform templates are [`sample/config-darwin.yaml`](sample/config-darwin.yaml)
 and [`sample/config-windows.yaml`](sample/config-windows.yaml). For an installed
-pair of binaries, run `remoractl init`: it selects the host template, edits and
-strictly validates a temporary YAML copy, then atomically writes
-`jellyfin.config-dir/config.yaml`. Automated Windows provisioning can use a
-fully prepared sample with `--volume`, `--data-root`, and `--no-edit`; unresolved
-placeholders are rejected.
+pair of binaries, place `remoractl` and `jellyfin-remora` in the same directory
+and run `remoractl init`. Init refuses to open the editor if the sibling daemon
+is absent. It selects the host template, edits and strictly validates a `0600`
+temporary YAML copy, verifies every configured disk, and atomically writes
+`remora-config.yaml` in the directory from which the command was invoked.
 
-On macOS, init generates a launchd plist and never creates a missing data tree
-beneath an unverified `/Volumes` path. On Windows, it resolves the selected
-mount point to a native volume GUID, verifies every configured storage target,
-creates Jellyfin directories only beneath those verified targets, and generates
-an administrator-reviewed native Service/Task Scheduler installer. Neither
-platform installs or starts the generated service definition automatically.
-Linux systemd generation remains reserved for Phase 5; SysVinit will not be
-supported.
+For each configured disk, init leaves an existing mount in place and performs
+the requested real read or write/fsync/delete probe. A missing mount is mounted
+by Remora and then probed; init never unmounts it. If an existing target is
+mounted from a different source than the configured device, init warns and asks
+whether to continue. Accepting that warning does not weaken runtime safety: the
+daemon will still fence the mismatch until the mount or configuration is fixed.
+
+On macOS, init generates a launchd plist beside `remora-config.yaml`; on Windows
+it generates the Task Scheduler/Service PowerShell installer, and Linux emits a
+systemd unit when the Phase 5 platform sample/backend is available. With
+administrator privileges init installs the platform definition idempotently and
+asks before starting it. Without those privileges it keeps all generated files
+in the current directory, prints a warning, and provides exact manual deployment
+commands instead of failing. Automated Windows provisioning can still use
+`--volume`, `--data-root`, and `--no-edit`; unresolved placeholders are rejected.
+SysVinit is not supported.
 When Remora runs as root, `jellyfin.run-as-user` is mandatory and Jellyfin is
 started with that account.
 
@@ -92,11 +100,11 @@ from 12.x back to 10.11.x.
 Run in the foreground during initial validation:
 
 ```sh
-./build/remoractl init
-./build/jellyfin-remora validate-config -c /path/to/jellyfin/config/config.yaml
+sudo ./build/remoractl init
+./build/jellyfin-remora validate-config -c "$PWD/remora-config.yaml"
 # Optional: create missing directories only after their configured storage passes validation.
-./build/jellyfin-remora validate-config -c /path/to/jellyfin/config/config.yaml --prepare
-./build/jellyfin-remora -c /path/to/jellyfin/config/config.yaml
+./build/jellyfin-remora validate-config -c "$PWD/remora-config.yaml" --prepare
+./build/jellyfin-remora -c "$PWD/remora-config.yaml"
 ./build/remoractl status
 ./build/remoractl healthcheck
 ```
@@ -263,14 +271,20 @@ are coordinated. For shared writable Jellyfin application data, start
 
 ## launchd
 
-Install the two binaries and configuration at the paths in `packaging/io.github.chowdpa02k.jellyfin-remora.plist`, then install the LaunchDaemon:
+Run init with `sudo` to validate storage, install the generated plist at
+`/Library/LaunchDaemons/io.github.chowdpa02k.jellyfin-remora.plist`, and choose
+whether to bootstrap or restart the service:
 
 ```sh
-sudo cp packaging/io.github.chowdpa02k.jellyfin-remora.plist /Library/LaunchDaemons/
-sudo chown root:wheel /Library/LaunchDaemons/io.github.chowdpa02k.jellyfin-remora.plist
-sudo chmod 0644 /Library/LaunchDaemons/io.github.chowdpa02k.jellyfin-remora.plist
-sudo launchctl bootstrap system /Library/LaunchDaemons/io.github.chowdpa02k.jellyfin-remora.plist
+sudo /absolute/path/to/remoractl init
 ```
+
+The generated plist contains the absolute sibling `jellyfin-remora` path and
+the absolute `$PWD/remora-config.yaml` path. Repeating init safely replaces the
+installed definition; if startup is confirmed for an already loaded service,
+init performs `bootout` followed by `bootstrap` so launchd reads the new plist.
+A non-root run generates both files locally and prints the equivalent `cp`,
+`chown`, `chmod`, `bootout`, and `bootstrap` commands.
 
 SMB passwords in YAML are supported for the first milestone but can be visible transiently to privileged process inspection. Keep the configuration `0600`; Keychain-backed credentials are planned for a later milestone.
 

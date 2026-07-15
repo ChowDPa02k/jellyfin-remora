@@ -5,14 +5,12 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
@@ -21,24 +19,16 @@ import (
 
 var discoverWindowsVolumes = platform.DiscoverVolumes
 
-func preparePlatformInitDirectories(cfg *config.Config) error {
+func preparePlatformInitDirectories(cfg *config.Config, acceptedMismatches map[int]bool) error {
 	if len(cfg.Disks) == 0 {
 		return nil
 	}
-	backend := platform.New()
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Remora.IOTimeout.Duration*time.Duration(max(1, len(cfg.Disks))))
-	defer cancel()
-	for _, disk := range cfg.Disks {
-		if err := backend.Mount(ctx, disk); err != nil {
-			return fmt.Errorf("verify disk target %s: %w", disk.Target, err)
-		}
-	}
 	for _, path := range []string{cfg.Jellyfin.DataDir, cfg.Jellyfin.ConfigDir, cfg.Jellyfin.CacheDir, cfg.Jellyfin.LogDir} {
-		disk, ok := configuredWindowsStorageForPath(path, cfg.Disks)
+		disk, diskIndex, ok := configuredWindowsStorageForPathWithIndex(path, cfg.Disks)
 		if !ok {
 			return fmt.Errorf("refusing to create %s outside configured storage", path)
 		}
-		if err := verifyWindowsStorageBoundary(path, disk); err != nil {
+		if err := verifyWindowsStorageBoundary(path, disk, acceptedMismatches[diskIndex]); err != nil {
 			return err
 		}
 		if _, err := os.Stat(path); err == nil {
@@ -49,12 +39,14 @@ func preparePlatformInitDirectories(cfg *config.Config) error {
 		if err := os.MkdirAll(path, 0o750); err != nil {
 			return fmt.Errorf("create %s: %w", path, err)
 		}
-		if err := verifyWindowsStorageBoundary(path, disk); err != nil {
+		if err := verifyWindowsStorageBoundary(path, disk, acceptedMismatches[diskIndex]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
+func initExecutableUsable(info os.FileInfo) bool { return !info.IsDir() }
 
 func pathIsOnConfiguredWindowsStorage(path string, disks []config.DiskConfig) bool {
 	_, ok := configuredWindowsStorageForPath(path, disks)
@@ -62,18 +54,23 @@ func pathIsOnConfiguredWindowsStorage(path string, disks []config.DiskConfig) bo
 }
 
 func configuredWindowsStorageForPath(path string, disks []config.DiskConfig) (config.DiskConfig, bool) {
+	disk, _, ok := configuredWindowsStorageForPathWithIndex(path, disks)
+	return disk, ok
+}
+
+func configuredWindowsStorageForPathWithIndex(path string, disks []config.DiskConfig) (config.DiskConfig, int, bool) {
 	path = strings.ToLower(filepath.Clean(path))
-	for _, disk := range disks {
+	for index, disk := range disks {
 		root := strings.ToLower(filepath.Clean(disk.Target))
 		relative, err := filepath.Rel(root, path)
 		if err == nil && relative != ".." && !strings.HasPrefix(relative, `..\`) && relative != "." {
-			return disk, true
+			return disk, index, true
 		}
 	}
-	return config.DiskConfig{}, false
+	return config.DiskConfig{}, -1, false
 }
 
-func verifyWindowsStorageBoundary(path string, disk config.DiskConfig) error {
+func verifyWindowsStorageBoundary(path string, disk config.DiskConfig, allowDeviceMismatch bool) error {
 	ancestor, err := nearestExistingWindowsAncestor(path)
 	if err != nil {
 		return fmt.Errorf("inspect storage boundary for %s: %w", path, err)
@@ -90,7 +87,7 @@ func verifyWindowsStorageBoundary(path string, disk config.DiskConfig) error {
 	if err != nil || relative == ".." || strings.HasPrefix(relative, `..\`) {
 		return fmt.Errorf("storage path %s resolves outside configured target %s", path, disk.Target)
 	}
-	if disk.Type == "physical" {
+	if disk.Type == "physical" && !allowDeviceMismatch {
 		actual, err := platform.VolumeGUIDForPath(resolvedAncestor)
 		if err != nil {
 			return err

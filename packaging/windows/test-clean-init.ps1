@@ -14,6 +14,7 @@ $sandbox = [IO.Path]::GetFullPath((Join-Path $workingRoot ('jellyfin-remora-clea
 if (-not $sandbox.StartsWith($workingRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
   throw "unsafe clean-init test directory: $sandbox"
 }
+$installer = $null
 
 try {
   $bin = Join-Path $sandbox 'bin'
@@ -35,11 +36,16 @@ try {
   [IO.File]::WriteAllText($preparedSample, $content, [Text.UTF8Encoding]::new($false))
 
   $volume = [IO.Path]::GetPathRoot($sandbox)
-  & $control init --no-edit --sample-dir $sample --volume $volume --data-root $dataRoot
-  if ($LASTEXITCODE -ne 0) { throw "remoractl init failed with exit $LASTEXITCODE" }
+  Push-Location $sandbox
+  try {
+    & $control init --no-edit --sample-dir $sample --volume $volume --data-root $dataRoot
+    if ($LASTEXITCODE -ne 0) { throw "remoractl init failed with exit $LASTEXITCODE" }
+  } finally {
+    Pop-Location
+  }
 
-  $config = Join-Path $dataRoot 'config\config.yaml'
-  $installer = Join-Path $dataRoot 'config\install-jellyfin-remora.ps1'
+  $config = Join-Path $sandbox 'remora-config.yaml'
+  $installer = Join-Path $sandbox 'install-jellyfin-remora.ps1'
   if (-not (Test-Path -LiteralPath $config)) { throw "generated configuration is missing: $config" }
   if (-not (Test-Path -LiteralPath $installer)) { throw "generated service installer is missing: $installer" }
 
@@ -61,6 +67,9 @@ try {
   }
   Write-Host "Clean Windows init passed on $volume with $configuredGuid"
 } finally {
+  if ($installer -and (Test-Path -LiteralPath $installer)) {
+    & $installer -Action UninstallTask 2>$null
+  }
   if (Test-Path -LiteralPath $sandbox) {
     $resolvedSandbox = [IO.Path]::GetFullPath((Resolve-Path $sandbox).Path)
     if ($resolvedSandbox -ne $sandbox -or -not $resolvedSandbox.StartsWith($workingRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {

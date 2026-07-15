@@ -117,7 +117,7 @@ jellyfin:
   # Windows does not support jellyfin.run-as-user or run-as-group.
   # Jellyfin database and application-data directory.
   data-dir: 'D:\jellyfin\data'
-  # Jellyfin XML configuration directory. remoractl init writes config.yaml here.
+  # Jellyfin XML configuration directory. Init keeps remora-config.yaml in its invocation directory.
   config-dir: 'D:\jellyfin\config'
   # Jellyfin cache and image-processing directory.
   cache-dir: 'D:\jellyfin\cache'

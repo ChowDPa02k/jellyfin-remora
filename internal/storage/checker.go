@@ -25,6 +25,7 @@ type Checker struct {
 	failureMu        sync.Mutex
 	failureCounts    []int
 	confirmedHealthy []bool
+	probeOverride    func(context.Context, string, string) error
 }
 
 func New(cfg *config.Config, backend platform.Backend) (*Checker, error) {
@@ -32,7 +33,14 @@ func New(cfg *config.Config, backend platform.Backend) (*Checker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Checker{cfg: cfg, backend: backend, executable: exe, failureCounts: make([]int, len(cfg.Disks)), confirmedHealthy: make([]bool, len(cfg.Disks))}, nil
+	return NewWithExecutable(cfg, backend, exe)
+}
+
+func NewWithExecutable(cfg *config.Config, backend platform.Backend, executable string) (*Checker, error) {
+	if executable == "" {
+		return nil, errors.New("storage probe executable is required")
+	}
+	return &Checker{cfg: cfg, backend: backend, executable: executable, failureCounts: make([]int, len(cfg.Disks)), confirmedHealthy: make([]bool, len(cfg.Disks))}, nil
 }
 
 func (c *Checker) CheckAll(ctx context.Context) []model.StorageResult {
@@ -48,14 +56,24 @@ func (c *Checker) CheckDisk(ctx context.Context, index int) model.StorageResult 
 		return model.StorageResult{Index: index, Fatal: true, Message: "disk index out of range", CheckedAt: time.Now()}
 	}
 	disk := c.cfg.Disks[index]
-	return c.applyFailureThreshold(index, disk, c.checkRaw(ctx, index, disk, true))
+	return c.applyFailureThreshold(index, disk, c.checkRaw(ctx, index, disk, true, false))
 }
 
 func (c *Checker) InspectDisk(ctx context.Context, index int) model.StorageResult {
 	if index < 0 || index >= len(c.cfg.Disks) {
 		return model.StorageResult{Index: index, Fatal: true, Message: "disk index out of range", CheckedAt: time.Now()}
 	}
-	return c.checkRaw(ctx, index, c.cfg.Disks[index], false)
+	return c.checkRaw(ctx, index, c.cfg.Disks[index], false, false)
+}
+
+// CheckDiskForInit performs the same mount and I/O validation as CheckDisk but
+// can continue probing an already-mounted target after the operator explicitly
+// accepts a source mismatch. Runtime supervision never uses this exception.
+func (c *Checker) CheckDiskForInit(ctx context.Context, index int, allowSourceMismatch bool) model.StorageResult {
+	if index < 0 || index >= len(c.cfg.Disks) {
+		return model.StorageResult{Index: index, Fatal: true, Message: "disk index out of range", CheckedAt: time.Now()}
+	}
+	return c.checkRaw(ctx, index, c.cfg.Disks[index], true, allowSourceMismatch)
 }
 
 func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
@@ -80,7 +98,7 @@ func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
 	return results
 }
 
-func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfig, allowMount bool) (r model.StorageResult) {
+func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfig, allowMount, allowSourceMismatch bool) (r model.StorageResult) {
 	started := time.Now()
 	r = model.StorageResult{Index: index, Type: disk.Type, Device: redactDevice(disk), Target: disk.Target, CheckedAt: started}
 	defer func() { r.LatencyMS = time.Since(started).Milliseconds() }()
@@ -120,9 +138,11 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 		return r
 	}
 	if !sourceMatches(mi, disk.Type, expected) && !(disk.Type == "smb" && smbSourcesEquivalent(ctx, mi.Source, expected)) {
-		r.Fatal = true
 		r.Message = fmt.Sprintf("mount source mismatch: got %s", mi.Source)
-		return r
+		if !allowSourceMismatch {
+			r.Fatal = true
+			return r
+		}
 	}
 	probePath := disk.ProbePath
 	if probePath == "" {
@@ -138,7 +158,10 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 	if !r.Reachable && (disk.Type == "smb" || disk.Type == "nfs") {
 		r.Healthy = false
 		r.Fatal = false
-		r.Message = "server port unreachable while mounted I/O remains healthy"
+		if r.Message != "" {
+			r.Message += "; "
+		}
+		r.Message += "server port unreachable while mounted I/O remains healthy"
 	}
 	return r
 }
@@ -171,6 +194,9 @@ func (c *Checker) applyFailureThreshold(index int, disk config.DiskConfig, resul
 }
 
 func (c *Checker) probePath(ctx context.Context, path, permission string) error {
+	if c.probeOverride != nil {
+		return c.probeOverride(ctx, path, permission)
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.Remora.IOTimeout.Duration)
 	defer cancel()
 	cmd := exec.CommandContext(probeCtx, c.executable, "internal-probe", "--path", path, "--permission", permission)

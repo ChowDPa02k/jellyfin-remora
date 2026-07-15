@@ -2,13 +2,17 @@
 
 `jellyfin-remora.exe` supports the Windows Service Control Manager directly.
 `remoractl init` writes `install-jellyfin-remora.ps1` beside the resulting
-configuration. Review the script, then run it from an elevated PowerShell.
+`remora-config.yaml` in the current directory. From an elevated PowerShell,
+init installs the interactive Task Scheduler definition idempotently and asks
+before starting it. A non-elevated run keeps both files locally and prints the
+manual commands. Review the generated script before using the optional native
+service path below.
 
 ## Native service
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-& 'D:\jellyfin\config\install-jellyfin-remora.ps1' -Action Install
+& '.\install-jellyfin-remora.ps1' -Action Install
 Get-Service JellyfinRemora
 ```
 
@@ -101,6 +105,7 @@ user is logged in:
 
 ```powershell
 & '.\install-jellyfin-remora.ps1' -Action InstallTask
+& '.\install-jellyfin-remora.ps1' -Action StartTask
 Get-ScheduledTask -TaskName JellyfinRemora-User
 ```
 
@@ -122,7 +127,7 @@ exercise the complete task path with:
 
 ```powershell
 .\packaging\windows\test-task-scheduler.ps1 `
-    -InstallerPath D:\jellyfin\config\install-jellyfin-remora.ps1 `
+    -InstallerPath .\install-jellyfin-remora.ps1 `
     -ControlPath .\remoractl.exe
 ```
 

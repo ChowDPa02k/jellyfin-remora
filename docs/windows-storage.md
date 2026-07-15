@@ -32,7 +32,9 @@ volumes and displays:
 Select the volume by number using its familiar drive letter or mounted folder,
 label, filesystem, and capacity. Remora writes the GUID and correctly escaped
 target into the temporary YAML template, updates the Jellyfin data directories,
-then opens the configured editor for review.
+then opens the configured editor for review. The validated result is written as
+`remora-config.yaml` in the invocation directory, beside the generated service
+installer.
 
 ```powershell
 remoractl init --sample-dir .\sample

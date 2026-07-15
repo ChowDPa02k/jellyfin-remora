@@ -3,10 +3,13 @@
 package main
 
 import (
+	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"golang.org/x/sys/windows"
 )
 
 func platformSampleName() (string, error) { return "config-windows.yaml", nil }
@@ -24,16 +27,41 @@ func generatePlatformService(cfg *config.Config, executable, configPath string) 
 		"{{CONFIG}}", quote(configPath),
 		"{{WRITABLE_PATHS}}", strings.Join(quotedPaths, ",\n  "),
 	).Replace(windowsInstallerScript)
-	path := filepath.Join(cfg.Jellyfin.ConfigDir, "install-jellyfin-remora.ps1")
+	path := filepath.Join(filepath.Dir(configPath), "install-jellyfin-remora.ps1")
 	if err := atomicWriteFile(path, []byte(script), 0o600); err != nil {
 		return nil, err
 	}
 	return &serviceArtifact{Kind: "Windows service installer", Path: path}, nil
 }
 
+func platformServicePrivileged() bool {
+	return windows.GetCurrentProcessToken().IsElevated()
+}
+
+func installPlatformService(artifact *serviceArtifact) error {
+	return runPowerShellInstaller(artifact.Path, "InstallTask")
+}
+
+func startPlatformService(artifact *serviceArtifact) error {
+	return runPowerShellInstaller(artifact.Path, "StartTask")
+}
+
+func platformServiceInstallInstructions(artifact *serviceArtifact) string {
+	quoted := strings.ReplaceAll(artifact.Path, "'", "''")
+	return "Open an elevated PowerShell and run:\n  & '" + quoted + "' -Action InstallTask\n  & '" + quoted + "' -Action StartTask"
+}
+
+func runPowerShellInstaller(path, action string) error {
+	output, err := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path, "-Action", action).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("PowerShell %s: %w: %s", action, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 const windowsInstallerScript = `#Requires -RunAsAdministrator
 param(
-  [ValidateSet('Install','Uninstall','InstallTask','UninstallTask')]
+  [ValidateSet('Install','Uninstall','InstallTask','StartTask','UninstallTask')]
   [string]$Action = 'Install',
   [string]$ServiceAccount = 'NT SERVICE\JellyfinRemora',
   [System.Management.Automation.PSCredential]$ServiceCredential
@@ -160,6 +188,15 @@ if ($Action -eq 'UninstallTask') {
   exit 0
 }
 
+if ($Action -eq 'StartTask') {
+  if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+    throw "Scheduled task $taskName is not installed."
+  }
+  Start-ScheduledTask -TaskName $taskName
+  Write-Host "Started scheduled task $taskName."
+  exit 0
+}
+
 if ($Action -eq 'InstallTask') {
   if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
     throw "Service $serviceName already exists. Uninstall it before installing the scheduled task."
@@ -169,9 +206,9 @@ if ($Action -eq 'InstallTask') {
   $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
   $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
   $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+  Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   Register-ScheduledTask -TaskName $taskName -Action $taskAction -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-  Start-ScheduledTask -TaskName $taskName
-  Write-Host "Installed and started scheduled task $taskName for $user."
+  Write-Host "Installed scheduled task $taskName for $user."
   exit 0
 }
 

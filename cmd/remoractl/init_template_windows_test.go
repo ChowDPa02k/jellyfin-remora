@@ -110,7 +110,7 @@ func TestVerifyWindowsStorageBoundaryRejectsJunctionToAnotherVolume(t *testing.T
 	}
 	t.Cleanup(func() { _ = os.Remove(junction) })
 	disk := config.DiskConfig{Type: "physical", Target: filepath.VolumeName(root) + `\`, VolumeGUID: rootGUID}
-	err = verifyWindowsStorageBoundary(filepath.Join(junction, "jellyfin", "data"), disk)
+	err = verifyWindowsStorageBoundary(filepath.Join(junction, "jellyfin", "data"), disk, false)
 	if err == nil || (!strings.Contains(err.Error(), "outside configured target") && !strings.Contains(err.Error(), "resolves to volume")) {
 		t.Fatalf("verifyWindowsStorageBoundary error = %v", err)
 	}

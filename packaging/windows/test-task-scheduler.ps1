@@ -49,6 +49,8 @@ try {
   & $installer -Action InstallTask
   if ($LASTEXITCODE -ne 0) { throw "task installer exited with $LASTEXITCODE" }
   $installed = $true
+  & $installer -Action StartTask
+  if ($LASTEXITCODE -ne 0) { throw "task start exited with $LASTEXITCODE" }
 
   Wait-Until { (Get-ControlStatus).pid -gt 0 } 'Jellyfin did not start through the scheduled task'
   $status = Get-ControlStatus
