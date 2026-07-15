@@ -1,6 +1,6 @@
-// Package sample exposes the platform configuration templates embedded in
-// remoractl. The YAML files remain ordinary repository files so users and
-// packagers can inspect or distribute them independently.
+// Package sample exposes repository assets embedded in the release binaries.
+// The source files remain ordinary files so users and packagers can inspect or
+// distribute them independently.
 package sample
 
 import "embed"
@@ -9,3 +9,8 @@ import "embed"
 //
 //go:embed *.yaml
 var Files embed.FS
+
+// SplashASCII is printed once when the Jellyfin Remora daemon starts.
+//
+//go:embed splash_ascii.txt
+var SplashASCII []byte

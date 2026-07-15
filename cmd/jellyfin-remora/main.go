@@ -24,6 +24,7 @@ import (
 	"github.com/ChowDPa02K/jellyfin-remora/internal/procmanager"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/storage"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/supervisor"
+	"github.com/ChowDPa02K/jellyfin-remora/sample"
 )
 
 var effectiveUID = os.Geteuid
@@ -75,6 +76,7 @@ func runDaemon(ctx context.Context, activeConfigPath string) error {
 		return err
 	}
 	defer instanceLock.Close()
+	writeStartupSplash(os.Stdout)
 	logger, closer := newLogger(cfg)
 	if closer != nil {
 		defer closer.Close()
@@ -111,6 +113,16 @@ func runDaemon(ctx context.Context, activeConfigPath string) error {
 	cancel()
 	<-errCh
 	return err
+}
+
+func writeStartupSplash(w io.Writer) {
+	if len(sample.SplashASCII) == 0 {
+		return
+	}
+	_, _ = w.Write(sample.SplashASCII)
+	if sample.SplashASCII[len(sample.SplashASCII)-1] != '\n' {
+		_, _ = io.WriteString(w, "\n")
+	}
 }
 
 func resolveActiveConfigPath(path string) (string, error) {

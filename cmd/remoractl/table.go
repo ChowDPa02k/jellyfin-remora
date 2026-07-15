@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
+	"golang.org/x/term"
 )
 
 func writeStatus(w io.Writer, status model.Status, jsonOutput bool) error {
@@ -20,7 +22,7 @@ func writeStatus(w io.Writer, status model.Status, jsonOutput bool) error {
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(status)
 	}
-	_, err := io.WriteString(w, renderStatus(status))
+	_, err := io.WriteString(w, renderStatusStyled(status, statusColorEnabled(w)))
 	return err
 }
 
@@ -71,14 +73,18 @@ func writeSessions(w io.Writer, sessions []model.Session, jsonOutput bool) error
 }
 
 func renderStatus(status model.Status) string {
-	tables := []string{renderSummary(status), renderStorage(status)}
+	return renderStatusStyled(status, false)
+}
+
+func renderStatusStyled(status model.Status, color bool) string {
+	tables := []string{renderSummary(status, color), renderStorage(status, color)}
 	if len(status.Sessions) > 0 {
 		tables = append(tables, renderSessions(status.Sessions))
 	}
 	return strings.Join(tables, "\n\n") + "\n"
 }
 
-func renderSummary(status model.Status) string {
+func renderSummary(status model.Status, color bool) string {
 	uid := "-"
 	if status.Username != "" {
 		uid = status.Username
@@ -128,27 +134,32 @@ func renderSummary(status model.Status) string {
 		column(1, 25, 25),
 		column(2, 52, 80),
 	})
-	appendSanitizedRows(tw, rows)
+	for _, row := range rows {
+		clean := sanitizeRow(row)
+		if len(clean) > 1 && clean[0] == "State" {
+			clean[1] = colorState(fmt.Sprint(clean[1]), status.State, color)
+		}
+		tw.AppendRow(clean)
+	}
 	return tw.Render()
 }
 
-func renderStorage(status model.Status) string {
+func renderStorage(status model.Status, color bool) string {
 	hasDetail := false
 	for _, storage := range status.Storage {
 		hasDetail = hasDetail || storage.Message != ""
 	}
 
-	headings := table.Row{"#", "healthy", "type", "latency", "target"}
+	headings := table.Row{"#", "healthy", "type", "target"}
 	columns := []table.ColumnConfig{
 		column(1, 1, 4),
 		column(2, 7, 7),
 		column(3, 8, 10),
-		column(4, 8, 10),
-		column(5, 44, 64),
+		unboundedColumn(4, 44),
 	}
 	if hasDetail {
 		headings = append(headings, "detail")
-		columns = append(columns, column(6, 20, 52))
+		columns = append(columns, column(5, 20, 52))
 	}
 
 	tw := newTable("Storage Volumes", columns)
@@ -158,11 +169,12 @@ func renderStorage(status model.Status) string {
 		if typeName == "smb" {
 			typeName = "samba"
 		}
-		row := table.Row{storage.Index, storage.Healthy, typeName, fmt.Sprintf("%dms", storage.LatencyMS), storage.Target}
+		row := sanitizeRow(table.Row{storage.Index, storage.Healthy, typeName, storage.Target})
+		row[1] = colorHealthy(fmt.Sprint(row[1]), storage.Healthy, color)
 		if hasDetail {
-			row = append(row, storage.Message)
+			row = append(row, sanitizeCell(storage.Message))
 		}
-		tw.AppendRow(sanitizeRow(row))
+		tw.AppendRow(row)
 	}
 	return tw.Render()
 }
@@ -202,6 +214,45 @@ func column(number, minimum, maximum int) table.ColumnConfig {
 		WidthMax:         maximum,
 		WidthMaxEnforcer: snipCell,
 	}
+}
+
+func unboundedColumn(number, minimum int) table.ColumnConfig {
+	return table.ColumnConfig{Number: number, WidthMin: minimum}
+}
+
+func statusColorEnabled(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	fd, ok := w.(interface{ Fd() uintptr })
+	return ok && term.IsTerminal(int(fd.Fd()))
+}
+
+func colorState(value string, state model.State, enabled bool) string {
+	if !enabled {
+		return value
+	}
+	colors := text.Colors{text.Bold, text.FgYellow}
+	switch state {
+	case model.StateRunning:
+		colors = text.Colors{text.Bold, text.FgGreen}
+	case model.StateStorageFenced, model.StateProcessFailed:
+		colors = text.Colors{text.Bold, text.FgRed}
+	case model.StateStopped, model.StateInit:
+		colors = text.Colors{text.FgHiBlack}
+	}
+	return text.Escape(value, colors.EscapeSeq())
+}
+
+func colorHealthy(value string, healthy, enabled bool) string {
+	if !enabled {
+		return value
+	}
+	color := text.FgRed
+	if healthy {
+		color = text.FgGreen
+	}
+	return text.Escape(value, text.Colors{text.Bold, color}.EscapeSeq())
 }
 
 func snipCell(value string, width int) string {

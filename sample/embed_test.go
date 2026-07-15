@@ -28,3 +28,13 @@ func TestEveryYAMLTemplateIsEmbedded(t *testing.T) {
 		}
 	}
 }
+
+func TestSplashASCIIIsEmbedded(t *testing.T) {
+	want, err := os.ReadFile("splash_ascii.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(SplashASCII) != string(want) {
+		t.Fatal("embedded splash differs from its source")
+	}
+}

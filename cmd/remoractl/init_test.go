@@ -354,6 +354,7 @@ jellyfin:
 type fakeInitChecker struct {
 	inspect       model.StorageResult
 	check         model.StorageResult
+	paths         []model.StorageResult
 	allowMismatch []bool
 }
 
@@ -365,6 +366,8 @@ func (f *fakeInitChecker) CheckDiskForInit(_ context.Context, _ int, allowMismat
 	f.allowMismatch = append(f.allowMismatch, allowMismatch)
 	return f.check
 }
+
+func (f *fakeInitChecker) CheckPaths(context.Context) []model.StorageResult { return f.paths }
 
 func initStorageConfig() *config.Config {
 	return &config.Config{
@@ -393,15 +396,25 @@ func useInitWorkingDirectory(t *testing.T, directory string) {
 func stubInitLifecycle(t *testing.T, executable string) {
 	t.Helper()
 	oldLocate := locateRemoraExecutable
+	oldCreate := createInitStorageChecker
 	oldPrivileged := initServicePrivileged
 	oldInstall := installInitService
 	oldStart := startInitService
 	locateRemoraExecutable = func() (string, error) { return executable, nil }
+	createInitStorageChecker = func(cfg *config.Config, _ string) (initStorageChecker, error) {
+		paths := []string{cfg.Jellyfin.DataDir, cfg.Jellyfin.ConfigDir, cfg.Jellyfin.CacheDir, cfg.Jellyfin.LogDir}
+		results := make([]model.StorageResult, 0, len(paths))
+		for _, path := range paths {
+			results = append(results, model.StorageResult{Target: path, Healthy: true, Writable: true})
+		}
+		return &fakeInitChecker{paths: results}, nil
+	}
 	initServicePrivileged = func() bool { return false }
 	installInitService = func(*serviceArtifact) error { return nil }
 	startInitService = func(*serviceArtifact) error { return nil }
 	t.Cleanup(func() {
 		locateRemoraExecutable = oldLocate
+		createInitStorageChecker = oldCreate
 		initServicePrivileged = oldPrivileged
 		installInitService = oldInstall
 		startInitService = oldStart

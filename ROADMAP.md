@@ -99,12 +99,15 @@ supported or planned target.
 
 ## Phase 3 — Complete control plane and observability (`v0.4.0-alpha`)
 
-Completed across `v0.4.0-alpha.1` through `v0.4.0-alpha.5`:
+Completed across `v0.4.0-alpha.1` through `v0.4.0-alpha.6`:
 
 - Documented the additive local `/v1` contract, status enums, compatibility rules, response-version metadata, per-request operation IDs, and structured stable error codes.
 - Retained the status response shape used by older clients while extending it with process start time, storage-probe latency, and sorted playing-user summaries; CPU/RSS, listening endpoints, and active session details remain available.
 - Normalized local build outputs as `build/<platform>/<arm64|x86_64>/`, with sibling daemon/CLI binaries in every leaf so packaged `remoractl init` always satisfies its executable-discovery contract.
 - Embedded every `sample/*.yaml` platform template in `remoractl`, retaining `--sample-dir` only as an explicit override so binary-only deployments can initialize from any working directory.
+- Made init prepare the four Jellyfin data/config/cache/log directories automatically after storage verification, reject paths outside configured storage or through symlink escapes, and require a successful writable probe before writing the final configuration.
+- Simplified terminal status output by removing the composite storage-latency column, coloring state/health only on ANSI-capable terminals, and rendering storage targets without truncation.
+- Embedded and printed the Jellyfin Remora ASCII splash once after configuration validation and exclusive-instance acquisition during daemon startup.
 - Added a 256-entry in-memory state-transition history through `GET /v1/events` and `remoractl events`, with bounded result selection and table/JSON rendering.
 - Defined deterministic `remoractl` exit codes for usage, local failures, daemon/API availability, state conflicts, and operation timeouts.
 - Preserved local-only control over owner-restricted Unix sockets or loopback REST and serialized lifecycle and Jellyfin-management mutations inside the supervisor boundary.

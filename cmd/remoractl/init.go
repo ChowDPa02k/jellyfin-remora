@@ -28,6 +28,7 @@ type serviceArtifact struct {
 type initStorageChecker interface {
 	InspectDisk(context.Context, int) model.StorageResult
 	CheckDiskForInit(context.Context, int, bool) model.StorageResult
+	CheckPaths(context.Context) []model.StorageResult
 }
 
 var (
@@ -35,7 +36,7 @@ var (
 	locateRemoraExecutable   = siblingRemoraExecutable
 	confirmInitAction        = promptInitConfirmation
 	createInitStorageChecker = func(cfg *config.Config, executable string) (initStorageChecker, error) {
-		return storage.NewWithExecutable(cfg, platform.New(), executable)
+		return storage.NewForInit(cfg, platform.New(), executable)
 	}
 	initServicePrivileged = platformServicePrivileged
 	installInitService    = installPlatformService
@@ -115,6 +116,9 @@ func runInit(args []string) error {
 	}
 	if err := preparePlatformInitDirectories(cfg, acceptedMismatches); err != nil {
 		return fmt.Errorf("prepare platform directories: %w", err)
+	}
+	if err := validateInitPaths(cfg, remoraExecutable); err != nil {
+		return err
 	}
 	edited, err := os.ReadFile(temporaryPath)
 	if err != nil {
@@ -221,6 +225,26 @@ func validateInitStorage(cfg *config.Config, remoraExecutable string) (map[int]b
 		fmt.Printf("storage[%d] %s: %s; %s\n", index, disk.Target, action, access)
 	}
 	return acceptedMismatches, nil
+}
+
+func validateInitPaths(cfg *config.Config, remoraExecutable string) error {
+	checker, err := createInitStorageChecker(cfg, remoraExecutable)
+	if err != nil {
+		return fmt.Errorf("create path checker: %w", err)
+	}
+	timeout := cfg.Remora.IOTimeout.Duration * 4
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for _, result := range checker.CheckPaths(ctx) {
+		if result.Fatal || !result.Healthy {
+			return fmt.Errorf("Jellyfin path %s validation failed: %s", result.Target, result.Message)
+		}
+		fmt.Printf("Jellyfin path %s: prepared and writable\n", result.Target)
+	}
+	return nil
 }
 
 func mountSourceMismatch(result model.StorageResult) bool {

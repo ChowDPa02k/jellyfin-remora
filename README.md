@@ -67,8 +67,9 @@ For an installed pair of binaries, place `remoractl` and `jellyfin-remora` in
 the same directory and run `remoractl init`. Init refuses to open the editor if
 the sibling daemon is absent. It selects the embedded host template, edits and
 strictly validates a `0600` temporary YAML copy, verifies every configured disk,
-and atomically writes `remora-config.yaml` in the directory from which the
-command was invoked.
+creates the four Jellyfin directories only beneath verified configured storage,
+checks that each new directory is writable, and atomically writes
+`remora-config.yaml` in the directory from which the command was invoked.
 
 For each configured disk, init leaves an existing mount in place and performs
 the requested real read or write/fsync/delete probe. A missing mount is mounted
@@ -122,12 +123,14 @@ Run in the foreground during initial validation:
 ```sh
 sudo ./build/darwin/arm64/remoractl init
 ./build/darwin/arm64/jellyfin-remora validate-config -c "$PWD/remora-config.yaml"
-# Optional: create missing directories only after their configured storage passes validation.
-./build/darwin/arm64/jellyfin-remora validate-config -c "$PWD/remora-config.yaml" --prepare
 ./build/darwin/arm64/jellyfin-remora -c "$PWD/remora-config.yaml"
 ./build/darwin/arm64/remoractl status
 ./build/darwin/arm64/remoractl healthcheck
 ```
+
+`remoractl init` prepares missing Jellyfin directories automatically. The
+standalone `validate-config --prepare` mode remains available for configurations
+created without init.
 
 Configuration schema v2 groups health settings by what they observe:
 

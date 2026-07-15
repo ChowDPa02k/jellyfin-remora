@@ -63,3 +63,14 @@ func TestResolveActiveConfigPathIsAbsolute(t *testing.T) {
 		t.Fatalf("path=%q err=%v", path, err)
 	}
 }
+
+func TestWriteStartupSplash(t *testing.T) {
+	var output bytes.Buffer
+	writeStartupSplash(&output)
+	if !strings.Contains(output.String(), "@@@@@@@@@@@@@") || !strings.Contains(output.String(), "/$$$$$") {
+		t.Fatalf("startup splash is incomplete:\n%s", output.String())
+	}
+	if !strings.HasSuffix(output.String(), "\n") {
+		t.Fatal("startup splash must end with a newline")
+	}
+}

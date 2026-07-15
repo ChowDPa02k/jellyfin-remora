@@ -56,6 +56,35 @@ func TestRenderStatusOmitsActiveSessionsWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestRenderStatusColorsStateAndHealthOnlyWhenEnabled(t *testing.T) {
+	status := model.Status{
+		State: model.StateRunning,
+		Storage: []model.StorageResult{
+			{Index: 0, Healthy: true, Type: "physical", Target: "/Volumes/healthy"},
+			{Index: 1, Healthy: false, Type: "smb", Target: "/Volumes/unhealthy"},
+		},
+	}
+	plain := renderStatus(status)
+	colored := renderStatusStyled(status, true)
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("plain status contains ANSI: %q", plain)
+	}
+	if !strings.Contains(colored, "\x1b[") || text.StripEscape(colored) != plain {
+		t.Fatalf("colored status differs beyond ANSI\nplain:\n%s\ncolored:\n%q", plain, colored)
+	}
+}
+
+func TestRenderStorageKeepsFullTargetAndOmitsLatency(t *testing.T) {
+	target := "/Volumes/" + strings.Repeat("very-long-storage-path/", 8) + "media"
+	output := renderStatus(model.Status{Storage: []model.StorageResult{{Index: 0, Healthy: true, Type: "physical", Target: target, LatencyMS: 9876}}})
+	if !strings.Contains(output, target) {
+		t.Fatalf("full target was not rendered:\n%s", output)
+	}
+	if strings.Contains(output, "latency") || strings.Contains(output, "9876ms") || strings.Contains(output, "…") {
+		t.Fatalf("storage output retained latency or truncated target:\n%s", output)
+	}
+}
+
 func TestWriteStatusJSONRetainsStructuredFields(t *testing.T) {
 	status := model.Status{State: model.StateRunning, UID: 501, Username: "user", Sessions: []model.Session{{ID: "session"}}}
 	var output bytes.Buffer

@@ -22,6 +22,8 @@ type Checker struct {
 	cfg              *config.Config
 	backend          platform.Backend
 	executable       string
+	probeUsername    string
+	probeGroup       string
 	failureMu        sync.Mutex
 	failureCounts    []int
 	confirmedHealthy []bool
@@ -41,6 +43,20 @@ func NewWithExecutable(cfg *config.Config, backend platform.Backend, executable 
 		return nil, errors.New("storage probe executable is required")
 	}
 	return &Checker{cfg: cfg, backend: backend, executable: executable, failureCounts: make([]int, len(cfg.Disks)), confirmedHealthy: make([]bool, len(cfg.Disks))}, nil
+}
+
+// NewForInit validates storage using the configured Jellyfin identity. Mount
+// operations remain owned by remoractl.
+func NewForInit(cfg *config.Config, backend platform.Backend, executable string) (*Checker, error) {
+	checker, err := NewWithExecutable(cfg, backend, executable)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Jellyfin.RunAsUser != "" {
+		checker.probeUsername = cfg.Jellyfin.RunAsUser
+		checker.probeGroup = cfg.Jellyfin.RunAsGroup
+	}
+	return checker, nil
 }
 
 func (c *Checker) CheckAll(ctx context.Context) []model.StorageResult {
@@ -200,6 +216,11 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.Remora.IOTimeout.Duration)
 	defer cancel()
 	cmd := exec.CommandContext(probeCtx, c.executable, "internal-probe", "--path", path, "--permission", permission)
+	if c.probeUsername != "" {
+		if err := c.backend.ConfigureProcess(cmd, c.probeUsername, c.probeGroup); err != nil {
+			return fmt.Errorf("configure storage probe identity: %w", err)
+		}
+	}
 	b, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
