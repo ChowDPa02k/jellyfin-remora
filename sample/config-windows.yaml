@@ -160,7 +160,9 @@ jellyfin:
   playback:
     transcoding:
       # Absolute transcode working directory or null/default.
-      transcode-path: 'D:\jellyfin\cache\transcodes'
+      # Keep the portable sample on Jellyfin's default path; set an absolute
+      # directory only after confirming that volume exists on this host.
+      transcode-path: null
       # Enable external fallback fonts for subtitle rendering.
       enable-fallback-fonts: false
       # Absolute fallback-font directory, or null to clear.

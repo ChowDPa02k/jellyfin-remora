@@ -29,6 +29,9 @@ func TestWindowsSampleLoadsAsCurrentConfiguration(t *testing.T) {
 	if !cfg.Jellyfin.General.Paths.CachePath.Set || !cfg.Jellyfin.Branding.EnableSplashScreen.Set || !cfg.Jellyfin.Playback.Transcoding.TranscodePath.Set {
 		t.Fatal("sample does not exercise all managed Jellyfin setting groups")
 	}
+	if !cfg.Jellyfin.Playback.Transcoding.TranscodePath.Null {
+		t.Fatal("sample transcode path must use Jellyfin's portable default")
+	}
 	server := cfg.Jellyfin.Networking.ServerAddressSettings
 	if !server.LocalHTTPPortConfigured || !server.LocalHTTPSPortConfigured || !server.EnableHTTPSConfigured || !server.BaseURLConfigured || !server.BindToLocalNetworkAddress.Set {
 		t.Fatalf("sample server address settings = %+v", server)
