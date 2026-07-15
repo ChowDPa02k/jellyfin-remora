@@ -135,18 +135,24 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	cmd := exec.Command(m.executable, m.args...)
 	cmd.Env = appendEnvDefault(os.Environ(), "DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION", "1")
-	cmd.Stdout = m.stdout
-	cmd.Stderr = m.stderr
+	cmd.Env = appendEnvDefault(cmd.Env, "TERM", "xterm-256color")
 	if err := m.backend.ConfigureProcess(cmd, m.cfg.Jellyfin.RunAsUser, m.cfg.Jellyfin.RunAsGroup); err != nil {
 		return err
 	}
+	console, err := configureChildConsole(cmd, m.stdout, m.stderr)
+	if err != nil {
+		return fmt.Errorf("configure Jellyfin console capture: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
+		console.abort()
 		return fmt.Errorf("start Jellyfin: %w", err)
 	}
+	console.started()
 	if attacher, ok := m.backend.(interface{ AttachProcess(int) error }); ok {
 		if err := attacher.AttachProcess(cmd.Process.Pid); err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
+			_ = console.finish()
 			return fmt.Errorf("attach Jellyfin process: %w", err)
 		}
 	}
@@ -158,6 +164,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	done := m.waitDone
 	go func() {
 		err := cmd.Wait()
+		err = errors.Join(err, console.finish())
 		done <- err
 		close(done)
 		m.mu.Lock()

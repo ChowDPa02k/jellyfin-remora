@@ -135,11 +135,13 @@ the configured `remora.logs.path`. Rotated console files retain the
 `jellyfin-console-*.log` naming pattern. `remoractl logs` defaults to `remora`;
 the positional source and the older `--source` spelling are both supported.
 `-f`/`--follow` streams appended bytes and follows rotation. ANSI sequences
-emitted by Jellyfin are passed through unchanged. Remora defaults
-`DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=1` for the child process
-when the operator has not explicitly set that .NET switch; the installed
-Jellyfin version and its console formatter still decide whether colors are
-actually emitted.
+emitted by Jellyfin are passed through unchanged. On macOS, Remora attaches a
+raw pseudo-terminal to Jellyfin so its console formatter sees a real TTY while
+the process remains in its independently managed process group. Remora also
+defaults `TERM=xterm-256color` and
+`DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=1` when the operator has not
+explicitly set those variables. Windows currently preserves ANSI bytes emitted
+by Jellyfin but does not yet allocate a ConPTY console.
 
 API-key output contains only SHA-256-derived identifiers, never access tokens;
 the active Remora key cannot be revoked through its own control API. Configuration
