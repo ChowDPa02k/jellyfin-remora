@@ -269,12 +269,28 @@ invoked through OpenSSH the wrapper channel remained attached after the
 completed MSI transactions, so the transaction logs and postconditions, rather
 than SSH channel closure, are the recorded evidence.
 
+Windows Server 2025 Datacenter build 26100 passed the clean-host amd64 matrix on
+2026-07-15. Native `go test ./...` and `go vet ./...` exposed and then verified a
+Windows log-follow rotation fix that opens logs with delete sharing. Clean init,
+a disposable NTFS VHDX identity matrix, the service-account change harness, and
+live SMB/NFS disconnect-reconnect tests passed. A password-backed custom service
+identity mounted the Unicode SMB share and NFS export, fenced real Jellyfin while
+both servers were blocked, and returned to `RUNNING` with a new Jellyfin PID after
+connectivity was restored. Jellyfin 10.11.11 completed first-run initialization;
+its storage browser returned C:, F:, and Z: and opened both network roots. An
+automatic reboot changed the SCM and Jellyfin PIDs while every storage probe and
+both browser checks remained healthy. The unsigned MSI install, repair, injected
+rollback, upgrade, downgrade rejection, and uninstall matrix passed with the
+expected exit codes and no remaining Program Files directory. The run also found
+that the portable Windows sample must not assume a D: transcode directory, so it
+now retains Jellyfin's default transcode path.
+
 Still required before the Phase 4 exit gate can pass: release-certificate
-Authenticode signing and verification, plus the Windows Server 2025 primary
-compatibility matrix. Windows Server 2022 and Windows 11 Pro are complete; the
-Windows 11 Pro run satisfies the desktop-client requirement, so a separate
-Windows 10 run is not required. Windows arm64 remains build-only and is not a
-released target until its complete native dependency and Jellyfin matrix passes.
+Authenticode signing and verification. Windows Server 2022, Windows Server 2025,
+and Windows 11 Pro are complete; the Windows 11 Pro run satisfies the
+desktop-client requirement, so a separate Windows 10 run is not required.
+Windows arm64 remains build-only and is not a released target until its complete
+native dependency and Jellyfin matrix passes.
 
 Exit gate:
 
