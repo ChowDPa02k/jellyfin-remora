@@ -149,10 +149,25 @@ func newHAFixture(t *testing.T, parameters map[string]any) (*Supervisor, *toggle
 			t.Fatal(err)
 		}
 	}
-	pm, err := procmanager.New(cfg, platform.New(), io.Discard, io.Discard)
+	backend := platform.New()
+	pm, err := procmanager.New(cfg, backend, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The ordinary deferred supervisor cancellation should stop the fixture.
+	// Retain an exact executable+argv cleanup as a final test-process safety net
+	// so a failed assertion or timing race cannot orphan fake Jellyfin locally.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		processes, findErr := backend.FindProcesses(ctx, pm.Executable(), pm.Arguments())
+		if findErr != nil {
+			return
+		}
+		for _, process := range processes {
+			_ = backend.SignalGroup(process.PID, true)
+		}
+	})
 	checker := &toggledStorage{}
 	checker.healthy.Store(true)
 	sup := New(cfg, pm, checker, jellyfin.New(cfg.JellyfinURL(), 200*time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -266,7 +281,11 @@ func TestConcurrentControlRequestsRemainSerialized(t *testing.T) {
 			} else if i%3 == 1 {
 				action = ActionStart
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			// Full-suite and race instrumentation can overlap these requests with
+			// real process stop/start cycles. Keep the assertion bounded by the
+			// fixture's existing lifecycle budget instead of a tighter scheduler-
+			// dependent two-second deadline.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := sup.Submit(ctx, action, i%2 == 0); err != nil {
 				t.Errorf("request %d: %v", i, err)

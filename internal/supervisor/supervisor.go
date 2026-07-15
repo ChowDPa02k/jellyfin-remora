@@ -127,9 +127,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			s.statusCopyUpdate(func(st *model.Status) { st.DesiredState = model.DesiredStopped })
-			stopCtx, cancel := context.WithTimeout(context.Background(), s.cfg.Remora.ServerStopTimeout.Duration+5*time.Second)
-			defer cancel()
-			_ = s.stop(stopCtx, false)
+			// A prior remoractl stop has already removed the managed PID and
+			// completed the lifecycle transition. Exiting Remora must not emit a
+			// second STOPPING event or probe Jellyfin's shutdown API again.
+			if s.process.PID() > 0 {
+				stopCtx, cancel := context.WithTimeout(context.Background(), s.cfg.Remora.ServerStopTimeout.Duration+5*time.Second)
+				_ = s.stop(stopCtx, false)
+				cancel()
+			}
 			return nil
 		case req := <-s.actions:
 			s.handle(req)

@@ -26,6 +26,7 @@ type stateProcess struct {
 	state     string
 	forceStop bool
 	stopErr   error
+	stopCalls int
 	started   time.Time
 	ports     []int
 }
@@ -184,11 +185,38 @@ func (p *stateProcess) Info(context.Context) (platform.ProcessInfo, bool) {
 }
 func (p *stateProcess) Start(context.Context) error { p.running = true; return nil }
 func (p *stateProcess) Stop(_ context.Context, force bool, _ time.Duration) error {
+	p.stopCalls++
 	p.forceStop = force
 	if p.stopErr == nil {
 		p.running = false
 	}
 	return p.stopErr
+}
+
+func TestSupervisorExitAfterManualStopDoesNotStopAgain(t *testing.T) {
+	process := &stateProcess{}
+	s := stateSupervisor(t, process)
+	s.cfg.Remora.HeartbeatInterval = config.Duration{Duration: time.Second}
+	s.mu.Lock()
+	s.status.ManualStop = true
+	s.status.DesiredState = model.DesiredStopped
+	s.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if process.stopCalls != 0 {
+		t.Fatalf("already-stopped process received %d additional stop calls", process.stopCalls)
+	}
+	if status := s.Status(); status.State != model.StateStopped {
+		t.Fatalf("state=%s, want %s", status.State, model.StateStopped)
+	}
+	for _, event := range s.Events(256) {
+		if event.State == model.StateStopping {
+			t.Fatalf("daemon exit emitted a duplicate STOPPING transition: %+v", event)
+		}
+	}
 }
 func (*stateProcess) WritePIDFile() error  { return nil }
 func (*stateProcess) RemovePIDFile() error { return nil }

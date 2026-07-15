@@ -19,10 +19,12 @@ func defaultLocalControlEndpoint() string {
 	return ""
 }
 
+var localControlDiscoveryDirectory = "/tmp"
+
 func newLocalClient(endpoint string) (*http.Client, string, error) {
 	if endpoint == "" {
 		var err error
-		endpoint, err = discoverLocalControlEndpoint("/tmp")
+		endpoint, err = discoverLocalControlEndpoint(localControlDiscoveryDirectory)
 		if err != nil {
 			return nil, "", err
 		}
