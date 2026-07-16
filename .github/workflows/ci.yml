@@ -45,6 +45,48 @@ jobs:
           cache-dependency-path: go.sum
       - run: go test ./...
 
+  linux-distribution-matrix:
+    name: Linux distributions (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch == 'arm64'
+        with:
+          platforms: arm64
+      - name: Run native backend across distributions
+        env:
+          LINUX_TEST_ARCH: ${{ matrix.arch }}
+        run: ./test/linux_container_matrix.sh
+
+  linux-package:
+    name: Linux package (${{ matrix.arch }}, ${{ matrix.format }})
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        format: [deb, rpm]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install RPM build tools
+        if: matrix.format == 'rpm'
+        run: sudo apt-get update && sudo apt-get install --yes rpm
+      - name: Verify reproducible native package
+        run: ./test/package_linux_native.sh '${{ matrix.arch }}' '${{ matrix.format }}'
+
   windows-clean-init:
     name: Clean init (${{ matrix.os }})
     strategy:

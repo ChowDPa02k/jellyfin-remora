@@ -1,12 +1,14 @@
-VERSION ?= 0.4.0-alpha.6
-COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+VERSION ?= 0.8.0-alpha.1
+COMMIT ?= $(shell commit=$$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown); \
+	if [ -n "$$(git status --porcelain --untracked-files=normal 2>/dev/null)" ]; then commit="$$commit-dirty"; fi; \
+	printf '%s' "$$commit")
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILDINFO := github.com/ChowDPa02K/jellyfin-remora/internal/buildinfo
 LDFLAGS := -s -w -X $(BUILDINFO).Version=$(VERSION) -X $(BUILDINFO).Commit=$(COMMIT) -X $(BUILDINFO).Date=$(BUILD_DATE)
 GOVULNCHECK ?= $(shell go env GOPATH)/bin/govulncheck
 BUILD_ROOT ?= build
 
-.PHONY: build test check vuln cross-build clean
+.PHONY: build test check vuln cross-build package-linux-tar package-linux-deb package-linux-rpm clean
 
 build:
 	@set -eu; \
@@ -40,6 +42,18 @@ cross-build:
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o "$$dir/jellyfin-remora$$ext" ./cmd/jellyfin-remora; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o "$$dir/remoractl$$ext" ./cmd/remoractl; \
 	done
+
+package-linux-tar:
+	@for arch in amd64 arm64; do \
+		SOURCE_DATE_EPOCH="$${SOURCE_DATE_EPOCH:-$$(date +%s)}" \
+			./packaging/linux/package-tar.sh "$(VERSION)" "$$arch"; \
+	done
+
+package-linux-deb:
+	./packaging/linux/package-native.sh "$(VERSION)" "$${GOARCH:-$$(go env GOARCH)}" deb
+
+package-linux-rpm:
+	./packaging/linux/package-native.sh "$(VERSION)" "$${GOARCH:-$$(go env GOARCH)}" rpm
 
 clean:
 	rm -rf "$(BUILD_ROOT)" coverage.out
