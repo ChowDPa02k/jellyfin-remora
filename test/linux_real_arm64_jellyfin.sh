@@ -50,10 +50,10 @@ apt_get() {
 }
 
 apt_get update
-# Jellyfin's server package is self-contained. Transcoding is outside this
-# lifecycle/storage gate, so avoid pulling the large ffmpeg dependency tree.
+# The server package recommends jellyfin-ffmpeg7 or ffmpeg. Keep a supported
+# runtime even though this lifecycle/storage gate does not perform a transcode.
 apt_get install --yes --no-install-recommends \
-	ca-certificates curl e2fsprogs file libfontconfig1 libjemalloc2 python3
+	ca-certificates curl e2fsprogs ffmpeg file libfontconfig1 libjemalloc2 python3
 
 curl --fail --location --retry 3 --output "$work/jellyfin-server.deb" "$server_url"
 curl --fail --location --retry 3 --output "$work/jellyfin-web.deb" "$web_url"
