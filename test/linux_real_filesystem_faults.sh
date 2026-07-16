@@ -101,6 +101,28 @@ if status.get("pid", 0):
 PY
 }
 
+assert_fenced_tree() {
+	status
+	python3 - "$status_file" "$target" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    status = json.load(stream)
+target = os.path.normpath(sys.argv[2])
+matches = [
+    item for item in status["storage"]
+    if os.path.normpath(item["target"]) == target
+    or os.path.normpath(item["target"]).startswith(target + os.sep)
+]
+if not any(not item["healthy"] and item["fatal"] for item in matches):
+    raise SystemExit(f"no fatal target on the exhausted filesystem: {matches}")
+if status.get("pid", 0):
+    raise SystemExit(f"Jellyfin still reported while fenced: PID {status['pid']}")
+PY
+}
+
 wait_state RUNNING
 old_jellyfin=$(field pid)
 echo "remounting $target read-only while Jellyfin PID $old_jellyfin runs"
@@ -134,7 +156,7 @@ remaining=$(df -B1 --output=avail "$target" | tail -n 1 | tr -d ' ')
 }
 wait_state STORAGE_FENCED
 wait_pid_gone "$after_read_only"
-assert_fenced_target
+assert_fenced_tree
 echo "full-disk fence passed"
 rm -f "$fill"
 fill_active=false
