@@ -73,10 +73,12 @@ the real systemd/Jellyfin/fault matrix:
 LINUX_TEST_ARCH=arm64 ./test/linux_container_matrix.sh
 ```
 
-Each container has a bounded five-minute default (`LINUX_CONTAINER_TIMEOUT`),
-and CI caps the complete distribution job at 30 minutes. A broken binfmt/QEMU
-or container runtime therefore fails with the affected image instead of
-occupying a runner indefinitely.
+CI runs the amd64 and arm64 containers on matching native GitHub-hosted Linux
+runners; process-group, pidfd, fork/exec, and child-subreaper behavior is not
+claimed from user-mode QEMU. Each container also has a bounded five-minute
+default (`LINUX_CONTAINER_TIMEOUT`), and CI caps the complete distribution job
+at 30 minutes, so a broken container runtime fails with the affected image
+instead of occupying a runner indefinitely.
 
 On a disposable native Linux host with an installed package and a healthy
 configuration, the destructive systemd and physical-identity smoke tests are
