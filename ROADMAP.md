@@ -315,6 +315,17 @@ Native Linux support follows Windows because Linux operators commonly deploy
 Jellyfin through Docker. This phase adds a supported bare-metal/systemd path for
 operators who need Remora to own the host process and storage fence directly.
 
+Current alpha status: the `/proc`/pidfd/process-group/subreaper backend,
+mountinfo/statfs storage identity, cgroup-v2 accounting, physical/SMB/NFS
+mounting, file/libsecret credential providers, systemd integration, portable
+tarballs, native DEB/RPM builders, artifact checksums, and continuous
+amd64/arm64 distribution/package matrices are implemented. Real Jellyfin 10.11.11
+runs on Debian 13 amd64 and Rocky Linux 10 amd64 have covered process adoption,
+physical/SMB/NFS fencing, permission loss, full disk, hung-process recovery,
+service restart, host reboot, and native-package install/upgrade/rollback/removal.
+The phase remains open until the broader distribution and real arm64 matrices
+below pass.
+
 - Implement the Linux platform backend using `/proc`, pidfd where available, process groups, child-subreeper behavior, mountinfo/statfs, and cgroup awareness without imposing CPU/GPU limits.
 - Support physical filesystems, `mount.cifs`, and NFS; add libsecret/file-based credential-provider interfaces and protocol-specific timeout guidance.
 - Provide systemd units with correct foreground behavior, runtime/state directories, privilege separation, restart limits, shutdown ordering, and network/mount dependencies.

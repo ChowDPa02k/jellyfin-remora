@@ -7,7 +7,7 @@ temporary permission, credential, and mount change.
 
 ## Automated coverage
 
-The repository currently contains 111 top-level tests. HA-specific coverage includes:
+The automated suite's HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, single-sample health accounting, transient startup-wizard rejection, bounded first-start initialization retries, five-failure setup/process circuit breakers, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
 - Exact-process adoption, original adopted-process uptime, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, kernel argv-boundary identity (including paths with spaces), and macOS environment preservation.
@@ -31,6 +31,18 @@ The repository currently contains 111 top-level tests. HA-specific coverage incl
 - Jellyfin 10.11/12 API contract fixtures; setup-wizard XML suppression; configured/unconfigured ownership precedence; atomic backup, idempotence, asset prevalidation, multi-file rollback, and fail-closed process start.
 - A new PID cannot inherit the prior PID's healthy result or clear crash history before receiving its own health check.
 - Unicode table rendering rejects terminal control characters and aligns CJK paths; structured JSON preserves UID/server/session fields, and Jellyfin 10.11/12 session fixtures cover playing, paused, idle, anonymous, and inactive clients.
+- Linux mountinfo/statfs parsing and capacity rejection, exact `/proc` identity,
+  listening-port discovery, pidfd signaling, process-group descendant cleanup,
+  child-subreaper adoption/reaping, cgroup-v2 escaped-ffmpeg accounting, systemd
+  generation/install idempotence and missing-config conditions, run-as-user
+  storage probes, and fence-before-
+  remount recovery behavior. Timeout tests prove that an unkillable path probe
+  or mount helper returns control without stacking another helper for the same
+  target. Pre-sample crash cleanup attributes same-process-group descendants on
+  non-cgroup systems and excludes Remora's own concurrent storage probe from the
+  systemd cgroup orphan fallback. Network-storage host parsing covers DNS,
+  IPv4, bracketed IPv6, SMB credentials, conventional NFS syntax, and the
+  legacy `server/export` form.
 
 Run with:
 
@@ -38,6 +50,88 @@ Run with:
 go test -race ./...
 go vet ./...
 ```
+
+Portable Linux tarballs have a fixed-epoch reproducibility and manifest test:
+
+```sh
+./test/package_linux_tar.sh
+# On a host with dpkg-deb or rpmbuild/rpm:
+./test/package_linux_native.sh amd64 deb
+./test/package_linux_native.sh amd64 rpm
+```
+
+All three Linux artifact formats emit sibling SHA-256 files. Native DEB and RPM
+builders verify the checksum against the finished package in their respective
+Debian and Rocky build environments.
+
+The native `/proc`/pidfd/subreaper/statfs backend can also be executed in the
+Debian, Ubuntu, Fedora, and openSUSE Tumbleweed container baselines on either
+Linux architecture. This is an ABI/distribution check, not a substitute for
+the real systemd/Jellyfin/fault matrix:
+
+```sh
+LINUX_TEST_ARCH=arm64 ./test/linux_container_matrix.sh
+```
+
+## Real native Linux amd64 compatibility and fault runs
+
+Jellyfin 10.11.11 was exercised on Rocky Linux 10.1 (RPM-family) and Debian
+13.6 on 2026-07-16. Both hosts used native systemd services, cgroup v2, dedicated
+ext4 loop-backed application storage, and the distribution Jellyfin service was
+disabled so Remora remained the sole supervisor.
+
+| Host / fault or transition | Expected invariant | Result |
+|---|---|---|
+| Rocky clean initialization | Direct ELF process runs as `jellyfin`, reaches `RUNNING`, one PID | Pass |
+| Debian clean initialization | Direct ELF process runs as `jellyfin`, reaches `RUNNING`, one PID | Pass |
+| Unexpected Remora `SIGKILL` on both hosts | systemd restarts Remora and adopts the unchanged Jellyfin PID | Pass |
+| Normal systemd stop/start on both hosts | Complete old tree is removed; exactly one replacement starts | Pass |
+| Physical UUID disappears/unmounts on both hosts | Fence and stop before any remount; recover only after identity returns | Pass |
+| Rocky read-only application filesystem | Remain fenced with no Jellyfin PID until read/write access returns | Pass |
+| Rocky full application filesystem | Real write/capacity probe fences; freeing space permits controlled recovery | Pass |
+| Debian NFS server loss and recovery | Bounded probe fences; restored export yields one replacement PID | Pass |
+| Debian SMB server loss and recovery | Bounded probe fences; restored share yields one replacement PID | Pass |
+| Debian config permission loss | Probe runs as the Jellyfin identity, fences despite root Remora | Pass |
+| Debian stopped/hung Jellyfin | Timeout forces the old tree down and starts one healthy replacement | Pass |
+| Rocky ffmpeg moved outside ancestry but kept in the service cgroup | Status counts it and forced restart removes it | Pass |
+| Rocky Jellyfin root `SIGKILL` with escaped ffmpeg in the service cgroup | Exit callback validates cached start identity, kills the orphan, and starts exactly one replacement | Pass |
+| Rocky root `SIGKILL` immediately after moving an unsampled ffmpeg into the service cgroup | Self-cgroup fallback finds and kills it before one replacement reaches `RUNNING` | Pass |
+| Debian DEB install/upgrade/rollback/purge/reinstall | Versions change correctly; purge preserves operator config and Jellyfin data | Pass |
+| Rocky RPM install/upgrade/rollback/erase/reinstall | Versions change correctly; erase preserves operator config and Jellyfin data | Pass |
+| Debian host reboot | New boot ID; systemd starts Remora, loop-backed physical storage plus NFS/SMB recover, and exactly one Jellyfin 10.11.11 reaches `RUNNING` | Pass |
+| Rocky host reboot | New boot ID; loop-backed physical storage, one Remora, one Jellyfin, NFS, and SMB recover | Pass |
+
+The complete Go suite passed in a Debian arm64 container. The arm64 native
+backend and capacity suite also passed in Debian 13, Ubuntu 24.04, Fedora, and
+openSUSE Tumbleweed containers. This proves the Linux syscall ABI and
+distribution userland baseline, but not real arm64 Jellyfin, real mount-fault,
+or host-reboot compatibility. Native systemd behavior is covered separately
+below.
+
+An AlmaLinux 9 arm64 privileged container additionally ran native systemd and
+installed the cross-built aarch64 RPM. This matrix uses the repository fake
+Jellyfin server, so it validates package/systemd/process semantics rather than
+claiming real arm64 Jellyfin compatibility:
+
+| arm64 systemd transition | Expected invariant | Result |
+|---|---|---|
+| Install RPM and enable static unit | Root Remora drops the child to `jellyfin`; fake server reaches `RUNNING` | Pass |
+| Kill Remora main process | systemd starts a new Remora and preserves/adopts the exact fake-server PID | Pass |
+| Normal systemd stop/start | Old fake-server process is removed and exactly one replacement starts | Pass |
+| Exceed `StartLimitBurst=5` | Unit enters `failed`, child remains available; reset/start adopts the same PID | Pass |
+
+Real arm64 Jellyfin/storage faults and complete Ubuntu and rolling-distribution
+systemd/Jellyfin matrices remain open Phase 5 gates and are not claimed by this
+matrix.
+
+The Debian reboot run was initially mistaken for a failed VM power-on because
+DHCP changed the guest address. After locating the guest at `192.168.1.102`, the
+new boot was verified with boot ID `ba575bff-add0-47d8-a6e9-699f48bc83e9`:
+`jellyfin-remora.service` was enabled and active, the distribution
+`jellyfin.service` remained inactive, the loop-backed ext4 filesystem and the
+configured NFS and CIFS mounts were present, all seven storage probes were
+healthy, and exactly one Remora plus one Jellyfin 10.11.11 process reached
+`RUNNING` as uid 101 (`jellyfin`).
 
 ## Real Jellyfin 12 fault run
 

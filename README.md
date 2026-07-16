@@ -1,15 +1,16 @@
 # Jellyfin Remora
 
-Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS and
-Windows alpha milestones support storage fencing, process supervision, first-run
-setup, pre-start XML configuration reconciliation, API-key provisioning, login
-watchdog checks, health checks, and local control.
+Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS,
+Windows, and native Linux alpha milestones support storage fencing, process
+supervision, first-run setup, pre-start XML configuration reconciliation,
+API-key provisioning, login watchdog checks, health checks, and local control.
 
 Development milestones through the cross-platform stable release are tracked in [ROADMAP.md](ROADMAP.md).
 The repeatable and real-fault high-availability coverage is recorded in [test/HA_TEST_MATRIX.md](test/HA_TEST_MATRIX.md).
 Supervisor invariants and trust boundaries are defined in [docs/architecture-safety.md](docs/architecture-safety.md).
 The local control-plane contract is documented in [docs/api-v1.md](docs/api-v1.md).
 Build and review requirements are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+Native bare-metal/systemd installation is documented in [docs/linux.md](docs/linux.md).
 
 ## Platform support
 
@@ -32,8 +33,8 @@ has passed.
 | Windows Server 2022 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
 | Windows Server 2025 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
 | Windows | `arm64` | Not started（未开始） | Cross-build only; native dependencies and the Jellyfin compatibility matrix have not been tested |
-| Linux | `amd64` | Not started（未开始） | Native systemd/process/storage implementation is planned for Phase 5 |
-| Linux | `arm64` | Not started（未开始） | Native systemd/process/storage implementation is planned for Phase 5 |
+| Linux (Debian 13 / Rocky Linux 10) | `amd64` | Passed（已通过） | Native systemd lifecycle, process adoption, physical/SMB/NFS fencing, process faults, host reboot, and DEB/RPM lifecycle with Jellyfin 10.11.11; wider distro coverage remains open |
+| Linux | `arm64` | Not started（未开始） | Reproducible artifacts and native AlmaLinux systemd/fake-server lifecycle pass; real arm64 Jellyfin and destructive storage testing has not started |
 
 ## Build
 
@@ -59,7 +60,8 @@ unchanged for now.
 
 Every `sample/*.yaml` platform template, including
 [`sample/config-darwin.yaml`](sample/config-darwin.yaml) and
-[`sample/config-windows.yaml`](sample/config-windows.yaml), is embedded in
+[`sample/config-windows.yaml`](sample/config-windows.yaml), and
+[`sample/config-linux.yaml`](sample/config-linux.yaml), is embedded in
 `remoractl` at build time. Release packages may retain the external files for
 inspection, but init does not depend on them. `--sample-dir` explicitly
 overrides the embedded platform template for development or customized builds.
@@ -79,8 +81,8 @@ whether to continue. Accepting that warning does not weaken runtime safety: the
 daemon will still fence the mismatch until the mount or configuration is fixed.
 
 On macOS, init generates a launchd plist beside `remora-config.yaml`; on Windows
-it generates the Task Scheduler/Service PowerShell installer, and Linux emits a
-systemd unit when the Phase 5 platform sample/backend is available. With
+it generates the Task Scheduler/Service PowerShell installer; on Linux it emits
+a native systemd unit. With
 administrator privileges init installs the platform definition idempotently and
 asks before starting it. Without those privileges it keeps all generated files
 in the current directory, prints a warning, and provides exact manual deployment
@@ -328,7 +330,15 @@ make test
 make check
 make vuln
 make cross-build
+./test/package_linux_tar.sh
+LINUX_TEST_ARCH=arm64 ./test/linux_container_matrix.sh
 ```
+
+CI runs the Linux backend matrix on Debian 13, Ubuntu 24.04, Fedora, and
+openSUSE Tumbleweed for both amd64 and arm64 through QEMU where required. It
+also verifies reproducible amd64/arm64 DEB and RPM output. These checks cover
+the syscall/distribution and packaging baselines; the destructive real-host
+evidence remains separately recorded in the HA matrix.
 
 The module requires the patched Go toolchain declared in `go.mod`. With the default
 `GOTOOLCHAIN=auto`, Go downloads that toolchain when the locally installed Go command
