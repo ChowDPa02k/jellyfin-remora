@@ -326,8 +326,11 @@ harnesses. Real Jellyfin 10.11.11 runs on Debian 13 amd64 and Rocky Linux 10
 amd64 have covered process adoption, physical/SMB/NFS fencing, permission loss,
 read-only and full filesystems, hung-process recovery, service restart, storage-
 server and client reboots, and native-package install/upgrade/rollback/removal.
-The phase remains open until real arm64 Jellyfin/storage faults and complete
-Ubuntu plus rolling-distribution systemd/Jellyfin matrices pass.
+The same real Jellyfin release and packaged `0.8.0-alpha.8` binaries pass the
+repeatable native-systemd matrix on Ubuntu 24.04 and openSUSE Tumbleweed,
+including process adoption, physical identity, permission, read-only, full-disk,
+and stopped-process faults. The phase remains open only for real arm64
+Jellyfin/storage-fault and host-reboot evidence.
 
 - Implement the Linux platform backend using `/proc`, pidfd where available, process groups, child-subreeper behavior, mountinfo/statfs, and cgroup awareness without imposing CPU/GPU limits.
 - Support physical filesystems, `mount.cifs`, and NFS; add libsecret/file-based credential-provider interfaces and protocol-specific timeout guidance.

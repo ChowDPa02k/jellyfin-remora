@@ -33,7 +33,7 @@ has passed.
 | Windows Server 2022 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
 | Windows Server 2025 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
 | Windows | `arm64` | Not started（未开始） | Cross-build only; native dependencies and the Jellyfin compatibility matrix have not been tested |
-| Linux (Debian 13 / Rocky Linux 10) | `amd64` | Passed（已通过） | Native systemd lifecycle, process adoption, physical/SMB/NFS fencing, process faults, host reboot, and DEB/RPM lifecycle with Jellyfin 10.11.11; wider distro coverage remains open |
+| Linux (Debian 13 / Ubuntu 24.04 / Rocky Linux 10 / openSUSE Tumbleweed) | `amd64` | Passed（已通过） | Native systemd lifecycle, process adoption, physical/SMB/NFS fencing, filesystem/process faults, host reboot, and DEB/RPM lifecycle with Jellyfin 10.11.11 |
 | Linux | `arm64` | Not started（未开始） | Reproducible artifacts, a native GitHub-hosted four-distribution ABI matrix, and AlmaLinux systemd/fake-server lifecycle pass; real arm64 Jellyfin and destructive storage testing has not started |
 
 ## Build

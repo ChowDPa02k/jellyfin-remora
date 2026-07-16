@@ -152,6 +152,36 @@ the Rocky storage server changed its boot ID from
 network mounts and cleared its Jellyfin PID in nine seconds, then remounted NFS
 and SMB and returned to one `RUNNING` Jellyfin after Rocky recovered.
 
+The checked-in container matrix extends the native-systemd/Jellyfin baseline to
+Ubuntu 24.04 LTS and openSUSE Tumbleweed. It builds both images from their
+current distribution repositories, installs the native `0.8.0-alpha.8` DEB or
+RPM from commit `001a58c8f40f`, extracts the official Jellyfin 10.11.11 server
+DEB, and gives each container a dedicated 4 GiB ext4 loop filesystem. Run it on
+a disposable rootful Podman host with:
+
+```sh
+sudo ./test/linux-systemd/run-container-matrix.sh \
+  /path/to/jellyfin-remora_0.8.0~alpha.8_amd64.deb \
+  /path/to/jellyfin-remora-0.8.0-0.alpha.8.el10.x86_64.rpm \
+  /path/to/jellyfin-server_10.11.11+deb13_amd64.deb \
+  /usr/share/jellyfin-web
+```
+
+| Native systemd container case | Ubuntu 24.04 | openSUSE Tumbleweed |
+|---|---:|---:|
+| Real Jellyfin 10.11.11 first-start provisioning and `/health` | Pass | Pass |
+| Remora `SIGKILL` restart with unchanged Jellyfin PID adoption | Pass | Pass |
+| Normal systemd stop/start with complete old-tree removal | Pass | Pass |
+| Wrong physical-filesystem identity fence and recovery | Pass | Pass |
+| Jellyfin-user permission loss fence and recovery | Pass | Pass |
+| Read-only filesystem fence and recovery | Pass | Pass |
+| Zero user-available blocks fence and recovery | Pass | Pass |
+| `SIGSTOP` API failure, forced stop, and single replacement | Pass | Pass |
+
+This container matrix is additive to the physical Debian/Rocky runs: it closes
+the Ubuntu and rolling-distribution compatibility gate, while network-storage
+disconnects and host reboots remain proven by the physical hosts above.
+
 The complete Go suite passed in a Debian arm64 container. The arm64 native
 backend and capacity suite also passed in Debian 13, Ubuntu 24.04, Fedora, and
 openSUSE Tumbleweed containers. This proves the Linux syscall ABI and
@@ -171,9 +201,9 @@ claiming real arm64 Jellyfin compatibility:
 | Normal systemd stop/start | Old fake-server process is removed and exactly one replacement starts | Pass |
 | Exceed `StartLimitBurst=5` | Unit enters `failed`, child remains available; reset/start adopts the same PID | Pass |
 
-Real arm64 Jellyfin/storage faults and complete Ubuntu and rolling-distribution
-systemd/Jellyfin matrices remain open Phase 5 gates and are not claimed by this
-matrix.
+Real arm64 Jellyfin/storage faults and host reboot remain the open Phase 5 gate;
+the amd64 Ubuntu and rolling-distribution systemd/Jellyfin matrix is now covered
+by the real-server container run above.
 
 The Debian reboot run was initially mistaken for a failed VM power-on because
 DHCP changed the guest address. After locating the guest at `192.168.1.102`, the
