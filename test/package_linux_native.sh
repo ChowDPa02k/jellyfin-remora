@@ -46,8 +46,10 @@ if [ "$format" = deb ]; then
 	[ "$(dpkg-deb -f "$one" Version)" = "0.0.0~test" ]
 	dpkg --compare-versions "0.0.0~test" lt "0.0.0"
 else
-	want=$arch
-	[ "$arch" = arm64 ] && want=aarch64
+	case "$arch" in
+		amd64) want=x86_64 ;;
+		arm64) want=aarch64 ;;
+	esac
 	[ "$(rpm -qp --qf '%{ARCH}' "$one")" = "$want" ]
 fi
 printf '%s\n' "$one"
