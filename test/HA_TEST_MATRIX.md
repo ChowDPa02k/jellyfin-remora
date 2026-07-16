@@ -184,10 +184,33 @@ disconnects and host reboots remain proven by the physical hosts above.
 
 The complete Go suite passed in a Debian arm64 container. The arm64 native
 backend and capacity suite also passed in Debian 13, Ubuntu 24.04, Fedora, and
-openSUSE Tumbleweed containers. This proves the Linux syscall ABI and
-distribution userland baseline, but not real arm64 Jellyfin, real mount-fault,
-or host-reboot compatibility. Native systemd behavior is covered separately
-below.
+openSUSE Tumbleweed containers on a matching native GitHub-hosted ARM kernel.
+This establishes the Linux syscall ABI and distribution-userland baseline.
+
+## Real native Linux arm64 compatibility and fault run
+
+The official Jellyfin 10.11.11 Debian 13 arm64 server package and packaged
+Remora `0.8.0-alpha.8` DEB ran on a native Ubuntu 24.04 ARM GitHub-hosted runner
+on 2026-07-16. The checked-in `test/linux_real_arm64_jellyfin.sh` gate verifies
+the package checksums and aarch64 ELF before creating a dedicated 4 GiB ext4
+filesystem and native systemd instance. The complete 17-job workflow passed in
+[CI run 29482619964](https://github.com/ChowDPa02k/jellyfin-remora/actions/runs/29482619964).
+
+| Native arm64 case | Expected invariant | Result |
+|---|---|---|
+| First start and `/health` | Jellyfin 10.11.11 reaches `RUNNING` as the unprivileged `jellyfin` user | Pass |
+| Unexpected Remora `SIGKILL` | systemd restarts Remora and adopts the unchanged Jellyfin PID | Pass |
+| Normal systemd stop/start | Complete old process tree is removed; exactly one replacement starts | Pass |
+| Wrong physical-filesystem identity | Jellyfin stops while the foreign overlay remains mounted; correct identity recovers once | Pass |
+| Config permission loss | The run-as-user probe fences despite privileged Remora; restored permission recovers once | Pass |
+| Read-only application filesystem | Jellyfin remains fenced until the read/write view returns | Pass |
+| Zero user-available blocks | A failed managed-path write fences; freeing space permits controlled recovery | Pass |
+| Jellyfin `SIGSTOP` | API timeout and bounded escalation remove the hung tree and start one replacement | Pass |
+
+The final status reported native `aarch64`, Jellyfin `10.11.11`, `RUNNING`, and
+all storage probes healthy. Network-storage disconnects and client/server host
+reboots were not repeated on arm64; those architecture-independent Phase 5
+transitions remain covered by the physical Debian/Rocky amd64 hosts above.
 
 An AlmaLinux 9 arm64 privileged container additionally ran native systemd and
 installed the cross-built aarch64 RPM. This matrix uses the repository fake
@@ -201,9 +224,9 @@ claiming real arm64 Jellyfin compatibility:
 | Normal systemd stop/start | Old fake-server process is removed and exactly one replacement starts | Pass |
 | Exceed `StartLimitBurst=5` | Unit enters `failed`, child remains available; reset/start adopts the same PID | Pass |
 
-Real arm64 Jellyfin/storage faults and host reboot remain the open Phase 5 gate;
-the amd64 Ubuntu and rolling-distribution systemd/Jellyfin matrix is now covered
-by the real-server container run above.
+This earlier fake-server matrix remains useful for RPM/systemd start-limit
+coverage; real arm64 Jellyfin and destructive local-storage coverage is provided
+by the native Ubuntu gate above.
 
 The Debian reboot run was initially mistaken for a failed VM power-on because
 DHCP changed the guest address. After locating the guest at `192.168.1.102`, the

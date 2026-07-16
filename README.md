@@ -34,7 +34,7 @@ has passed.
 | Windows Server 2025 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
 | Windows | `arm64` | Not started（未开始） | Cross-build only; native dependencies and the Jellyfin compatibility matrix have not been tested |
 | Linux (Debian 13 / Ubuntu 24.04 / Rocky Linux 10 / openSUSE Tumbleweed) | `amd64` | Passed（已通过） | Native systemd lifecycle, process adoption, physical/SMB/NFS fencing, filesystem/process faults, host reboot, and DEB/RPM lifecycle with Jellyfin 10.11.11 |
-| Linux | `arm64` | Not started（未开始） | Reproducible artifacts, a native GitHub-hosted four-distribution ABI matrix, and AlmaLinux systemd/fake-server lifecycle pass; real arm64 Jellyfin and destructive storage testing has not started |
+| Linux (Debian 13 / Ubuntu 24.04 / Fedora / openSUSE Tumbleweed) | `arm64` | Passed（已通过） | Native four-distribution ABI matrix plus real Jellyfin 10.11.11 systemd lifecycle, process adoption, physical identity, permission, read-only, full-disk, and process-hang faults on Ubuntu 24.04 ARM |
 
 ## Build
 
@@ -335,10 +335,11 @@ LINUX_TEST_ARCH=arm64 ./test/linux_container_matrix.sh
 ```
 
 CI runs the Linux backend matrix on Debian 13, Ubuntu 24.04, Fedora, and
-openSUSE Tumbleweed for both amd64 and arm64 through QEMU where required. It
-also verifies reproducible amd64/arm64 DEB and RPM output. These checks cover
-the syscall/distribution and packaging baselines; the destructive real-host
-evidence remains separately recorded in the HA matrix.
+openSUSE Tumbleweed on matching native amd64 and arm64 GitHub-hosted kernels.
+It also verifies reproducible amd64/arm64 DEB and RPM output, and runs a real
+Jellyfin 10.11.11 destructive systemd/storage gate on Ubuntu 24.04 ARM. The
+additional physical-host and network-storage evidence is recorded separately
+in the HA matrix.
 
 The module requires the patched Go toolchain declared in `go.mod`. With the default
 `GOTOOLCHAIN=auto`, Go downloads that toolchain when the locally installed Go command

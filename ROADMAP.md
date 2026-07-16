@@ -315,8 +315,9 @@ Native Linux support follows Windows because Linux operators commonly deploy
 Jellyfin through Docker. This phase adds a supported bare-metal/systemd path for
 operators who need Remora to own the host process and storage fence directly.
 
-Current alpha status: the `/proc`/pidfd/process-group/subreaper backend,
-mountinfo/statfs storage identity, cgroup-v2 accounting, physical/SMB/NFS
+Phase 5 exit gate passed on 2026-07-16. The
+`/proc`/pidfd/process-group/subreaper backend, mountinfo/statfs storage identity,
+cgroup-v2 accounting, physical/SMB/NFS
 mounting, file/libsecret credential providers, systemd integration, portable
 tarballs, native DEB/RPM builders, artifact checksums, and continuous
 amd64/arm64 distribution/package matrices are implemented. The arm64 ABI matrix
@@ -329,8 +330,12 @@ server and client reboots, and native-package install/upgrade/rollback/removal.
 The same real Jellyfin release and packaged `0.8.0-alpha.8` binaries pass the
 repeatable native-systemd matrix on Ubuntu 24.04 and openSUSE Tumbleweed,
 including process adoption, physical identity, permission, read-only, full-disk,
-and stopped-process faults. The phase remains open only for real arm64
-Jellyfin/storage-fault and host-reboot evidence.
+and stopped-process faults. A native Ubuntu 24.04 ARM runner additionally passes
+the official Jellyfin 10.11.11 arm64 package, systemd lifecycle, Remora crash
+adoption, wrong-filesystem identity, permission loss, read-only and full-disk
+fencing, and hung-process recovery. SMB/NFS disconnect and host-reboot gates
+remain the physical Debian/Rocky amd64 evidence; the exit gate does not require
+repeating every architecture-independent transition on every architecture.
 
 - Implement the Linux platform backend using `/proc`, pidfd where available, process groups, child-subreeper behavior, mountinfo/statfs, and cgroup awareness without imposing CPU/GPU limits.
 - Support physical filesystems, `mount.cifs`, and NFS; add libsecret/file-based credential-provider interfaces and protocol-specific timeout guidance.
