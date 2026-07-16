@@ -1,0 +1,29 @@
+[Unit]
+Description=Jellyfin Remora
+Documentation=https://github.com/ChowDPa02K/jellyfin-remora
+ConditionPathExists=/etc/jellyfin-remora/remora-config.yaml
+After=network-online.target local-fs.target remote-fs.target jellyfin.service
+Wants=network-online.target remote-fs.target
+Conflicts=jellyfin.service
+Before=umount.target shutdown.target
+StartLimitIntervalSec=5min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/jellyfin-remora -c /etc/jellyfin-remora/remora-config.yaml
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=330s
+KillMode=process
+RuntimeDirectory=jellyfin-remora
+RuntimeDirectoryMode=0750
+StateDirectory=jellyfin-remora
+StateDirectoryMode=0750
+LogsDirectory=jellyfin-remora
+LogsDirectoryMode=0750
+UMask=0027
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

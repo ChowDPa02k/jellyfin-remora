@@ -1,0 +1,197 @@
+# Jellyfin Remora — complete native Linux/systemd configuration template.
+# `remoractl init` embeds this file. Every duration requires an explicit unit
+# such as ms, s, m, h, d, or w.
+# Configuration schema revision. Version 1 files are migrated in memory.
+config-version: 2
+
+restapi:
+  # Local control is never exposed beyond loopback. Use an IPv4 or IPv6
+  # loopback address; non-loopback listeners are rejected.
+  listen: 127.0.0.1
+  # Local TCP control port used when the Unix socket is unavailable.
+  port: 8095
+  # systemd creates /run/jellyfin-remora before starting the daemon.
+  unix-socket: /run/jellyfin-remora/remora.sock
+
+remora:
+  # Maximum time allowed for Jellyfin to become healthy after process start.
+  server-start-timeout: 120s
+  # Graceful shutdown/API wait before Remora escalates to SIGKILL.
+  server-stop-timeout: 300s
+  # All storage/network operations are bounded so a stale remote filesystem
+  # cannot block the supervisor forever.
+  io-timeout: 5s
+  # Consecutive completely healthy storage rounds required after a fence.
+  recovery-successes: 3
+  monitoring:
+    # Base supervisor and storage scheduling interval.
+    interval: 1s
+    jellyfin-api:
+      # Interval between Jellyfin /health checks and session refreshes.
+      interval: 10s
+      # Consecutive failed /health checks before Jellyfin is restarted.
+      failure-threshold: 3
+    user-login:
+      # This optional authenticated watchdog keeps one token and logs in again
+      # only if Jellyfin revokes it.
+      enabled: false
+      # Interval between authenticated /Users/Me session checks.
+      interval: 60s
+      # Existing watchdog user, or user created during first-run provisioning.
+      user: remora
+      # Protect the YAML as mode 0600; this is not an SMB mount credential.
+      password: REPLACE-WITH-WATCHDOG-PASSWORD
+  # systemd StateDirectory creates this with persistent root ownership. Remora
+  # drops only the Jellyfin child to jellyfin.run-as-user.
+  data-dir: /var/lib/jellyfin-remora
+  logs:
+    # Remora structured logs and verbatim Jellyfin console logs are independent
+    # files beneath this directory and rotate independently.
+    path: /var/log/jellyfin-remora
+    # debug, info, warning, warn, or error.
+    level: info
+    # Rotate each active log when this age is reached.
+    rotation-time: 24h
+    # Rotate each active log when this size in MiB is reached.
+    rotation-size-mb: 30
+    # Delete rotated logs older than this duration.
+    preserve-time: 7d
+
+# Required storage. Existing mounts are never remounted by init. An unmounted
+# entry is mounted and verified; runtime loss fences Jellyfin before recovery.
+disk:
+  - type: physical
+    # Use exactly one stable UUID or absolute block-device path. UUID is
+    # preferred because /dev/sdX names can change across boots.
+    uuid: REPLACE-WITH-FILESYSTEM-UUID
+    # device: /dev/mapper/vg-appdata
+    # Expected mount point. A different mounted source fails closed.
+    target: /srv/jellyfin
+    # r performs a real read probe; rw also creates, writes, fsyncs, and deletes.
+    permission: rw
+    # Check every N remora.monitoring.interval ticks.
+    heartbeat: 1
+    # After a healthy baseline, fence after N consecutive fatal checks. Fresh
+    # startup still fails closed on the first unverified/unsafe result.
+    failure-threshold: 1
+
+  # SMB/CIFS example. Do not put a username or password in this YAML. The
+  # credential file must be owned by the Remora service uid (normally root),
+  # mode 0600, and contain mount.cifs username= and password= lines. Symlinks
+  # are rejected. `libsecret:NAME` instead reads the same content with:
+  # secret-tool lookup service jellyfin-remora credential NAME
+  # - type: smb
+  #   # IPv6 literals use brackets: //[2001:db8::20]/AppData
+  #   device: //192.168.1.20/AppData
+  #   credential: file:/etc/jellyfin-remora/smb-appdata.credential
+  #   # uid/gid names keep client-side access aligned with run-as-user without
+  #   # embedding host-specific numeric IDs.
+  #   options: vers=3.1.1,seal,serverino,actimeo=1,uid=jellyfin,gid=jellyfin,forceuid,forcegid,file_mode=0600,dir_mode=0700
+  #   target: /mnt/jellyfin-appdata
+  #   permission: rw
+  #   heartbeat: 3
+  #   failure-threshold: 2
+
+  # Media-only NFS example. soft/timeo/retrans defaults bound server-loss I/O;
+  # explicit values here document the policy. Prefer hard mounts for database
+  # or application state where retry-until-recovery semantics are required.
+  # - type: nfs
+  #   # IPv6 literals use brackets: [2001:db8::30]:/exports/Media
+  #   device: 192.168.1.20:/exports/Media
+  #   options: nfsvers=3,nolock,soft,timeo=50,retrans=2,rsize=65536,wsize=65536
+  #   target: /mnt/media
+  #   permission: r
+  #   heartbeat: 3
+  #   failure-threshold: 2
+
+jellyfin:
+  # Debian/Ubuntu package path. Fedora/RHEL-family packages commonly use
+  # /usr/lib64/jellyfin/jellyfin. Point directly at the ELF binary, not a shell
+  # wrapper, so process adoption can compare kernel executable identity.
+  path: /usr/lib/jellyfin/bin/jellyfin
+  # Mandatory for the root system service; Jellyfin itself is never run as root.
+  run-as-user: jellyfin
+  # Optional primary group. The user's supplementary groups are retained.
+  run-as-group: jellyfin
+  # Jellyfin database and application-data directory.
+  data-dir: /srv/jellyfin/data
+  # Jellyfin XML configuration directory. Remora's YAML remains separate.
+  config-dir: /srv/jellyfin/config
+  # Jellyfin cache, image-processing, and default transcode workspace.
+  cache-dir: /srv/jellyfin/cache
+  # Jellyfin server-owned application log directory.
+  log-dir: /srv/jellyfin/log
+  # Debian/Ubuntu and Fedora/RHEL-family packages install this path.
+  web-dir: /usr/share/jellyfin-web
+  # Additional version-specific Jellyfin CLI values become --key=value.
+  parameters:
+    package-name: jellyfin-remora
+
+  # Managed XML values are reconciled atomically before each process start.
+  # Omitted values remain owned by Jellyfin and dashboard users.
+  general:
+    settings:
+      # Public server display name; null clears it.
+      server-name: Jellyfin
+    paths:
+      # null/default restores Jellyfin's default cache path.
+      cache-path: null
+      # default, null, or an absolute metadata directory.
+      metadata-path: default
+    performance:
+      # Maximum concurrent library scan tasks; null leaves Jellyfin unchanged.
+      parallel-library-scan-tasks-limit: 1
+      # Maximum concurrent image encodes; null leaves Jellyfin unchanged.
+      parallel-image-encoding-limit: null
+  branding:
+    # Enable the configured splash-screen asset.
+    enable-splash-screen: false
+    # Absolute PNG/JPEG path, or null to clear; validated before XML changes.
+    splash-screen-image: null
+    # Text displayed on the login page; null clears it.
+    login-disclaimer: "Managed by Jellyfin Remora"
+    # Absolute CSS file path, or null to clear; content is stored in XML.
+    custom-css-code: null
+  playback:
+    transcoding:
+      # Absolute transcode working directory, or null/default.
+      transcode-path: /srv/jellyfin/cache/transcodes
+      # Enable external fallback fonts for subtitle rendering.
+      enable-fallback-fonts: false
+      # Absolute fallback-font directory, or null to clear.
+      fallback-font-folder-path: null
+  networking:
+    server-address-settings:
+      # Local HTTP listener used by health checks and remoractl status.
+      local-http-port-number: 8096
+      # Local HTTPS listener retained even when HTTPS is disabled.
+      local-https-port-number: 8920
+      # Enable Jellyfin HTTPS; certificate management remains Jellyfin-owned.
+      enable-https: false
+      # URL prefix such as /jellyfin; null clears it.
+      base-url: null
+      # null binds normally; a supported string/list restricts interfaces.
+      bind-to-local-network-address: null
+    ip-protocols:
+      # Enable IPv4 listeners.
+      enable-ipv4: true
+      # Enable IPv6 listeners.
+      enable-ipv6: false
+
+# Used only when Jellyfin reports an incomplete setup wizard. Selection values
+# are the exact visible labels from the installed Jellyfin Web UI.
+init:
+  # Initial name; managed general.settings.server-name wins thereafter.
+  server-name: Jellyfin
+  # Exact visible Jellyfin Web label, e.g. English, Deutsch, 한국어, العربية.
+  display-language: English
+  # Administrator to create or rename from a package bootstrap account.
+  user: admin
+  # Initial administrator password; protect this YAML with mode 0600.
+  password: REPLACE-WITH-ADMINISTRATOR-PASSWORD
+  # Exact visible metadata-language label, never an ISO/API code.
+  preferred-metadata-language: English
+  # Exact visible country/region label, never an internal region code.
+  preferred-metadata-region: United States
+  # Permit Jellyfin clients outside the host.
+  allow-remote-connections: true

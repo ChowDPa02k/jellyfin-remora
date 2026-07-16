@@ -17,14 +17,25 @@ const linuxServiceName = "jellyfin-remora.service"
 
 var linuxSystemdDirectory = "/etc/systemd/system"
 
+var (
+	linuxChown      = os.Chown
+	runLinuxSystemd = runSystemctl
+)
+
 func platformSampleName() (string, error) { return "config-linux.yaml", nil }
 func remoraExecutableName() string        { return "jellyfin-remora" }
 
 func generatePlatformService(_ *config.Config, executable, configPath string) (*serviceArtifact, error) {
 	unit := `[Unit]
 Description=Jellyfin Remora
-After=network-online.target remote-fs.target
-Wants=network-online.target
+Documentation=https://github.com/ChowDPa02K/jellyfin-remora
+ConditionPathExists=` + systemdQuote(configPath) + `
+After=network-online.target local-fs.target remote-fs.target jellyfin.service
+Wants=network-online.target remote-fs.target
+Conflicts=jellyfin.service
+Before=umount.target shutdown.target
+StartLimitIntervalSec=5min
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -32,6 +43,17 @@ ExecStart=` + systemdQuote(executable) + ` -c ` + systemdQuote(configPath) + `
 Restart=on-failure
 RestartSec=10s
 TimeoutStopSec=330s
+# Remora owns the Jellyfin process tree. Preserve it across an unexpected
+# Remora crash so the restarted supervisor can adopt the exact process.
+KillMode=process
+RuntimeDirectory=jellyfin-remora
+RuntimeDirectoryMode=0750
+StateDirectory=jellyfin-remora
+StateDirectoryMode=0750
+LogsDirectory=jellyfin-remora
+LogsDirectoryMode=0750
+UMask=0027
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
@@ -54,17 +76,17 @@ func installPlatformService(artifact *serviceArtifact) error {
 	if err := atomicWriteFile(destination, data, 0o644); err != nil {
 		return err
 	}
-	if err := os.Chown(destination, 0, 0); err != nil {
+	if err := linuxChown(destination, 0, 0); err != nil {
 		return err
 	}
-	if err := runSystemctl("daemon-reload"); err != nil {
+	if err := runLinuxSystemd("daemon-reload"); err != nil {
 		return err
 	}
-	return runSystemctl("enable", linuxServiceName)
+	return runLinuxSystemd("enable", linuxServiceName)
 }
 
 func startPlatformService(*serviceArtifact) error {
-	return runSystemctl("start", linuxServiceName)
+	return runLinuxSystemd("restart", linuxServiceName)
 }
 
 func platformServiceInstallInstructions(artifact *serviceArtifact) string {
