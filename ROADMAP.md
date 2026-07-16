@@ -319,12 +319,15 @@ Current alpha status: the `/proc`/pidfd/process-group/subreaper backend,
 mountinfo/statfs storage identity, cgroup-v2 accounting, physical/SMB/NFS
 mounting, file/libsecret credential providers, systemd integration, portable
 tarballs, native DEB/RPM builders, artifact checksums, and continuous
-amd64/arm64 distribution/package matrices are implemented. Real Jellyfin 10.11.11
-runs on Debian 13 amd64 and Rocky Linux 10 amd64 have covered process adoption,
-physical/SMB/NFS fencing, permission loss, full disk, hung-process recovery,
-service restart, host reboot, and native-package install/upgrade/rollback/removal.
-The phase remains open until the broader distribution and real arm64 matrices
-below pass.
+amd64/arm64 distribution/package matrices are implemented. The arm64 ABI matrix
+runs on a native GitHub-hosted arm64 kernel rather than user-mode QEMU, and the
+destructive native checks are preserved as repeatable `test/linux_real_*.sh`
+harnesses. Real Jellyfin 10.11.11 runs on Debian 13 amd64 and Rocky Linux 10
+amd64 have covered process adoption, physical/SMB/NFS fencing, permission loss,
+read-only and full filesystems, hung-process recovery, service restart, storage-
+server and client reboots, and native-package install/upgrade/rollback/removal.
+The phase remains open until real arm64 Jellyfin/storage faults and complete
+Ubuntu plus rolling-distribution systemd/Jellyfin matrices pass.
 
 - Implement the Linux platform backend using `/proc`, pidfd where available, process groups, child-subreeper behavior, mountinfo/statfs, and cgroup awareness without imposing CPU/GPU limits.
 - Support physical filesystems, `mount.cifs`, and NFS; add libsecret/file-based credential-provider interfaces and protocol-specific timeout guidance.
