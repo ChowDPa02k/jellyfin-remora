@@ -1,0 +1,18 @@
+FROM docker.io/library/ubuntu:24.04
+
+ENV container=podman
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        adduser ca-certificates curl dbus e2fsprogs ffmpeg iproute2 libfontconfig1 \
+        libicu74 libjemalloc2 mount procps python3 systemd systemd-sysv \
+        util-linux \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && systemctl mask \
+        console-getty.service getty@.service systemd-logind.service \
+        systemd-remount-fs.service
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
