@@ -23,6 +23,8 @@ func preparePlatformTemplate(template []byte, requestedVolume, requestedDataRoot
 	return template, nil
 }
 
+func preparePlatformInitProbePath(*config.Config, int, bool) (bool, error) { return false, nil }
+
 func preparePlatformInitDirectories(cfg *config.Config, _ map[int]bool) error {
 	if len(cfg.Disks) == 0 {
 		return nil

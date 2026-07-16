@@ -19,6 +19,34 @@ import (
 
 var discoverWindowsVolumes = platform.DiscoverVolumes
 
+func preparePlatformInitProbePath(cfg *config.Config, index int, allowDeviceMismatch bool) (bool, error) {
+	if index < 0 || index >= len(cfg.Disks) {
+		return false, fmt.Errorf("disk index %d is out of range", index)
+	}
+	disk := cfg.Disks[index]
+	if disk.Type != "physical" || disk.ProbePath == "" {
+		return false, nil
+	}
+	if info, err := os.Stat(disk.ProbePath); err == nil {
+		if !info.IsDir() {
+			return false, fmt.Errorf("probe path is not a directory: %s", disk.ProbePath)
+		}
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := verifyWindowsStorageBoundary(disk.ProbePath, disk, allowDeviceMismatch); err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(disk.ProbePath, 0o750); err != nil {
+		return false, fmt.Errorf("create probe path %s: %w", disk.ProbePath, err)
+	}
+	if err := verifyWindowsStorageBoundary(disk.ProbePath, disk, allowDeviceMismatch); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func preparePlatformInitDirectories(cfg *config.Config, acceptedMismatches map[int]bool) error {
 	if len(cfg.Disks) == 0 {
 		return nil

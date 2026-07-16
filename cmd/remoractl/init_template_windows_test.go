@@ -14,6 +14,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestPrepareWindowsPhysicalProbePathAfterIdentityCheck(t *testing.T) {
+	target := t.TempDir()
+	guid, err := platform.VolumeGUIDForPath(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probePath := filepath.Join(target, "new-data-root")
+	cfg := &config.Config{Disks: []config.DiskConfig{{
+		Type: "physical", Target: target, ProbePath: probePath, VolumeGUID: guid,
+	}}}
+	prepared, err := preparePlatformInitProbePath(cfg, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !prepared {
+		t.Fatal("probe path was not prepared")
+	}
+	if info, err := os.Stat(probePath); err != nil || !info.IsDir() {
+		t.Fatalf("prepared probe path: info=%v err=%v", info, err)
+	}
+}
+
 func TestPrepareWindowsTemplateFromDriveLetter(t *testing.T) {
 	oldDiscover := discoverWindowsVolumes
 	discoverWindowsVolumes = func() ([]platform.VolumeInfo, error) {

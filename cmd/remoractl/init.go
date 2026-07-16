@@ -192,7 +192,23 @@ func validateInitStorage(cfg *config.Config, remoraExecutable string) (map[int]b
 
 		result := inspected
 		if !inspected.Healthy || allowMismatch {
+			if inspected.Mounted && !mountSourceMismatch(inspected) {
+				if _, err := preparePlatformInitProbePath(cfg, index, allowMismatch); err != nil {
+					cancel()
+					return nil, fmt.Errorf("prepare storage[%d] probe path: %w", index, err)
+				}
+			}
 			result = checker.CheckDiskForInit(ctx, index, allowMismatch)
+			if result.Fatal && result.Mounted && !mountSourceMismatch(result) {
+				prepared, err := preparePlatformInitProbePath(cfg, index, allowMismatch)
+				if err != nil {
+					cancel()
+					return nil, fmt.Errorf("prepare storage[%d] probe path: %w", index, err)
+				}
+				if prepared {
+					result = checker.CheckDiskForInit(ctx, index, allowMismatch)
+				}
+			}
 		}
 		if mountSourceMismatch(result) && !allowMismatch {
 			allowMismatch, err = confirmMountSourceMismatch(index, disk, result)
@@ -205,6 +221,12 @@ func validateInitStorage(cfg *config.Config, remoraExecutable string) (map[int]b
 				return nil, fmt.Errorf("storage[%d] mount source mismatch was not accepted", index)
 			}
 			acceptedMismatches[index] = true
+			if result.Mounted {
+				if _, err := preparePlatformInitProbePath(cfg, index, true); err != nil {
+					cancel()
+					return nil, fmt.Errorf("prepare storage[%d] probe path: %w", index, err)
+				}
+			}
 			result = checker.CheckDiskForInit(ctx, index, true)
 		}
 		cancel()
