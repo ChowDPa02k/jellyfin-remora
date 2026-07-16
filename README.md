@@ -92,6 +92,16 @@ SysVinit is not supported.
 When Remora runs as root, `jellyfin.run-as-user` is mandatory and Jellyfin is
 started with that account.
 
+For a zero-knowledge deployment, run `remoractl kickstart` instead. Its Bubble
+Tea wizard detects native Jellyfin installations or validates a Generic
+`.tar.gz`, `.tar.xz`, or `.zip`, creates a complete Jellyfin home, infers the
+physical/SMB/NFS mounts containing all entered paths, offers real Jellyfin Web
+language and region selections, and deploys the native service. Privileged
+Linux Kickstart installs both Remora binaries atomically under `/usr/local/bin`
+so systemd and SELinux receive a stable executable path. See
+[`docs/kickstart.md`](docs/kickstart.md) for the workflow, generated defaults,
+automation format, and real-platform validation matrix.
+
 For a new Jellyfin data directory, configure `init.user` and `init.password`. Remora completes the setup wizard, handles the macOS package's OS-account bootstrap user on Jellyfin 10.11 and 12, renames it to the configured administrator, creates a `Jellyfin Remora` API key with mode `0600`, creates the optional login-watchdog user, and performs a controlled restart. Existing initialized servers are not sent through the setup wizard.
 
 Configuration fields backed by a Jellyfin Web selection use the exact visible
@@ -219,7 +229,7 @@ ad-hoc signing after its checksum has been verified:
 
 ```sh
 xattr -dr com.apple.quarantine /absolute/path/to/jellyfin-10.10.7
-codesign --force --sign - /absolute/path/to/jellyfin-10.10.7/jellyfin
+codesign --force --deep --sign - /absolute/path/to/jellyfin-10.10.7/jellyfin
 ```
 
 On Darwin, `validate-config` reports this attribute and the daemon emits a WARN

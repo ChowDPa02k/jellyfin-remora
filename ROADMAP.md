@@ -337,6 +337,16 @@ fencing, and hung-process recovery. SMB/NFS disconnect and host-reboot gates
 remain the physical Debian/Rocky amd64 evidence; the exit gate does not require
 repeating every architecture-independent transition on every architecture.
 
+`v0.8.0-alpha.9` adds the Bubble Tea `remoractl kickstart` zero-knowledge
+deployment path. It detects native or Generic Jellyfin installations, validates
+archive OS/architecture and extraction safety, infers physical/SMB/NFS storage,
+creates a complete Jellyfin home, offers embedded real-API localization labels,
+emits a minimal configuration, and installs the native service idempotently.
+The gate passed with Jellyfin 12.0.0 and Generic 10.10.7 on macOS arm64,
+RPM 10.11.11 on SELinux-enforcing Rocky Linux 10, and DEB 10.11.11 with live
+NFS+CIFS mounts on Debian 13. Linux native test binaries were also executed on
+Debian, including the Linux-only systemd/storage/process code paths.
+
 - Implement the Linux platform backend using `/proc`, pidfd where available, process groups, child-subreeper behavior, mountinfo/statfs, and cgroup awareness without imposing CPU/GPU limits.
 - Support physical filesystems, `mount.cifs`, and NFS; add libsecret/file-based credential-provider interfaces and protocol-specific timeout guidance.
 - Provide systemd units with correct foreground behavior, runtime/state directories, privilege separation, restart limits, shutdown ordering, and network/mount dependencies.
