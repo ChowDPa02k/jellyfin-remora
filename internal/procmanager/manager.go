@@ -164,6 +164,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	done := m.waitDone
 	go func() {
 		err := cmd.Wait()
+		if cleaner, ok := m.backend.(interface{ ProcessExited(int) }); ok {
+			cleaner.ProcessExited(pid)
+		}
 		err = errors.Join(err, console.finish())
 		done <- err
 		close(done)

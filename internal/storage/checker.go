@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -27,7 +28,17 @@ type Checker struct {
 	failureMu        sync.Mutex
 	failureCounts    []int
 	confirmedHealthy []bool
+	mountMu          sync.RWMutex
+	recoveryMounts   bool
+	probeMu          sync.Mutex
+	pendingProbes    map[string]*pendingProbe
 	probeOverride    func(context.Context, string, string) error
+}
+
+type pendingProbe struct {
+	done   chan struct{}
+	err    error
+	output []byte
 }
 
 func New(cfg *config.Config, backend platform.Backend) (*Checker, error) {
@@ -35,14 +46,19 @@ func New(cfg *config.Config, backend platform.Backend) (*Checker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewWithExecutable(cfg, backend, exe)
+	checker, err := NewWithExecutable(cfg, backend, exe)
+	if err != nil {
+		return nil, err
+	}
+	checker.useJellyfinIdentity()
+	return checker, nil
 }
 
 func NewWithExecutable(cfg *config.Config, backend platform.Backend, executable string) (*Checker, error) {
 	if executable == "" {
 		return nil, errors.New("storage probe executable is required")
 	}
-	return &Checker{cfg: cfg, backend: backend, executable: executable, failureCounts: make([]int, len(cfg.Disks)), confirmedHealthy: make([]bool, len(cfg.Disks))}, nil
+	return &Checker{cfg: cfg, backend: backend, executable: executable, failureCounts: make([]int, len(cfg.Disks)), confirmedHealthy: make([]bool, len(cfg.Disks)), recoveryMounts: true, pendingProbes: make(map[string]*pendingProbe)}, nil
 }
 
 // NewForInit validates storage using the configured Jellyfin identity. Mount
@@ -52,11 +68,15 @@ func NewForInit(cfg *config.Config, backend platform.Backend, executable string)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Jellyfin.RunAsUser != "" {
-		checker.probeUsername = cfg.Jellyfin.RunAsUser
-		checker.probeGroup = cfg.Jellyfin.RunAsGroup
-	}
+	checker.useJellyfinIdentity()
 	return checker, nil
+}
+
+func (c *Checker) useJellyfinIdentity() {
+	if c.cfg.Jellyfin.RunAsUser != "" {
+		c.probeUsername = c.cfg.Jellyfin.RunAsUser
+		c.probeGroup = c.cfg.Jellyfin.RunAsGroup
+	}
 }
 
 func (c *Checker) CheckAll(ctx context.Context) []model.StorageResult {
@@ -72,7 +92,19 @@ func (c *Checker) CheckDisk(ctx context.Context, index int) model.StorageResult 
 		return model.StorageResult{Index: index, Fatal: true, Message: "disk index out of range", CheckedAt: time.Now()}
 	}
 	disk := c.cfg.Disks[index]
-	return c.applyFailureThreshold(index, disk, c.checkRaw(ctx, index, disk, true, false))
+	c.mountMu.RLock()
+	allowMount := c.recoveryMounts
+	c.mountMu.RUnlock()
+	return c.applyFailureThreshold(index, disk, c.checkRaw(ctx, index, disk, allowMount, false))
+}
+
+// SetMountRecoveryAllowed separates safe startup/fenced recovery from runtime
+// monitoring. A live Jellyfin must be stopped before Remora mounts a replacement
+// filesystem at a path whose previous mount disappeared.
+func (c *Checker) SetMountRecoveryAllowed(allowed bool) {
+	c.mountMu.Lock()
+	c.recoveryMounts = allowed
+	c.mountMu.Unlock()
 }
 
 func (c *Checker) InspectDisk(ctx context.Context, index int) model.StorageResult {
@@ -153,7 +185,13 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 		r.Message = err.Error()
 		return r
 	}
-	if !sourceMatches(mi, disk.Type, expected) && !(disk.Type == "smb" && smbSourcesEquivalent(ctx, mi.Source, expected)) {
+	sourceEquivalent := sourceMatches(mi, disk.Type, expected)
+	if !sourceEquivalent && disk.Type == "smb" {
+		lookupCtx, cancel := context.WithTimeout(ctx, c.cfg.Remora.IOTimeout.Duration)
+		sourceEquivalent = smbSourcesEquivalent(lookupCtx, mi.Source, expected)
+		cancel()
+	}
+	if !sourceEquivalent {
 		r.Message = fmt.Sprintf("mount source mismatch: got %s", mi.Source)
 		if !allowSourceMismatch {
 			r.Fatal = true
@@ -215,23 +253,71 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.Remora.IOTimeout.Duration)
 	defer cancel()
-	cmd := exec.CommandContext(probeCtx, c.executable, "internal-probe", "--path", path, "--permission", permission)
+	cmd := exec.Command(c.executable, "internal-probe", "--path", path, "--permission", permission)
 	if c.probeUsername != "" {
 		if err := c.backend.ConfigureProcess(cmd, c.probeUsername, c.probeGroup); err != nil {
 			return fmt.Errorf("configure storage probe identity: %w", err)
 		}
 	}
-	b, err := cmd.CombinedOutput()
-	if err == nil {
-		return nil
+	key := c.probeUsername + "\x00" + c.probeGroup + "\x00" + permission + "\x00" + path
+	c.probeMu.Lock()
+	if c.pendingProbes == nil {
+		c.pendingProbes = make(map[string]*pendingProbe)
 	}
-	if probeCtx.Err() != nil {
+	if previous := c.pendingProbes[key]; previous != nil {
+		select {
+		case <-previous.done:
+			delete(c.pendingProbes, key)
+		default:
+			c.probeMu.Unlock()
+			return errors.New("previous storage I/O probe remains blocked")
+		}
+	}
+	probeArgs := []string{"internal-probe", "--path", path, "--permission", permission}
+	if c.backend != nil {
+		if processes, err := c.backend.FindProcesses(probeCtx, c.executable, probeArgs); err == nil && len(processes) > 0 {
+			c.probeMu.Unlock()
+			return errors.New("previous storage I/O probe remains blocked")
+		}
+	}
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		c.probeMu.Unlock()
+		return err
+	}
+	pending := &pendingProbe{done: make(chan struct{})}
+	c.pendingProbes[key] = pending
+	c.probeMu.Unlock()
+	go func() {
+		pending.err = cmd.Wait()
+		pending.output = append([]byte(nil), output.Bytes()...)
+		close(pending.done)
+	}()
+
+	select {
+	case <-pending.done:
+		c.probeMu.Lock()
+		if c.pendingProbes[key] == pending {
+			delete(c.pendingProbes, key)
+		}
+		c.probeMu.Unlock()
+		if pending.err == nil {
+			return nil
+		}
+		if message := strings.TrimSpace(string(pending.output)); message != "" {
+			return errors.New(strings.TrimPrefix(message, "jellyfin-remora: "))
+		}
+		return pending.err
+	case <-probeCtx.Done():
+		if c.backend == nil {
+			_ = cmd.Process.Kill()
+		} else if err := c.backend.SignalGroup(cmd.Process.Pid, true); err != nil {
+			_ = cmd.Process.Kill()
+		}
 		return errors.New("storage I/O probe timed out")
 	}
-	if message := strings.TrimSpace(string(b)); message != "" {
-		return errors.New(strings.TrimPrefix(message, "jellyfin-remora: "))
-	}
-	return err
 }
 
 func (c *Checker) expectedSource(ctx context.Context, disk config.DiskConfig) (string, error) {
@@ -264,12 +350,41 @@ func sourceMatches(mi platform.MountInfo, typ, expected string) bool {
 		}
 		source, _ = url.PathUnescape(source)
 		expected, _ = url.PathUnescape(expected)
-		return strings.EqualFold(source, expected) && (mi.FSType == "smbfs" || mi.FSType == "smb")
+		return strings.EqualFold(source, expected) && (mi.FSType == "smbfs" || mi.FSType == "smb" || mi.FSType == "cifs")
 	}
 	if typ == "nfs" {
-		return source == expected && strings.HasPrefix(mi.FSType, "nfs")
+		actualHost, actualExport, actualOK := splitNFSSource(source)
+		expectedHost, expectedExport, expectedOK := splitNFSSource(expected)
+		return actualOK && expectedOK && strings.EqualFold(actualHost, expectedHost) && actualExport == expectedExport && strings.HasPrefix(mi.FSType, "nfs")
 	}
 	return source == expected
+}
+
+func splitNFSSource(source string) (string, string, bool) {
+	source = strings.TrimPrefix(strings.TrimSpace(source), "//")
+	if strings.HasPrefix(source, "[") {
+		end := strings.IndexByte(source, ']')
+		if end <= 1 || end+1 >= len(source) {
+			return "", "", false
+		}
+		rest := source[end+1:]
+		if strings.HasPrefix(rest, ":") {
+			rest = strings.TrimPrefix(rest, ":")
+		}
+		if !strings.HasPrefix(rest, "/") {
+			return "", "", false
+		}
+		return source[1:end], rest, true
+	}
+	// The kernel's mount table may omit brackets around an IPv6 literal. The
+	// final :/ boundary remains unambiguous because NFS exports are absolute.
+	if separator := strings.LastIndex(source, ":/"); separator > 0 {
+		return source[:separator], source[separator+1:], true
+	}
+	if separator := strings.IndexByte(source, '/'); separator > 0 {
+		return source[:separator], source[separator:], true
+	}
+	return "", "", false
 }
 
 func smbSourcesEquivalent(ctx context.Context, actual, expected string) bool {
@@ -320,6 +435,7 @@ func splitSMBSource(source string) (string, string, bool) {
 }
 
 func normalizeSMBHostForLookup(host string) string {
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 	const marker = "._smb._tcp."
 	if i := strings.Index(strings.ToLower(host), marker); i >= 0 {
 		return host[:i] + "." + host[i+len(marker):]
@@ -340,12 +456,9 @@ func (c *Checker) reachable(ctx context.Context, disk config.DiskConfig) bool {
 	if disk.Type == "physical" {
 		return true
 	}
-	host := strings.TrimPrefix(disk.Device, "//")
-	if at := strings.LastIndexByte(host, '@'); at >= 0 {
-		host = host[at+1:]
-	}
-	if i := strings.IndexAny(host, "/:"); i >= 0 {
-		host = host[:i]
+	host, ok := networkStorageHost(disk)
+	if !ok {
+		return false
 	}
 	port := 445
 	if disk.Type == "nfs" {
@@ -358,6 +471,30 @@ func (c *Checker) reachable(ctx context.Context, disk config.DiskConfig) bool {
 	}
 	conn.Close()
 	return true
+}
+
+func networkStorageHost(disk config.DiskConfig) (string, bool) {
+	source := strings.TrimPrefix(strings.TrimSpace(disk.Device), "//")
+	if at := strings.LastIndexByte(source, '@'); at >= 0 {
+		source = source[at+1:]
+	}
+	if strings.HasPrefix(source, "[") {
+		end := strings.IndexByte(source, ']')
+		if end <= 1 {
+			return "", false
+		}
+		return source[1:end], true
+	}
+	separator := strings.IndexByte(source, '/')
+	if disk.Type == "nfs" {
+		if colon := strings.IndexByte(source, ':'); colon >= 0 && (separator < 0 || colon < separator) {
+			separator = colon
+		}
+	}
+	if separator >= 0 {
+		source = source[:separator]
+	}
+	return source, source != ""
 }
 
 func redactDevice(d config.DiskConfig) string {

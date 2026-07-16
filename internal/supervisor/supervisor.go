@@ -119,6 +119,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		s.log.Info("adopted existing Jellyfin process", "pid", s.process.PID())
 		_ = s.process.WritePIDFile()
 	}
+	s.setMountRecoveryAllowed(!adopted)
 	s.runStorageChecks(ctx, true)
 	s.reconcile(ctx)
 	ticker := time.NewTicker(s.cfg.Remora.HeartbeatInterval.Duration)
@@ -272,6 +273,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.scheduleRestart()
 	}
 	if !running {
+		s.setMountRecoveryAllowed(true)
 		s.hungSince = time.Time{}
 		s.applicationReady = false
 		s.mu.Lock()
@@ -294,6 +296,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		} else {
 			s.transition(model.StateStopped, "")
 		}
+		s.setMountRecoveryAllowed(true)
 		s.clearOneShots()
 		_ = s.persist()
 		return
@@ -304,6 +307,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		if running {
 			_ = s.stop(ctx, false)
 		}
+		s.setMountRecoveryAllowed(true)
 		s.transition(model.StateStorageFenced, "required storage is unhealthy")
 		s.clearOneShots()
 		_ = s.persist()
@@ -391,6 +395,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.transition(model.StateRestartBackoff, err.Error())
 		} else {
 			s.wasRunning = true
+			s.setMountRecoveryAllowed(false)
 			s.apiFailures = 0
 			s.applicationReady = false
 			s.mu.Lock()
@@ -589,6 +594,12 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	}
 	s.clearOneShots()
 	_ = s.persist()
+}
+
+func (s *Supervisor) setMountRecoveryAllowed(allowed bool) {
+	if controller, ok := s.storage.(interface{ SetMountRecoveryAllowed(bool) }); ok {
+		controller.SetMountRecoveryAllowed(allowed)
+	}
 }
 
 func (s *Supervisor) initializeServer(ctx context.Context) error {

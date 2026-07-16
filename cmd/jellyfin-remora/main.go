@@ -86,6 +86,11 @@ func runDaemon(ctx context.Context, activeConfigPath string) error {
 		logger.Warn("configuration security warning", "warning", warning)
 	}
 	backend := platform.New()
+	if preparer, ok := backend.(interface{ PrepareSupervisor() error }); ok {
+		if err := preparer.PrepareSupervisor(); err != nil {
+			return fmt.Errorf("prepare platform supervisor: %w", err)
+		}
+	}
 	jellyfinLogPath := safeJellyfinLogPath(cfg)
 	jellyfinLog, err := logging.New(jellyfinLogPath, cfg.Remora.Logs.RotationSizeMB*1024*1024, cfg.Remora.Logs.RotationTime.Duration, cfg.Remora.Logs.PreserveTime.Duration)
 	if err != nil {
