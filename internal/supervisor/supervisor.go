@@ -577,7 +577,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.crashes = nil
 	} else if readiness.Healthy {
 		s.transition(model.StateStarting, health.Error)
-	} else if age < s.cfg.Remora.ServerStartTimeout.Duration {
+	} else if !s.applicationReady && age < s.cfg.Remora.ServerStartTimeout.Duration {
 		s.transition(model.StateStarting, health.Error)
 	} else if s.apiFailures >= s.cfg.Remora.APIFailureThreshold {
 		if err := s.stop(ctx, false); err != nil {

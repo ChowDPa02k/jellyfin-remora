@@ -167,6 +167,44 @@ func TestTransientPublicInfoFailureDoesNotRestartReadyServer(t *testing.T) {
 	}
 }
 
+func TestReadyServerHealthFailureIgnoresRemainingStartupGrace(t *testing.T) {
+	var healthy atomic.Bool
+	healthy.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			if !healthy.Load() {
+				http.Error(w, "stalled", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			complete := true
+			_ = json.NewEncoder(w).Encode(jellyfin.PublicInfo{StartupWizardCompleted: &complete})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	process := &stateProcess{running: true, started: time.Now()}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.cfg.Remora.ServerStartTimeout = config.Duration{Duration: time.Minute}
+	s.cfg.Remora.HealthAPIHeartbeat = 1
+	s.cfg.Remora.APIFailureThreshold = 1
+	s.reconcile(context.Background())
+	if !s.applicationReady || s.Status().State != model.StateRunning {
+		t.Fatalf("initial readiness=%t state=%s", s.applicationReady, s.Status().State)
+	}
+
+	healthy.Store(false)
+	s.reconcile(context.Background())
+	if process.running || process.stopCalls != 1 || s.Status().State != model.StateRestartBackoff {
+		t.Fatalf("running=%t stopCalls=%d state=%s", process.running, process.stopCalls, s.Status().State)
+	}
+}
+
 func (p *stateProcess) Executable() string  { return "/fake/jellyfin" }
 func (p *stateProcess) Arguments() []string { return nil }
 func (p *stateProcess) PID() int {
