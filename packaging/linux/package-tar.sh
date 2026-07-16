@@ -58,7 +58,11 @@ stamp=$(date -u -r "$epoch" +%Y%m%d%H%M.%S 2>/dev/null || date -u -d "@$epoch" +
 find "$stage" -exec touch -h -t "$stamp" {} +
 archive="$output/$base.tar.gz"
 temporary="$work/$base.tar"
-COPYFILE_DISABLE=1 tar --format ustar --uid 0 --gid 0 --numeric-owner -cf "$temporary" -C "$work" "$base"
+if tar --version 2>/dev/null | head -1 | grep -qi bsdtar; then
+	COPYFILE_DISABLE=1 tar --format ustar --uid 0 --gid 0 --numeric-owner -cf "$temporary" -C "$work" "$base"
+else
+	tar --format=ustar --owner=0 --group=0 --numeric-owner -cf "$temporary" -C "$work" "$base"
+fi
 gzip -n -9 < "$temporary" > "$archive"
 hash=$(shasum -a 256 "$archive" 2>/dev/null | awk '{print $1}' || sha256sum "$archive" | awk '{print $1}')
 printf '%s  %s\n' "$hash" "$(basename "$archive")" > "$output/$base.sha256"
