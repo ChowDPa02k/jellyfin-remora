@@ -10,7 +10,7 @@ import (
 )
 
 func validLinuxConfig() Config {
-	return Config{
+	cfg := Config{
 		ConfigVersion: CurrentVersion,
 		RESTAPI:       RESTAPIConfig{Listen: "127.0.0.1", Port: 8095},
 		Remora: RemoraConfig{
@@ -21,6 +21,8 @@ func validLinuxConfig() Config {
 		},
 		Jellyfin: JellyfinConfig{Path: "/bin/true", RunAsUser: "nobody", DataDir: "/srv/jf/data", ConfigDir: "/srv/jf/config", CacheDir: "/srv/jf/cache", LogDir: "/srv/jf/log"},
 	}
+	cfg.defaults()
+	return cfg
 }
 
 func TestLinuxSampleConfigurationLoads(t *testing.T) {
