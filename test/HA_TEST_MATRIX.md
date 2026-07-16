@@ -9,7 +9,7 @@ temporary permission, credential, and mount change.
 
 The automated suite's HA-specific coverage includes:
 
-- Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, single-sample health accounting, transient startup-wizard rejection, bounded first-start initialization retries, five-failure setup/process circuit breakers, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, and `D`/`U` process timeout handling.
+- Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, single-sample health accounting, transient startup-wizard rejection, bounded first-start initialization retries, five-failure setup/process circuit breakers, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, `D`/`U` process timeout handling, and durable `DATABASE_DAMAGED` fencing after console-plus-API confirmation.
 - Exact-process adoption, original adopted-process uptime, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, kernel argv-boundary identity (including paths with spaces), and macOS environment preservation.
 - Required mount-source matching for physical, SMB, NFS, Unicode/escaped SMB shares, isolated timed I/O probes, read-only probes, missing paths, secret redaction, Darwin's media-oriented `vers=3,resvport,nolocks,rsize=65536,wsize=65536,intr,soft` default with explicit-policy/NFSv4 preservation, and consecutive per-disk failure thresholds that reset after recovery while preserving fail-closed startup.
 - macOS mount-target recreation after Disk Arbitration removes `/Volumes/<share>`, including unsafe-path and symlink rejection.
@@ -91,6 +91,9 @@ sudo ./test/linux_real_network_fence.sh /path/to/network/mount SERVER-IP TCP-POR
 sudo ./test/linux_real_permission_fence.sh /path/to/jellyfin/config
 sudo ./test/linux_real_filesystem_faults.sh /path/to/disposable/physical/mount
 sudo ./test/linux_real_process_hang.sh
+sudo REMORA_TEST_DATABASE=/path/on/nfs/jellyfin.db \
+  REMORA_DATABASE_DAMAGE_CONFIRM=YES-DESTROY-DISPOSABLE-DATABASE \
+  ./test/linux_real_database_damage.sh
 ```
 
 The first test proves Remora-only crash adoption and normal full-tree service
@@ -108,6 +111,42 @@ read-only case uses a self-bind view so it remains reproducible even when the
 kernel refuses to remount a live database filesystem read-only with `EBUSY`.
 The process-hang test sends `SIGSTOP`, requiring the API watchdog and bounded
 stop escalation to kill the unresponsive tree before starting one replacement.
+The database-damage harness refuses non-NFS paths and requires an explicit
+destructive confirmation. It snapshots the database only while Jellyfin is
+stopped and, when a fresh database could fit entirely in SQLite's page cache,
+adds valid disposable activity rows after the snapshot. It then destroys the
+live disposable copy, requires durable
+`DATABASE_DAMAGED` fencing across a Remora service restart, restores the
+snapshot, and verifies explicit-start recovery. Restoration removes every
+pressure row.
+
+## Real database-damage fault run
+
+A disposable Jellyfin 12.0.0 instance on macOS arm64 was initialized beneath
+`/Users/zhoudingpeng/Appdata/jellyfin/db-damage-uat` on 2026-07-16. After a
+clean stopped backup, an external test writer destroyed every page of the live
+`jellyfin.db` while PID 88103 remained running. Jellyfin's `/health` continued
+to return 200, while authenticated Users, Items, and ActivityLog reads all
+returned 500 and the managed console emitted `SQLite Error 11: database disk
+image is malformed`.
+
+Remora stopped the old PID, entered `DATABASE_DAMAGED`, wrote fourth-line state
+value 1, and retained the fence after the Remora daemon was restarted. A
+`remoractl restart` attempt returned conflict exit 4. Restoring the stopped
+backup and removing its obsolete WAL/SHM sidecars followed by explicit
+`remoractl start` produced one healthy replacement PID 92815 and fourth-line
+state value 0. All disposable data and configuration were then removed. This
+run also proves `/health` alone is insufficient for this failure class; the
+periodic read-only database-backed probes are required.
+
+The NFS/no-lock repeat passed on 2026-07-16 with Jellyfin 10.11.11 running on
+Debian 13 and its 70.8 MB disposable database stored in Rocky Linux 10.1's
+`192.168.1.109:/data` export over NFSv3 `nolock,soft`. Remora stopped managed
+PID 1164263, rejected `restart`, retained `DATABASE_DAMAGED` across a dedicated
+systemd service restart, then restored the stopped snapshot and reached
+`RUNNING` with replacement PID 1164913 only after explicit `start`. The
+existing Debian UAT Remora/Jellyfin instance remained online on separate ports
+throughout the run.
 
 ## Real native Linux amd64 compatibility and fault runs
 
