@@ -97,20 +97,34 @@ func TestCheckPathsUsesIsolatedProbeProcess(t *testing.T) {
 		executableName += ".exe"
 	}
 	exe := filepath.Join(d, executableName)
-	cmd := exec.Command("go", "build", "-o", exe, "../../cmd/jellyfin-remora")
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build remora: %v: %s", err, b)
+	if prepared := os.Getenv("JELLYFIN_REMORA_TEST_BINARY"); prepared != "" {
+		data, err := os.ReadFile(prepared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(exe, data, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		cmd := exec.Command("go", "build", "-o", exe, "../../cmd/jellyfin-remora")
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("build remora: %v: %s", err, b)
+		}
 	}
 	missing := filepath.Join(d, "missing")
+	transcode := filepath.Join(d, "transcode")
+	if err := os.Mkdir(transcode, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	// Starting the helper can take noticeably longer under the race detector on
 	// loaded CI runners. Keep this test focused on process isolation rather than
 	// making it depend on a one-second process startup deadline.
-	c := &Checker{cfg: &config.Config{Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: 5 * time.Second}}, Jellyfin: config.JellyfinConfig{DataDir: d, ConfigDir: d, CacheDir: d, LogDir: missing}}, executable: exe}
+	c := &Checker{cfg: &config.Config{Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: 5 * time.Second}}, Jellyfin: config.JellyfinConfig{DataDir: d, ConfigDir: d, CacheDir: d, LogDir: missing, Playback: config.PlaybackConfig{Transcoding: config.TranscodingConfig{TranscodePath: config.Optional[string]{Set: true, Value: transcode}}}}}, executable: exe}
 	results := c.CheckPaths(context.Background())
-	if len(results) != 2 {
+	if len(results) != 3 {
 		t.Fatalf("results=%d", len(results))
 	}
-	if !results[0].Healthy || !results[1].Fatal {
+	if !results[0].Healthy || !results[1].Fatal || !results[2].Healthy {
 		t.Fatalf("results=%+v", results)
 	}
 }

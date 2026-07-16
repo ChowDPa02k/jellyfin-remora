@@ -620,6 +620,9 @@ func (s *Supervisor) initializeServer(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.client.UpdateServerName(ctx, auth.AccessToken, s.cfg.Init.ServerName); err != nil {
+		return err
+	}
 	s.setAdminToken(auth.AccessToken)
 	if err := s.ensureAPIKey(ctx); err != nil {
 		return err

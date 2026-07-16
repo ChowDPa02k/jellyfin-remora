@@ -291,6 +291,31 @@ func TestUpdateUsernamePreservesUserDocument(t *testing.T) {
 	}
 }
 
+func TestUpdateServerNamePreservesSystemConfiguration(t *testing.T) {
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Authorization"), `Token="admin-token"`) {
+			t.Errorf("missing administrator token: %q", r.Header.Get("Authorization"))
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"ServerName": "", "UICulture": "ko", "PluginRepositories": []any{"preserve"}})
+		case http.MethodPost:
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	if err := New(srv.URL, time.Second).UpdateServerName(context.Background(), "admin-token", "Remora Kickstart"); err != nil {
+		t.Fatal(err)
+	}
+	if posted["ServerName"] != "Remora Kickstart" || posted["UICulture"] != "ko" || posted["PluginRepositories"] == nil {
+		t.Fatalf("posted configuration was not preserved: %#v", posted)
+	}
+}
+
 func TestEnsureAPIKeyCreatesAndReturnsKey(t *testing.T) {
 	created := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

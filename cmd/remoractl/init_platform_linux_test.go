@@ -28,7 +28,7 @@ func TestGenerateLinuxSystemdServiceSupportsAdoptionAndOrdering(t *testing.T) {
 		"Type=simple", "KillMode=process", "Conflicts=jellyfin.service",
 		"RuntimeDirectory=jellyfin-remora", "StateDirectory=jellyfin-remora",
 		"LogsDirectory=jellyfin-remora", "Before=umount.target shutdown.target",
-		"StartLimitBurst=5", `ConditionPathExists="` + configPath + `"`,
+		"StartLimitBurst=5", `ConditionPathExists=` + strings.ReplaceAll(configPath, " ", `\x20`),
 		`ExecStart="/opt/Jellyfin Remora/jellyfin-remora" -c "` + configPath + `"`,
 	} {
 		if !strings.Contains(unit, required) {
@@ -71,7 +71,7 @@ func TestLinuxServiceInstallAndStartAreIdempotent(t *testing.T) {
 	if err := startPlatformService(artifact); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"daemon-reload"}, {"enable", linuxServiceName}, {"daemon-reload"}, {"enable", linuxServiceName}, {"restart", linuxServiceName}}
+	want := [][]string{{"daemon-reload"}, {"enable", linuxServiceName}, {"daemon-reload"}, {"enable", linuxServiceName}, {"reset-failed", linuxServiceName}, {"restart", linuxServiceName}}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("systemctl calls = %#v", calls)
 	}

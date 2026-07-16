@@ -29,7 +29,11 @@ func preparePlatformInitDirectories(cfg *config.Config, _ map[int]bool) error {
 	if len(cfg.Disks) == 0 {
 		return nil
 	}
-	for _, path := range []string{cfg.Jellyfin.DataDir, cfg.Jellyfin.ConfigDir, cfg.Jellyfin.CacheDir, cfg.Jellyfin.LogDir} {
+	paths := []string{cfg.Jellyfin.DataDir, cfg.Jellyfin.ConfigDir, cfg.Jellyfin.CacheDir, cfg.Jellyfin.LogDir}
+	if transcode := cfg.Jellyfin.Playback.Transcoding.TranscodePath; transcode.Set && !transcode.Null && transcode.Value != "" {
+		paths = append(paths, transcode.Value)
+	}
+	for _, path := range paths {
 		disk, ok := configuredStorageForPath(path, cfg.Disks)
 		if !ok {
 			return fmt.Errorf("refusing to prepare %s: it is not beneath verified configured storage", path)

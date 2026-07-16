@@ -211,6 +211,22 @@ func (c *Client) UpdateUsername(ctx context.Context, token string, user map[stri
 	return c.doWithDeviceID(ctx, http.MethodPost, "/Users?userId="+url.QueryEscape(id), token, user, nil, adminDeviceID, http.StatusNoContent)
 }
 
+// UpdateServerName persists the configured name after the startup wizard.
+// Jellyfin 10.10 accepts ServerName in /Startup/Configuration but does not
+// persist it, while newer releases do. Updating the complete system document
+// is idempotent and preserves release-specific fields on both API generations.
+func (c *Client) UpdateServerName(ctx context.Context, token, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	var system map[string]any
+	if err := c.doWithDeviceID(ctx, http.MethodGet, "/System/Configuration", token, nil, &system, adminDeviceID, http.StatusOK); err != nil {
+		return err
+	}
+	system["ServerName"] = name
+	return c.doWithDeviceID(ctx, http.MethodPost, "/System/Configuration", token, system, nil, adminDeviceID, http.StatusNoContent)
+}
+
 func (c *Client) Authenticate(ctx context.Context, user, password string) (AuthenticationResult, error) {
 	return c.authenticateWithDeviceID(ctx, user, password, adminDeviceID)
 }

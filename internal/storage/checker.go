@@ -126,6 +126,9 @@ func (c *Checker) CheckDiskForInit(ctx context.Context, index int, allowSourceMi
 
 func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
 	paths := []string{c.cfg.Jellyfin.DataDir, c.cfg.Jellyfin.ConfigDir, c.cfg.Jellyfin.CacheDir, c.cfg.Jellyfin.LogDir}
+	if transcode := c.cfg.Jellyfin.Playback.Transcoding.TranscodePath; transcode.Set && !transcode.Null && transcode.Value != "" {
+		paths = append(paths, transcode.Value)
+	}
 	seen := map[string]bool{}
 	results := make([]model.StorageResult, 0, len(paths))
 	for _, path := range paths {

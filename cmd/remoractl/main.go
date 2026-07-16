@@ -67,10 +67,13 @@ func run() error {
 	}
 	args := global.Args()
 	if len(args) == 0 {
-		return &usageError{message: "usage: remoractl [--host URL | --socket PATH] [--json] <init|start|stop|restart|status|events|logs|edit-config|apikey|session|diagnose|healthcheck>"}
+		return &usageError{message: "usage: remoractl [--host URL | --socket PATH] [--json] <init|kickstart|start|stop|restart|status|events|logs|edit-config|apikey|session|diagnose|healthcheck>"}
 	}
 	if args[0] == "init" {
 		return runInit(args[1:])
+	}
+	if args[0] == "kickstart" {
+		return runKickstart(args[1:])
 	}
 	client, base, err := newClient(*host, socket)
 	if err != nil {

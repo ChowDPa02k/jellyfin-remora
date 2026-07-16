@@ -29,7 +29,7 @@ func generatePlatformService(_ *config.Config, executable, configPath string) (*
 	unit := `[Unit]
 Description=Jellyfin Remora
 Documentation=https://github.com/ChowDPa02K/jellyfin-remora
-ConditionPathExists=` + systemdQuote(configPath) + `
+ConditionPathExists=` + systemdPathValue(configPath) + `
 After=network-online.target local-fs.target remote-fs.target jellyfin.service
 Wants=network-online.target remote-fs.target
 Conflicts=jellyfin.service
@@ -86,6 +86,9 @@ func installPlatformService(artifact *serviceArtifact) error {
 }
 
 func startPlatformService(*serviceArtifact) error {
+	if err := runLinuxSystemd("reset-failed", linuxServiceName); err != nil {
+		return err
+	}
 	return runLinuxSystemd("restart", linuxServiceName)
 }
 
@@ -113,6 +116,11 @@ func runSystemctl(args ...string) error {
 
 func systemdQuote(value string) string {
 	return strconv.Quote(strings.ReplaceAll(value, "%", "%%"))
+}
+
+func systemdPathValue(value string) string {
+	replacer := strings.NewReplacer(`\`, `\x5c`, " ", `\x20`, "\t", `\x09`, "%", "%%")
+	return replacer.Replace(value)
 }
 
 func shellQuote(value string) string {
