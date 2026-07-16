@@ -8,11 +8,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"github.com/Microsoft/go-winio"
 )
 
 func defaultLocalControlEndpoint() string {
-	return `\\.\pipe\jellyfin-remora`
+	return contract.WindowsNamedPipe
 }
 
 func newLocalClient(endpoint string) (*http.Client, string, error) {

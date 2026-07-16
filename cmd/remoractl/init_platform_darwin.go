@@ -10,10 +10,11 @@ import (
 	"strings"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"howett.net/plist"
 )
 
-const darwinServiceLabel = "io.github.chowdpa02k.jellyfin-remora"
+const darwinServiceLabel = contract.DarwinServiceLabel
 
 var (
 	darwinLaunchDaemonDirectory = "/Library/LaunchDaemons"
@@ -32,8 +33,8 @@ func generatePlatformService(_ *config.Config, executable, configPath string) (*
 		"KeepAlive":         true,
 		"ThrottleInterval":  10,
 		"ProcessType":       "Background",
-		"StandardOutPath":   "/var/log/jellyfin-remora.launchd.log",
-		"StandardErrorPath": "/var/log/jellyfin-remora.launchd.err",
+		"StandardOutPath":   contract.DarwinStdoutPath,
+		"StandardErrorPath": contract.DarwinStderrPath,
 	}
 	data, err := plist.MarshalIndent(payload, plist.XMLFormat, "  ")
 	if err != nil {

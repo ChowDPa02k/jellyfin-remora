@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfinconfig"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
@@ -97,13 +98,13 @@ type Supervisor struct {
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
 	now := time.Now()
 	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32)}
-	if b, err := os.ReadFile(filepath.Join(cfg.Remora.DataDir, ".remora_api_key")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(cfg.Remora.DataDir, contract.APIKeyFileName)); err == nil {
 		s.apiKey = strings.TrimSpace(string(b))
 	}
 	uid, username := runtimeIdentity(cfg.Jellyfin.RunAsUser)
 	s.status = model.Status{State: model.StateInit, DesiredState: model.DesiredRunning, UID: uid, Username: username, Executable: pm.Executable(), Arguments: pm.Arguments(), LastTransition: now}
 	s.recordEventLocked(model.Event{Timestamp: now, Type: "state_transition", State: model.StateInit})
-	if manualStop(filepath.Join(runtimeStateDir(cfg), "jellyfin.state")) || manualStop(filepath.Join(cfg.Remora.DataDir, "jellyfin.state")) {
+	if manualStop(filepath.Join(runtimeStateDir(cfg), contract.StateFileName)) || manualStop(filepath.Join(cfg.Remora.DataDir, contract.StateFileName)) {
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
 	}
@@ -643,7 +644,7 @@ func (s *Supervisor) ensureAPIKey(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := atomicWrite(filepath.Join(s.cfg.Remora.DataDir, ".remora_api_key"), []byte(key+"\n"), 0600); err != nil {
+	if err := atomicWrite(filepath.Join(s.cfg.Remora.DataDir, contract.APIKeyFileName), []byte(key+"\n"), 0600); err != nil {
 		return err
 	}
 	s.setAPIKey(key)
@@ -1007,6 +1008,17 @@ func (s *Supervisor) statusCopyUpdate(fn func(*model.Status)) {
 
 func (s *Supervisor) persist() error {
 	st := s.Status()
+	data, damage := encodeState(st)
+	if err := atomicWrite(filepath.Join(runtimeStateDir(s.cfg), contract.StateFileName), data, 0640); err != nil {
+		return err
+	}
+	if damage == 1 {
+		return nil
+	}
+	return atomicWrite(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName), data, 0640)
+}
+
+func encodeState(st model.Status) ([]byte, int) {
 	health := 1
 	if st.Jellyfin.Healthy {
 		health = 0
@@ -1025,14 +1037,7 @@ func (s *Supervisor) persist() error {
 	if st.ManualStop {
 		manual = 1
 	}
-	data := []byte(fmt.Sprintf("%d\n%d\n%d\n", health, damage, manual))
-	if err := atomicWrite(filepath.Join(runtimeStateDir(s.cfg), "jellyfin.state"), data, 0640); err != nil {
-		return err
-	}
-	if damage == 1 {
-		return nil
-	}
-	return atomicWrite(filepath.Join(s.cfg.Remora.DataDir, "jellyfin.state"), data, 0640)
+	return []byte(fmt.Sprintf("%d\n%d\n%d\n", health, damage, manual)), damage
 }
 
 func runtimeStateDir(cfg *config.Config) string {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
 )
 
@@ -302,10 +303,10 @@ func (m *Manager) WritePIDFile() error {
 	if pid <= 0 {
 		return errors.New("no managed PID")
 	}
-	return atomicWrite(filepath.Join(m.cfg.Remora.DataDir, "jellyfin.pid"), []byte(strconv.Itoa(pid)+"\n"), 0640)
+	return atomicWrite(filepath.Join(m.cfg.Remora.DataDir, contract.PIDFileName), []byte(strconv.Itoa(pid)+"\n"), 0640)
 }
 func (m *Manager) RemovePIDFile() error {
-	err := os.Remove(filepath.Join(m.cfg.Remora.DataDir, "jellyfin.pid"))
+	err := os.Remove(filepath.Join(m.cfg.Remora.DataDir, contract.PIDFileName))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

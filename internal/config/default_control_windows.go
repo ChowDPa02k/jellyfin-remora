@@ -2,8 +2,10 @@
 
 package config
 
+import "github.com/ChowDPa02K/jellyfin-remora/internal/contract"
+
 func defaultPlatformControl(rest *RESTAPIConfig) {
 	if rest.NamedPipe == "" {
-		rest.NamedPipe = `\\.\pipe\jellyfin-remora`
+		rest.NamedPipe = contract.WindowsNamedPipe
 	}
 }

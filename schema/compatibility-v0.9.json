@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "baseline": "v0.9",
+  "config": {
+    "current_version": 2,
+    "accepted_versions": [0, 1, 2],
+    "future_versions": "reject",
+    "unknown_fields": "reject",
+    "migration": "in-memory-to-v2"
+  },
+  "api": {
+    "major": 1,
+    "version_header": "X-Remora-API-Version",
+    "operation_header": "X-Remora-Operation-ID",
+    "evolution": "additive",
+    "operations": [
+      {"method":"GET","path":"/v1/status","success":200},
+      {"method":"GET","path":"/v1/events","success":200},
+      {"method":"GET","path":"/v1/logs","success":200},
+      {"method":"GET","path":"/v1/config","success":200},
+      {"method":"GET","path":"/v1/diagnostics","success":200},
+      {"method":"GET","path":"/v1/apikeys","success":200},
+      {"method":"POST","path":"/v1/apikeys","success":201},
+      {"method":"DELETE","path":"/v1/apikeys/{id}","success":200},
+      {"method":"GET","path":"/v1/sessions","success":200},
+      {"method":"POST","path":"/v1/sessions/{id}/stop","success":200},
+      {"method":"POST","path":"/v1/start","success":202},
+      {"method":"POST","path":"/v1/stop","success":202},
+      {"method":"POST","path":"/v1/restart","success":202},
+      {"method":"POST","path":"/v1/healthcheck","success":200}
+    ],
+    "errors": {
+      "invalid_argument":400,
+      "operation_rejected":400,
+      "not_found":404,
+      "log_unavailable":404,
+      "config_unavailable":404,
+      "method_not_allowed":405,
+      "storage_fenced":409,
+      "follow_limit_reached":429,
+      "jellyfin_error":502
+    }
+  },
+  "cli": {
+    "exit_codes": {"success":0,"internal":1,"usage":2,"unavailable":3,"conflict":4,"timeout":5},
+    "stable_output": "json"
+  },
+  "state": {
+    "jellyfin.state": {"format":"three decimal lines: health, damage, manual-stop","mode":"0640","forward_rule":"ignore trailing lines"},
+    "jellyfin.pid": {"format":"decimal pid plus newline","mode":"0640","authority":"advisory; executable and arguments must be verified"},
+    ".remora_api_key": {"format":"opaque token plus newline","mode":"0600"}
+  },
+  "platforms": {
+    "darwin": {"architectures":["arm64"],"service":"io.github.chowdpa02k.jellyfin-remora","service_directory":"/Library/LaunchDaemons"},
+    "linux": {"architectures":["amd64","arm64"],"service":"jellyfin-remora.service","config":"/etc/jellyfin-remora/remora-config.yaml","daemon":"/usr/bin/jellyfin-remora","cli":"/usr/bin/remoractl","runtime":"/run/jellyfin-remora","state":"/var/lib/jellyfin-remora","logs":"/var/log/jellyfin-remora","socket":"/run/jellyfin-remora/remora.sock"},
+    "windows": {"architectures":["amd64"],"service":"JellyfinRemora","task":"JellyfinRemora-User","named_pipe":"\\\\.\\pipe\\jellyfin-remora"}
+  },
+  "upgrade": {
+    "preserve":["configuration","durable state","API key"],
+    "automatic_rewrite":false,
+    "rollback":"supported only while config and state remain readable by the target version"
+  }
+}

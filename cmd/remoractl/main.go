@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/buildinfo"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 )
 
@@ -281,25 +282,25 @@ func wait(c *http.Client, base, command string, initialPID int, output io.Writer
 func exitCode(err error) int {
 	var usage *usageError
 	if errors.As(err, &usage) || errors.Is(err, flag.ErrHelp) {
-		return 2
+		return contract.ExitUsage
 	}
 	if errors.Is(err, errOperationTimedOut) {
-		return 5
+		return contract.ExitTimeout
 	}
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
 		switch httpErr.StatusCode {
 		case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed:
-			return 2
+			return contract.ExitUsage
 		case http.StatusConflict:
-			return 4
+			return contract.ExitConflict
 		default:
-			return 3
+			return contract.ExitUnavailable
 		}
 	}
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
-		return 3
+		return contract.ExitUnavailable
 	}
-	return 1
+	return contract.ExitInternal
 }

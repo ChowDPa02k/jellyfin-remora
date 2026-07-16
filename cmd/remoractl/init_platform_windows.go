@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"golang.org/x/sys/windows"
 )
 
@@ -26,6 +27,8 @@ func generatePlatformService(cfg *config.Config, executable, configPath string) 
 		"{{EXE}}", quote(executable),
 		"{{CONFIG}}", quote(configPath),
 		"{{WRITABLE_PATHS}}", strings.Join(quotedPaths, ",\n  "),
+		"{{SERVICE}}", contract.WindowsServiceName,
+		"{{TASK}}", contract.WindowsTaskName,
 	).Replace(windowsInstallerScript)
 	path := filepath.Join(filepath.Dir(configPath), "install-jellyfin-remora.ps1")
 	if err := atomicWriteFile(path, []byte(script), 0o600); err != nil {
@@ -63,12 +66,12 @@ const windowsInstallerScript = `#Requires -RunAsAdministrator
 param(
   [ValidateSet('Install','Uninstall','InstallTask','StartTask','UninstallTask')]
   [string]$Action = 'Install',
-  [string]$ServiceAccount = 'NT SERVICE\JellyfinRemora',
+  [string]$ServiceAccount = 'NT SERVICE\{{SERVICE}}',
   [System.Management.Automation.PSCredential]$ServiceCredential
 )
 
 $ErrorActionPreference = 'Stop'
-$serviceName = 'JellyfinRemora'
+$serviceName = '{{SERVICE}}'
 $displayName = 'Jellyfin Remora'
 $executable = '{{EXE}}'
 $installDir = Split-Path -Parent $executable
@@ -77,7 +80,7 @@ $writablePaths = @(
   {{WRITABLE_PATHS}}
 )
 $binaryPath = '"' + $executable + '" --service -c "' + $configPath + '"'
-$taskName = 'JellyfinRemora-User'
+$taskName = '{{TASK}}'
 
 function Grant-ServiceLogonRight([string]$Account) {
   if (-not ('Remora.LsaRights' -as [type])) {
@@ -220,7 +223,7 @@ if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
 }
 
 if ($null -ne $ServiceCredential) {
-  if ($ServiceAccount -ne 'NT SERVICE\JellyfinRemora' -and $ServiceAccount -ne $ServiceCredential.UserName) {
+  if ($ServiceAccount -ne 'NT SERVICE\{{SERVICE}}' -and $ServiceAccount -ne $ServiceCredential.UserName) {
     throw '-ServiceAccount must match -ServiceCredential.UserName when both are provided.'
   }
   $ServiceAccount = $ServiceCredential.UserName

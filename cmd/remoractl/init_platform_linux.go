@@ -11,9 +11,10 @@ import (
 	"strings"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 )
 
-const linuxServiceName = "jellyfin-remora.service"
+const linuxServiceName = contract.LinuxServiceName
 
 var linuxSystemdDirectory = "/etc/systemd/system"
 

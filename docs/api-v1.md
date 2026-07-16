@@ -128,6 +128,7 @@ Current stable codes are:
 | `config_unavailable` | `404` | The active configuration cannot be inspected |
 | `storage_fenced` | `409` | Storage safety prevents the requested start |
 | `operation_rejected` | `400` | The supervisor rejected the requested operation |
+| `follow_limit_reached` | `429` | The bounded concurrent log-follow limit was reached |
 | `jellyfin_error` | `502` | Jellyfin could not complete a management request |
 
 Clients should primarily branch on `code`, retain the operation ID for logs, and

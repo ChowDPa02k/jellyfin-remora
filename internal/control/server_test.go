@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/supervisor"
 )
@@ -78,6 +79,33 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 	if w.Header().Get("X-Remora-API-Version") != "1" || w.Header().Get("X-Remora-Operation-ID") == "" {
 		t.Fatalf("missing API metadata headers: %v", w.Header())
+	}
+}
+
+func TestFrozenAPIOperationsRemainRegistered(t *testing.T) {
+	f := &fakeController{}
+	s := New(&config.Config{}, f, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, operation := range contract.APIOperations {
+		path := strings.ReplaceAll(strings.ReplaceAll(operation.Path, "{id}", "fixture-id"), "{session}", "fixture-session")
+		body := io.Reader(nil)
+		if operation.Method == http.MethodPost && operation.Path == "/v1/apikeys" {
+			body = strings.NewReader(`{"name":"compatibility-test"}`)
+		}
+		w := httptest.NewRecorder()
+		s.handler().ServeHTTP(w, httptest.NewRequest(operation.Method, path, body))
+		if w.Code == http.StatusMethodNotAllowed {
+			t.Fatalf("frozen operation is no longer registered: %s %s", operation.Method, operation.Path)
+		}
+		if w.Code == http.StatusNotFound {
+			var response ErrorResponse
+			_ = json.Unmarshal(w.Body.Bytes(), &response)
+			if response.Error.Code == "not_found" {
+				t.Fatalf("frozen operation is no longer registered: %s %s", operation.Method, operation.Path)
+			}
+		}
+		if got := w.Header().Get(contract.APIHeaderVersion); got != "1" {
+			t.Fatalf("%s %s version header=%q", operation.Method, operation.Path, got)
+		}
 	}
 }
 func TestForceStopEndpoint(t *testing.T) {

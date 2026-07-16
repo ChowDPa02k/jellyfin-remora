@@ -1,4 +1,4 @@
-VERSION ?= 0.8.0-alpha.9
+VERSION ?= 0.9.0-beta.1
 COMMIT ?= $(shell commit=$$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown); \
 	if [ -n "$$(git status --porcelain --untracked-files=normal 2>/dev/null)" ]; then commit="$$commit-dirty"; fi; \
 	printf '%s' "$$commit")

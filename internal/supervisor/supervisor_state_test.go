@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -103,6 +104,30 @@ func TestReconcilePerformsOneHealthRequestPerTick(t *testing.T) {
 	s.reconcile(context.Background())
 	if healthRequests != 1 {
 		t.Fatalf("health requests=%d, want 1", healthRequests)
+	}
+}
+
+func TestFrozenStateFormatAndForwardCompatibleManualStop(t *testing.T) {
+	data, damage := encodeState(model.Status{
+		ManualStop: true,
+		Jellyfin:   model.HealthResult{Healthy: true},
+		Storage:    []model.StorageResult{{Healthy: false}},
+	})
+	if got, want := string(data), "0\n2\n1\n"; got != want || damage != 2 {
+		t.Fatalf("state=%q damage=%d, want %q damage=2", got, damage, want)
+	}
+	path := filepath.Join(t.TempDir(), "jellyfin.state")
+	if err := os.WriteFile(path, append(data, []byte("future-field\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !manualStop(path) {
+		t.Fatal("reader rejected a compatible state file with trailing fields")
+	}
+	if err := os.WriteFile(path, []byte("0\n2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if manualStop(path) {
+		t.Fatal("truncated state file enabled manual stop")
 	}
 }
 

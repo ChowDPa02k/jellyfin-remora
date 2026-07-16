@@ -1,7 +1,7 @@
 # Jellyfin Remora
 
 Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS,
-Windows, and native Linux alpha milestones support storage fencing, process
+Windows, and native Linux beta baseline supports storage fencing, process
 supervision, first-run setup, pre-start XML configuration reconciliation,
 API-key provisioning, login watchdog checks, health checks, and local control.
 
@@ -9,6 +9,7 @@ Development milestones through the cross-platform stable release are tracked in 
 The repeatable and real-fault high-availability coverage is recorded in [test/HA_TEST_MATRIX.md](test/HA_TEST_MATRIX.md).
 Supervisor invariants and trust boundaries are defined in [docs/architecture-safety.md](docs/architecture-safety.md).
 The local control-plane contract is documented in [docs/api-v1.md](docs/api-v1.md).
+The frozen beta compatibility and upgrade policy is documented in [docs/compatibility.md](docs/compatibility.md).
 Build and review requirements are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 Native bare-metal/systemd installation is documented in [docs/linux.md](docs/linux.md).
 

@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 )
 
-const windowsServiceName = "JellyfinRemora"
+const windowsServiceName = contract.WindowsServiceName
 
 type serviceHandler struct {
 	run func(context.Context) error

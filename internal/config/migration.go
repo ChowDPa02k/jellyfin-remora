@@ -6,10 +6,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"gopkg.in/yaml.v3"
 )
 
-const CurrentVersion = 2
+const CurrentVersion = contract.ConfigVersion
 
 type MigrationReport struct {
 	FromVersion int

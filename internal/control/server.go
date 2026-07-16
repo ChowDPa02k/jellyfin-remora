@@ -20,6 +20,7 @@ import (
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/buildinfo"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/supervisor"
 )
@@ -193,9 +194,9 @@ func (s *Server) handler() http.Handler {
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Remora-API-Version", "1")
+		w.Header().Set(contract.APIHeaderVersion, strconv.Itoa(contract.APIVersion))
 		operation := fmt.Sprintf("op-%016x", s.operations.Add(1))
-		w.Header().Set("X-Remora-Operation-ID", operation)
+		w.Header().Set(contract.APIHeaderOperationID, operation)
 		r = r.WithContext(context.WithValue(r.Context(), operationIDKey{}, operation))
 		mux.ServeHTTP(w, r)
 	})
