@@ -73,6 +73,35 @@ the real systemd/Jellyfin/fault matrix:
 LINUX_TEST_ARCH=arm64 ./test/linux_container_matrix.sh
 ```
 
+On a disposable native Linux host with an installed package and a healthy
+configuration, the destructive systemd and physical-identity smoke tests are
+repeatable with:
+
+```sh
+sudo ./test/linux_real_systemd.sh
+sudo ./test/linux_real_storage_fence.sh /path/to/configured/physical/mount
+sudo ./test/linux_real_network_fence.sh /path/to/network/mount SERVER-IP TCP-PORT
+sudo ./test/linux_real_permission_fence.sh /path/to/jellyfin/config
+sudo ./test/linux_real_filesystem_faults.sh /path/to/disposable/physical/mount
+sudo ./test/linux_real_process_hang.sh
+```
+
+The first test proves Remora-only crash adoption and normal full-tree service
+restart semantics. The second overlays the physical target with the wrong
+filesystem, requires `STORAGE_FENCED` with no Jellyfin process, then removes
+the overlay and requires controlled single-instance recovery. The third uses a
+temporary nftables output rule, detaches an NFS or SMB mount, and verifies both
+bounded failure handling and Remora-controlled remount after network recovery.
+The fourth removes write permission from a managed Jellyfin path and proves
+that the health probe really runs as the configured Jellyfin identity even when
+the Remora service itself runs as root. The final test requires a disposable,
+dedicated filesystem: it verifies both a read-only remount and exhaustion of
+all user-available blocks, restoring the filesystem after each fence. The
+read-only case uses a self-bind view so it remains reproducible even when the
+kernel refuses to remount a live database filesystem read-only with `EBUSY`.
+The process-hang test sends `SIGSTOP`, requiring the API watchdog and bounded
+stop escalation to kill the unresponsive tree before starting one replacement.
+
 ## Real native Linux amd64 compatibility and fault runs
 
 Jellyfin 10.11.11 was exercised on Rocky Linux 10.1 (RPM-family) and Debian
@@ -100,6 +129,21 @@ disabled so Remora remained the sole supervisor.
 | Rocky RPM install/upgrade/rollback/erase/reinstall | Versions change correctly; erase preserves operator config and Jellyfin data | Pass |
 | Debian host reboot | New boot ID; systemd starts Remora, loop-backed physical storage plus NFS/SMB recover, and exactly one Jellyfin 10.11.11 reaches `RUNNING` | Pass |
 | Rocky host reboot | New boot ID; loop-backed physical storage, one Remora, one Jellyfin, NFS, and SMB recover | Pass |
+
+The destructive amd64 matrix was repeated against the packaged
+`0.8.0-alpha.7` binaries from core commit `5e9536ad1b20` on 2026-07-16. The
+repeat used the checked-in `linux_real_*.sh` harnesses and covered RPM/DEB
+upgrade, Remora-only `SIGKILL` adoption, normal systemd restart, wrong-device
+overlay, read-only bind view, zero user-available blocks, run-as-user permission
+loss, NFS and SMB port loss plus Remora-controlled remount, and a `SIGSTOP`
+Jellyfin hang. Debian then rebooted from boot ID
+`ba575bff-add0-47d8-a6e9-699f48bc83e9` to
+`69a9e038-0dc9-495c-84ec-8b098fcac2c2` with all seven probes healthy. Rebooting
+the Rocky storage server changed its boot ID from
+`9339afaa-01bf-41b8-94f2-94335ec22e3e` to
+`3d581448-4ae6-4568-a847-a03a416a05d1`; during that outage Debian fenced both
+network mounts and cleared its Jellyfin PID in nine seconds, then remounted NFS
+and SMB and returned to one `RUNNING` Jellyfin after Rocky recovered.
 
 The complete Go suite passed in a Debian arm64 container. The arm64 native
 backend and capacity suite also passed in Debian 13, Ubuntu 24.04, Fedora, and
