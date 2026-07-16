@@ -48,7 +48,7 @@ use exit status and `--json`, not parse the pretty tables.
 
 | File | Frozen format and rule |
 |---|---|
-| `jellyfin.state` | Three decimal lines: health, storage damage, manual stop. Readers ignore trailing lines for forward compatibility; truncated or malformed content never enables manual stop. Mode `0640`. |
+| `jellyfin.state` | The frozen three-line prefix is health, storage damage, and manual stop. `v0.9.0-beta.2` adds a fourth database-damage flag; older readers ignore it and newer readers treat a missing fourth line as clear. Further trailing lines remain ignored. Truncated or malformed content never enables a fence. Mode `0640`. |
 | `jellyfin.pid` | Decimal PID plus newline. It is advisory only; Remora verifies executable and arguments before adoption or signalling. Mode `0640`. |
 | `.remora_api_key` | Opaque token plus newline. It is preserved across upgrades and never exposed through diagnostics. Mode `0600`. |
 
@@ -56,6 +56,12 @@ Root daemons keep the runtime state beneath `/var/run/jellyfin-remora/<id>`;
 non-root daemons use the owner-specific temporary directory. The durable copies
 remain under `remora.data-dir`. Fatal storage state is not written through to a
 possibly unsafe durable volume.
+
+Database-damage detection is intentionally indirect: Remora never opens the
+live SQLite file. It combines new Jellyfin console corruption evidence with
+Jellyfin's own health or authenticated read-only API result. A confirmed flag
+survives daemon restart. Repair or restore the database while Jellyfin is
+stopped, then use `remoractl start` as the explicit acknowledgement.
 
 ## Frozen platform identities
 

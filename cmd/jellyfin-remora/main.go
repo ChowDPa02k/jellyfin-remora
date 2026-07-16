@@ -16,6 +16,7 @@ import (
 	"github.com/ChowDPa02K/jellyfin-remora/internal/buildinfo"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/control"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/databasemonitor"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/logging"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
@@ -97,7 +98,9 @@ func runDaemon(ctx context.Context, activeConfigPath string) error {
 		return fmt.Errorf("open Jellyfin console log: %w", err)
 	}
 	defer jellyfinLog.Close()
-	pm, err := procmanager.New(cfg, backend, jellyfinLog, jellyfinLog)
+	databaseDetector := &databasemonitor.Detector{}
+	consoleWriter := io.MultiWriter(jellyfinLog, databaseDetector)
+	pm, err := procmanager.New(cfg, backend, consoleWriter, consoleWriter)
 	if err != nil {
 		return err
 	}
@@ -108,6 +111,7 @@ func runDaemon(ctx context.Context, activeConfigPath string) error {
 	}
 	jc := jellyfin.New(cfg.JellyfinURL(), cfg.Remora.IOTimeout.Duration)
 	sup := supervisor.New(cfg, pm, sc, jc, logger)
+	sup.SetDatabaseDamageSource(databaseDetector)
 	api := control.NewWithOptions(cfg, sup, logger, control.Options{ConfigPath: activeConfigPath, LogPath: safeLogPath(cfg), JellyfinLogPath: jellyfinLogPath})
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

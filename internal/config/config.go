@@ -143,6 +143,7 @@ type RemoraConfig struct {
 type MonitoringConfig struct {
 	Interval    Duration                 `yaml:"interval"`
 	JellyfinAPI JellyfinAPIMonitorConfig `yaml:"jellyfin-api"`
+	Database    DatabaseMonitorConfig    `yaml:"database,omitempty"`
 	UserLogin   UserLoginWatchdogConfig  `yaml:"user-login,omitempty"`
 }
 
@@ -150,6 +151,14 @@ type JellyfinAPIMonitorConfig struct {
 	Interval         Duration `yaml:"interval"`
 	FailureThreshold int      `yaml:"failure-threshold"`
 }
+
+type DatabaseMonitorConfig struct {
+	Enabled            *bool    `yaml:"enabled,omitempty"`
+	ConfirmationWindow Duration `yaml:"confirmation-window"`
+	FailureThreshold   int      `yaml:"failure-threshold"`
+}
+
+func (c DatabaseMonitorConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
 
 type UserLoginWatchdogConfig struct {
 	Enabled   bool     `yaml:"enabled"`
@@ -399,6 +408,12 @@ func (c *Config) defaults() {
 	if c.Remora.Monitoring.JellyfinAPI.FailureThreshold == 0 {
 		c.Remora.Monitoring.JellyfinAPI.FailureThreshold = 3
 	}
+	if c.Remora.Monitoring.Database.ConfirmationWindow.Duration == 0 {
+		c.Remora.Monitoring.Database.ConfirmationWindow.Duration = 5 * time.Minute
+	}
+	if c.Remora.Monitoring.Database.FailureThreshold == 0 {
+		c.Remora.Monitoring.Database.FailureThreshold = 1
+	}
 	if c.Remora.Monitoring.UserLogin.Enabled && c.Remora.Monitoring.UserLogin.Interval.Duration == 0 {
 		c.Remora.Monitoring.UserLogin.Interval.Duration = 60 * time.Second
 	}
@@ -470,6 +485,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Remora.HeartbeatInterval.Duration <= 0 || c.Remora.Monitoring.JellyfinAPI.Interval.Duration <= 0 || c.Remora.ServerStartTimeout.Duration <= 0 || c.Remora.ServerStopTimeout.Duration <= 0 || c.Remora.IOTimeout.Duration <= 0 {
 		return errors.New("remora intervals and timeouts must be positive")
+	}
+	if c.Remora.Monitoring.Database.ConfirmationWindow.Duration <= 0 || c.Remora.Monitoring.Database.FailureThreshold < 1 {
+		return errors.New("remora.monitoring.database confirmation-window and failure-threshold must be positive")
 	}
 	switch c.Remora.Logs.Level {
 	case "debug", "info", "warning", "warn", "error":

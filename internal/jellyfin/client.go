@@ -102,6 +102,22 @@ func (c *Client) PublicInfo(ctx context.Context) (PublicInfo, error) {
 	return out, err
 }
 
+// ProbeDatabase asks Jellyfin to execute a small authenticated read against its
+// primary database. Remora deliberately never opens jellyfin.db itself.
+func (c *Client) ProbeDatabase(ctx context.Context, token string) error {
+	for _, path := range []string{
+		"/Users?StartIndex=0&Limit=1",
+		"/Items?Recursive=true&Limit=1&EnableTotalRecordCount=false",
+		"/System/ActivityLog/Entries?StartIndex=0&Limit=1",
+	} {
+		var result json.RawMessage
+		if err := c.do(ctx, http.MethodGet, path, token, nil, &result, http.StatusOK); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *Client) CompleteStartup(ctx context.Context, cfg config.InitConfig) (string, error) {
 	if cfg.User == "" || cfg.Password == "" {
 		return "", fmt.Errorf("init.user and init.password are required for first startup")

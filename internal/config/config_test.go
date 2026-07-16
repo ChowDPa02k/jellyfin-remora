@@ -47,6 +47,9 @@ disk:
 	if c.Remora.ServerStartTimeout.Duration != 30*time.Second {
 		t.Fatalf("start timeout=%s", c.Remora.ServerStartTimeout.Duration)
 	}
+	if !c.Remora.Monitoring.Database.IsEnabled() || c.Remora.Monitoring.Database.ConfirmationWindow.Duration != 5*time.Minute || c.Remora.Monitoring.Database.FailureThreshold != 1 {
+		t.Fatalf("database monitoring defaults: %#v", c.Remora.Monitoring.Database)
+	}
 	if c.JellyfinURL() != "http://127.0.0.1:8096" {
 		t.Fatalf("url=%s", c.JellyfinURL())
 	}

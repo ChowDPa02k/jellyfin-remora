@@ -31,6 +31,15 @@ remora:
       interval: 10s
       # Consecutive failed /health checks before Jellyfin is restarted.
       failure-threshold: 3
+    database:
+      # Observe new Jellyfin console output for high-confidence SQLite
+      # corruption, then confirm through Jellyfin APIs. Remora never opens the
+      # live jellyfin.db file. Confirmed damage stops and fences Jellyfin.
+      enabled: true
+      # Discard an unconfirmed log signature after this interval.
+      confirmation-window: 5m
+      # Consecutive API confirmations required after a log signature.
+      failure-threshold: 1
     user-login:
       # This optional authenticated watchdog keeps one token and logs in again
       # only if Jellyfin revokes it.

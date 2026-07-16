@@ -163,6 +163,24 @@ func TestHealthFailure(t *testing.T) {
 	}
 }
 
+func TestProbeDatabaseUsesAuthenticatedReadOnlyUsersRequest(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.Method != http.MethodGet || r.URL.Query().Get("Limit") != "1" || !strings.Contains(r.Header.Get("Authorization"), `Token="api-key"`) {
+			t.Errorf("unexpected database probe: %s %s auth=%q", r.Method, r.URL.String(), r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{})
+	}))
+	defer srv.Close()
+	if err := New(srv.URL, time.Second).ProbeDatabase(context.Background(), "api-key"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(paths, ","), "/Users,/Items,/System/ActivityLog/Entries"; got != want {
+		t.Fatalf("paths=%s, want %s", got, want)
+	}
+}
+
 func TestCompleteStartupSequence(t *testing.T) {
 	wantPaths := []string{"/Startup/User", "/Startup/Configuration", "/Localization/Options", "/Localization/Cultures", "/Localization/Countries", "/Startup/Configuration", "/Startup/User", "/Startup/RemoteAccess", "/Startup/Complete"}
 	var paths []string

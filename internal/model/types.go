@@ -5,17 +5,18 @@ import "time"
 type State string
 
 const (
-	StateInit           State = "INIT"
-	StatePreflight      State = "PREFLIGHT"
-	StateStopped        State = "STOPPED"
-	StateStarting       State = "STARTING"
-	StateFirstStart     State = "FIRST_START"
-	StateRunning        State = "RUNNING"
-	StateDegraded       State = "DEGRADED"
-	StateStopping       State = "STOPPING"
-	StateRestartBackoff State = "RESTART_BACKOFF"
-	StateStorageFenced  State = "STORAGE_FENCED"
-	StateProcessFailed  State = "PROCESS_FAILED"
+	StateInit            State = "INIT"
+	StatePreflight       State = "PREFLIGHT"
+	StateStopped         State = "STOPPED"
+	StateStarting        State = "STARTING"
+	StateFirstStart      State = "FIRST_START"
+	StateRunning         State = "RUNNING"
+	StateDegraded        State = "DEGRADED"
+	StateStopping        State = "STOPPING"
+	StateRestartBackoff  State = "RESTART_BACKOFF"
+	StateStorageFenced   State = "STORAGE_FENCED"
+	StateProcessFailed   State = "PROCESS_FAILED"
+	StateDatabaseDamaged State = "DATABASE_DAMAGED"
 )
 
 type DesiredState string
@@ -45,6 +46,13 @@ type HealthResult struct {
 	StatusCode int       `json:"status_code,omitempty"`
 	Error      string    `json:"error,omitempty"`
 	CheckedAt  time.Time `json:"checked_at"`
+}
+
+type DatabaseResult struct {
+	Damaged    bool      `json:"damaged"`
+	Suspected  bool      `json:"suspected"`
+	Message    string    `json:"message,omitempty"`
+	DetectedAt time.Time `json:"detected_at,omitempty,omitzero"`
 }
 
 type Session struct {
@@ -94,6 +102,7 @@ type Status struct {
 	Sessions         []Session       `json:"sessions,omitempty"`
 	PlayingUsers     []string        `json:"playing_users,omitempty"`
 	Jellyfin         HealthResult    `json:"jellyfin"`
+	Database         DatabaseResult  `json:"database"`
 	LastError        string          `json:"last_error,omitempty"`
 	LastTransition   time.Time       `json:"last_transition"`
 }

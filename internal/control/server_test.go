@@ -136,6 +136,23 @@ func TestStartRejectedWhileStorageFenced(t *testing.T) {
 	}
 }
 
+func TestRestartRejectedWhileDatabaseDamageIsLatched(t *testing.T) {
+	f := &fakeController{status: model.Status{State: model.StateDatabaseDamaged, Database: model.DatabaseResult{Damaged: true}}}
+	s := New(&config.Config{}, f, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w := httptest.NewRecorder()
+	s.handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/restart", nil))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error.Code != "database_damaged" {
+		t.Fatalf("error response=%+v", response)
+	}
+}
+
 func TestEventsEndpointIsBoundedAndValidated(t *testing.T) {
 	f := &fakeController{events: []model.Event{{Sequence: 1}, {Sequence: 2}, {Sequence: 3}}}
 	s := New(&config.Config{}, f, slog.New(slog.NewTextHandler(io.Discard, nil)))

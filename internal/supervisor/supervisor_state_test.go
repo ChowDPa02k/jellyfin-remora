@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/databasemonitor"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfinconfig"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
@@ -112,22 +113,146 @@ func TestFrozenStateFormatAndForwardCompatibleManualStop(t *testing.T) {
 		ManualStop: true,
 		Jellyfin:   model.HealthResult{Healthy: true},
 		Storage:    []model.StorageResult{{Healthy: false}},
-	})
-	if got, want := string(data), "0\n2\n1\n"; got != want || damage != 2 {
+	}, true)
+	if got, want := string(data), "0\n2\n1\n1\n"; got != want || damage != 2 {
 		t.Fatalf("state=%q damage=%d, want %q damage=2", got, damage, want)
 	}
 	path := filepath.Join(t.TempDir(), "jellyfin.state")
 	if err := os.WriteFile(path, append(data, []byte("future-field\n")...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !manualStop(path) {
-		t.Fatal("reader rejected a compatible state file with trailing fields")
+	state := readPersistedState(path)
+	if !state.ManualStop || !state.DatabaseDamaged {
+		t.Fatalf("reader rejected compatible state fields: %+v", state)
 	}
 	if err := os.WriteFile(path, []byte("0\n2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if manualStop(path) {
-		t.Fatal("truncated state file enabled manual stop")
+	if state := readPersistedState(path); state.ManualStop || state.DatabaseDamaged {
+		t.Fatalf("truncated state file enabled a fence: %+v", state)
+	}
+}
+
+func TestDatabaseCorruptionEvidenceAndFailedHealthLatchesFence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			http.Error(w, "Unhealthy", http.StatusServiceUnavailable)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	process := &stateProcess{running: true, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.cfg.Remora.Monitoring.Database.ConfirmationWindow = config.Duration{Duration: time.Minute}
+	s.cfg.Remora.Monitoring.Database.FailureThreshold = 1
+	detector := &databasemonitor.Detector{}
+	_, _ = detector.Write([]byte("Microsoft.Data.Sqlite.SqliteException: SQLite Error 11: 'database disk image is malformed'.\n"))
+	s.SetDatabaseDamageSource(detector)
+	s.reconcile(context.Background())
+	status := s.Status()
+	if process.running || status.State != model.StateDatabaseDamaged || !status.Database.Damaged || !s.databaseDamaged {
+		t.Fatalf("running=%t state=%s database=%+v latched=%t", process.running, status.State, status.Database, s.databaseDamaged)
+	}
+
+	reply := make(chan error, 1)
+	s.handle(Request{Action: ActionStart, Reply: reply})
+	if err := <-reply; err != nil {
+		t.Fatal(err)
+	}
+	if s.databaseDamaged || s.Status().Database.Damaged {
+		t.Fatal("explicit start did not acknowledge the database fence")
+	}
+}
+
+func TestDatabaseCorruptionLogWithoutAPIFailureRemainsSuspected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			complete := true
+			_ = json.NewEncoder(w).Encode(jellyfin.PublicInfo{StartupWizardCompleted: &complete})
+		case "/Users":
+			_ = json.NewEncoder(w).Encode([]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	process := &stateProcess{running: true, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.setAPIKey("api-key")
+	s.cfg.Remora.Monitoring.Database.ConfirmationWindow = config.Duration{Duration: time.Minute}
+	s.cfg.Remora.Monitoring.Database.FailureThreshold = 1
+	detector := &databasemonitor.Detector{}
+	_, _ = detector.Write([]byte("SQLite Error 11: database disk image is malformed\n"))
+	s.SetDatabaseDamageSource(detector)
+	s.reconcile(context.Background())
+	status := s.Status()
+	if !process.running || status.State != model.StateDegraded || status.Database.Damaged || !status.Database.Suspected {
+		t.Fatalf("running=%t state=%s database=%+v", process.running, status.State, status.Database)
+	}
+}
+
+func TestDatabaseCorruptionAndDatabaseBackedAPIFailureLatchesFence(t *testing.T) {
+	detector := &databasemonitor.Detector{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			complete := true
+			_ = json.NewEncoder(w).Encode(jellyfin.PublicInfo{StartupWizardCompleted: &complete})
+		case "/Users":
+			_, _ = detector.Write([]byte("SQLite Error 11: database disk image is malformed\n"))
+			http.Error(w, "SQLite Error 11", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	process := &stateProcess{running: true, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.setAPIKey("api-key")
+	s.cfg.Remora.Monitoring.Database.ConfirmationWindow = config.Duration{Duration: time.Minute}
+	s.cfg.Remora.Monitoring.Database.FailureThreshold = 1
+	s.SetDatabaseDamageSource(detector)
+	s.reconcile(context.Background())
+	if process.running || s.Status().State != model.StateDatabaseDamaged || !s.Status().Database.Damaged {
+		t.Fatalf("running=%t status=%+v", process.running, s.Status())
+	}
+}
+
+func TestDatabaseAPIFailureWithoutCorruptionLogCannotLatchDamage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/System/Info/Public":
+			complete := true
+			_ = json.NewEncoder(w).Encode(jellyfin.PublicInfo{StartupWizardCompleted: &complete})
+		case "/Users":
+			http.Error(w, "unrelated server failure", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	process := &stateProcess{running: true, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.setAPIKey("api-key")
+	s.cfg.Remora.Monitoring.Database.ConfirmationWindow = config.Duration{Duration: time.Minute}
+	s.cfg.Remora.Monitoring.Database.FailureThreshold = 1
+	s.SetDatabaseDamageSource(&databasemonitor.Detector{})
+	s.reconcile(context.Background())
+	status := s.Status()
+	if !process.running || status.State != model.StateDegraded || status.Database.Damaged || !status.Database.Suspected {
+		t.Fatalf("running=%t state=%s database=%+v", process.running, status.State, status.Database)
 	}
 }
 

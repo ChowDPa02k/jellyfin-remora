@@ -273,7 +273,10 @@ func wait(c *http.Client, base, command string, initialPID int, output io.Writer
 		if st.State == model.StateStorageFenced && ((command == "start" || command == "restart") && st.DesiredState == model.DesiredRunning || command == "stop" && st.DesiredState == model.DesiredStopped) {
 			continue
 		}
-		if st.State == model.StateStorageFenced || st.State == model.StateProcessFailed {
+		if st.State == model.StateDatabaseDamaged && (command == "start" && !st.Database.Damaged || command == "stop" && st.DesiredState == model.DesiredStopped) {
+			continue
+		}
+		if st.State == model.StateStorageFenced || st.State == model.StateProcessFailed || st.State == model.StateDatabaseDamaged {
 			return fmt.Errorf("operation failed in state %s: %s", st.State, st.LastError)
 		}
 	}

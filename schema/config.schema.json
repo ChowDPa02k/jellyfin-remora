@@ -39,6 +39,15 @@
                 "failure-threshold": { "type": "integer", "minimum": 1 }
               }
             },
+            "database": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean", "default": true },
+                "confirmation-window": { "$ref": "#/$defs/duration" },
+                "failure-threshold": { "type": "integer", "minimum": 1, "default": 1 }
+              }
+            },
             "user-login": {
               "type": "object",
               "additionalProperties": false,

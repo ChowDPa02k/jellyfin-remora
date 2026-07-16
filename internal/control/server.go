@@ -559,6 +559,10 @@ func (s *Server) action(action supervisor.Action) http.HandlerFunc {
 			writeAPIError(w, http.StatusConflict, "storage_fenced", "required storage is unhealthy", operationID(r))
 			return
 		}
+		if action == supervisor.ActionRestart && s.supervisor.Status().State == model.StateDatabaseDamaged {
+			writeAPIError(w, http.StatusConflict, "database_damaged", "repair or restore the Jellyfin database, then use start to acknowledge the fence", operationID(r))
+			return
+		}
 		rawForce := r.URL.Query().Get("force")
 		if rawForce != "" && rawForce != "true" && rawForce != "false" {
 			writeAPIError(w, http.StatusBadRequest, "invalid_argument", "force must be true or false", operationID(r))

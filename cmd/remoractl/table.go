@@ -115,6 +115,7 @@ func renderSummary(status model.Status, color bool) string {
 		{"Server Name", fallback(status.ServerName)},
 		{"Port", ports},
 		{"State", string(status.State)},
+		{"Database", databaseStatus(status.Database)},
 		{"Desired State", string(status.DesiredState)},
 		{"Uptime", formatUptime(status.UptimeSeconds)},
 		{"FFmpeg Processes", status.FFmpegProcesses},
@@ -138,6 +139,9 @@ func renderSummary(status model.Status, color bool) string {
 		clean := sanitizeRow(row)
 		if len(clean) > 1 && clean[0] == "State" {
 			clean[1] = colorState(fmt.Sprint(clean[1]), status.State, color)
+		}
+		if len(clean) > 1 && clean[0] == "Database" {
+			clean[1] = colorDatabase(fmt.Sprint(clean[1]), status.Database, color)
 		}
 		tw.AppendRow(clean)
 	}
@@ -236,12 +240,36 @@ func colorState(value string, state model.State, enabled bool) string {
 	switch state {
 	case model.StateRunning:
 		colors = text.Colors{text.Bold, text.FgGreen}
-	case model.StateStorageFenced, model.StateProcessFailed:
+	case model.StateStorageFenced, model.StateProcessFailed, model.StateDatabaseDamaged:
 		colors = text.Colors{text.Bold, text.FgRed}
 	case model.StateStopped, model.StateInit:
 		colors = text.Colors{text.FgHiBlack}
 	}
 	return text.Escape(value, colors.EscapeSeq())
+}
+
+func databaseStatus(result model.DatabaseResult) string {
+	if result.Damaged {
+		return "damaged"
+	}
+	if result.Suspected {
+		return "suspected"
+	}
+	return "healthy"
+}
+
+func colorDatabase(value string, result model.DatabaseResult, enabled bool) string {
+	if !enabled {
+		return value
+	}
+	color := text.FgGreen
+	if result.Suspected {
+		color = text.FgYellow
+	}
+	if result.Damaged {
+		color = text.FgRed
+	}
+	return text.Escape(value, text.Colors{text.Bold, color}.EscapeSeq())
 }
 
 func colorHealthy(value string, healthy, enabled bool) string {

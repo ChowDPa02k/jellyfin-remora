@@ -37,6 +37,7 @@
       "config_unavailable":404,
       "method_not_allowed":405,
       "storage_fenced":409,
+      "database_damaged":409,
       "follow_limit_reached":429,
       "jellyfin_error":502
     }
@@ -46,7 +47,7 @@
     "stable_output": "json"
   },
   "state": {
-    "jellyfin.state": {"format":"three decimal lines: health, damage, manual-stop","mode":"0640","forward_rule":"ignore trailing lines"},
+    "jellyfin.state": {"format":"four decimal lines: health, storage-damage, manual-stop, database-damage; first three remain the v0.9.0-beta.1 prefix","mode":"0640","forward_rule":"missing database-damage is false; ignore trailing lines"},
     "jellyfin.pid": {"format":"decimal pid plus newline","mode":"0640","authority":"advisory; executable and arguments must be verified"},
     ".remora_api_key": {"format":"opaque token plus newline","mode":"0600"}
   },

@@ -10,6 +10,7 @@ The repeatable and real-fault high-availability coverage is recorded in [test/HA
 Supervisor invariants and trust boundaries are defined in [docs/architecture-safety.md](docs/architecture-safety.md).
 The local control-plane contract is documented in [docs/api-v1.md](docs/api-v1.md).
 The frozen beta compatibility and upgrade policy is documented in [docs/compatibility.md](docs/compatibility.md).
+Database corruption detection and recovery are documented in [docs/database-safety.md](docs/database-safety.md).
 Build and review requirements are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 Native bare-metal/systemd installation is documented in [docs/linux.md](docs/linux.md).
 

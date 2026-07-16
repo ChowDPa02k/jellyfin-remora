@@ -72,6 +72,7 @@ var APIErrorStatus = map[string]int{
 	"config_unavailable":   404,
 	"method_not_allowed":   405,
 	"storage_fenced":       409,
+	"database_damaged":     409,
 	"follow_limit_reached": 429,
 	"jellyfin_error":       502,
 }

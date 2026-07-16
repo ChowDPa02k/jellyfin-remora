@@ -17,6 +17,7 @@ import (
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/databasemonitor"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfinconfig"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
@@ -60,6 +61,11 @@ type ConfigurationReconciler interface {
 	Reconcile() (jellyfinconfig.Result, error)
 }
 
+type DatabaseDamageSource interface {
+	Candidate(time.Duration) (databasemonitor.Evidence, bool)
+	Reset()
+}
+
 type Supervisor struct {
 	mu                   sync.RWMutex
 	managementMu         sync.Mutex
@@ -74,6 +80,9 @@ type Supervisor struct {
 	forceStop            bool
 	restartRequested     bool
 	storageFenced        bool
+	databaseDamaged      bool
+	databaseFailures     int
+	databaseSource       DatabaseDamageSource
 	healthyStorageRuns   int
 	apiFailures          int
 	tick                 uint64
@@ -104,11 +113,21 @@ func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.
 	uid, username := runtimeIdentity(cfg.Jellyfin.RunAsUser)
 	s.status = model.Status{State: model.StateInit, DesiredState: model.DesiredRunning, UID: uid, Username: username, Executable: pm.Executable(), Arguments: pm.Arguments(), LastTransition: now}
 	s.recordEventLocked(model.Event{Timestamp: now, Type: "state_transition", State: model.StateInit})
-	if manualStop(filepath.Join(runtimeStateDir(cfg), contract.StateFileName)) || manualStop(filepath.Join(cfg.Remora.DataDir, contract.StateFileName)) {
+	runtimeState := readPersistedState(filepath.Join(runtimeStateDir(cfg), contract.StateFileName))
+	durableState := readPersistedState(filepath.Join(cfg.Remora.DataDir, contract.StateFileName))
+	if runtimeState.ManualStop || durableState.ManualStop {
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
 	}
+	if runtimeState.DatabaseDamaged || durableState.DatabaseDamaged {
+		s.databaseDamaged = true
+		s.status.Database.Damaged = true
+	}
 	return s
+}
+
+func (s *Supervisor) SetDatabaseDamageSource(source DatabaseDamageSource) {
+	s.databaseSource = source
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -175,6 +194,12 @@ func (s *Supervisor) handle(req Request) {
 		s.nextStart = time.Time{}
 		s.initializationFails = 0
 		s.nextInitialization = time.Time{}
+		s.databaseDamaged = false
+		s.databaseFailures = 0
+		s.status.Database = model.DatabaseResult{}
+		if s.databaseSource != nil {
+			s.databaseSource.Reset()
+		}
 	case ActionStop:
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
@@ -330,6 +355,19 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		} else {
 			s.transition(model.StateProcessFailed, "restart rate limit exceeded")
 		}
+		_ = s.persist()
+		return
+	}
+	if s.databaseDamaged {
+		if running {
+			if err := s.stop(ctx, false); err != nil {
+				s.transition(model.StateDatabaseDamaged, "database damage is latched and Jellyfin could not be stopped: "+err.Error())
+				_ = s.persist()
+				return
+			}
+		}
+		s.transition(model.StateDatabaseDamaged, "Jellyfin database damage is latched; repair or restore the database, then use remoractl start")
+		s.clearOneShots()
 		_ = s.persist()
 		return
 	}
@@ -503,6 +541,16 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.log.Warn("cannot provision Remora API key", "error", err)
 		}
 	}
+	if s.evaluateDatabaseDamage(ctx, readiness) {
+		if err := s.stop(ctx, false); err != nil {
+			s.transition(model.StateDatabaseDamaged, "confirmed Jellyfin database damage; process stop failed: "+err.Error())
+		} else {
+			s.transition(model.StateDatabaseDamaged, "confirmed Jellyfin database damage; automatic restart is fenced until remoractl start")
+		}
+		s.clearOneShots()
+		_ = s.persist()
+		return
+	}
 	if infoErr == nil && s.cfg.Remora.UserLoginWatchdog.Enabled && !s.watchdogReady {
 		if err := s.ensureWatchdog(ctx); err != nil {
 			s.watchdogFailed = true
@@ -570,6 +618,8 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	if health.Healthy {
 		if s.watchdogFailed {
 			s.transition(model.StateDegraded, "login watchdog remains unhealthy")
+		} else if s.Status().Database.Suspected {
+			s.transition(model.StateDegraded, "Jellyfin database health is suspect; awaiting corruption evidence and API confirmation")
 		} else if degraded {
 			s.transition(model.StateDegraded, "non-fatal storage degradation")
 		} else {
@@ -595,6 +645,67 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	}
 	s.clearOneShots()
 	_ = s.persist()
+}
+
+func (s *Supervisor) evaluateDatabaseDamage(ctx context.Context, readiness model.HealthResult) bool {
+	if !s.cfg.Remora.Monitoring.Database.IsEnabled() || s.databaseSource == nil {
+		return false
+	}
+	probeMessage := ""
+	apiFailed := false
+	probeDue := s.tick%uint64(max(1, s.cfg.Remora.HealthAPIHeartbeat)) == 0
+	if token := s.currentAPIKey(); probeDue && token != "" {
+		if err := s.client.ProbeDatabase(ctx, token); err != nil {
+			var apiErr *jellyfin.APIError
+			if errors.As(err, &apiErr) && apiErr.StatusCode >= 500 {
+				apiFailed = true
+				probeMessage = "Jellyfin database-backed API probe failed: " + err.Error()
+			}
+		}
+	}
+	evidence, suspected := s.databaseSource.Candidate(s.cfg.Remora.Monitoring.Database.ConfirmationWindow.Duration)
+	if probeDue {
+		if suspected && (!readiness.Healthy || apiFailed) {
+			s.databaseFailures++
+		} else if !apiFailed {
+			s.databaseFailures = 0
+		} else {
+			// Retain API-only failures as suspicion, but never promote them to
+			// damage until Jellyfin itself emits a corruption signature.
+			s.databaseFailures++
+		}
+	}
+	if !suspected && s.databaseFailures == 0 {
+		s.statusCopyUpdate(func(st *model.Status) {
+			if !st.Database.Damaged {
+				st.Database = model.DatabaseResult{}
+			}
+		})
+		return false
+	}
+	s.statusCopyUpdate(func(st *model.Status) {
+		st.Database.Suspected = true
+		if suspected {
+			st.Database.Message = evidence.Message
+			st.Database.DetectedAt = evidence.DetectedAt
+		} else if probeMessage != "" {
+			st.Database.Message = probeMessage
+			st.Database.DetectedAt = time.Now()
+		}
+	})
+	if !suspected {
+		return false
+	}
+	if s.databaseFailures < s.cfg.Remora.Monitoring.Database.FailureThreshold {
+		return false
+	}
+	s.databaseDamaged = true
+	s.statusCopyUpdate(func(st *model.Status) {
+		st.Database.Damaged = true
+		st.Database.Suspected = false
+	})
+	s.log.Error("Jellyfin database damage confirmed", "evidence", evidence.Message, "detected_at", evidence.DetectedAt)
+	return true
 }
 
 func (s *Supervisor) setMountRecoveryAllowed(allowed bool) {
@@ -1008,7 +1119,7 @@ func (s *Supervisor) statusCopyUpdate(fn func(*model.Status)) {
 
 func (s *Supervisor) persist() error {
 	st := s.Status()
-	data, damage := encodeState(st)
+	data, damage := encodeState(st, s.databaseDamaged)
 	if err := atomicWrite(filepath.Join(runtimeStateDir(s.cfg), contract.StateFileName), data, 0640); err != nil {
 		return err
 	}
@@ -1018,7 +1129,7 @@ func (s *Supervisor) persist() error {
 	return atomicWrite(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName), data, 0640)
 }
 
-func encodeState(st model.Status) ([]byte, int) {
+func encodeState(st model.Status, databaseDamaged bool) ([]byte, int) {
 	health := 1
 	if st.Jellyfin.Healthy {
 		health = 0
@@ -1037,7 +1148,11 @@ func encodeState(st model.Status) ([]byte, int) {
 	if st.ManualStop {
 		manual = 1
 	}
-	return []byte(fmt.Sprintf("%d\n%d\n%d\n", health, damage, manual)), damage
+	database := 0
+	if databaseDamaged {
+		database = 1
+	}
+	return []byte(fmt.Sprintf("%d\n%d\n%d\n%d\n", health, damage, manual, database)), damage
 }
 
 func runtimeStateDir(cfg *config.Config) string {
@@ -1047,17 +1162,27 @@ func runtimeStateDir(cfg *config.Config) string {
 	}
 	return filepath.Join(os.TempDir(), fmt.Sprintf("jellyfin-remora-%d", os.Geteuid()), id)
 }
-func manualStop(path string) bool {
+
+type persistedState struct {
+	ManualStop      bool
+	DatabaseDamaged bool
+}
+
+func readPersistedState(path string) persistedState {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return persistedState{}
 	}
 	lines := strings.Fields(string(b))
 	if len(lines) < 3 {
-		return false
+		return persistedState{}
 	}
-	v, _ := strconv.Atoi(lines[2])
-	return v == 1
+	manual, _ := strconv.Atoi(lines[2])
+	database := 0
+	if len(lines) >= 4 {
+		database, _ = strconv.Atoi(lines[3])
+	}
+	return persistedState{ManualStop: manual == 1, DatabaseDamaged: database == 1}
 }
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {

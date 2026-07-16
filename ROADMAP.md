@@ -361,6 +361,7 @@ Exit gate:
 ## Phase 6 — Cross-platform beta hardening (`v0.9.x-beta`)
 
 - [x] Freeze configuration schema v2, state-file compatibility, REST API v1, CLI exit codes, service names, filesystem locations, and upgrade rules. `v0.9.0-beta.1` establishes a machine-readable manifest, shared code constants, compatibility policy, and drift tests.
+- `v0.9.0-beta.2` adds an additive database-safety contract: Remora never opens live SQLite files, confirms new corruption log evidence through Jellyfin APIs, durably fences `DATABASE_DAMAGED`, and requires an explicit repaired `start` acknowledgement.
 - Add property/state-machine tests, fuzzing for YAML/API/state parsing, failure injection for every syscall boundary, and restart-during-operation tests.
 - Run 30-day soak tests per OS with playback and hardware transcoding; record Remora CPU, memory, file-descriptor/handle growth, and restart behavior.
 - Complete secret-store migration, least-privilege reviews, dependency/license audits, SBOM generation, vulnerability response procedures, and external security review.

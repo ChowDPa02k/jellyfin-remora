@@ -51,17 +51,25 @@ The `state` field may contain:
 
 - `INIT`, `PREFLIGHT`, `STOPPED`, `STARTING`, `FIRST_START`, `RUNNING`
 - `DEGRADED`, `STOPPING`, `RESTART_BACKOFF`
-- `STORAGE_FENCED`, `PROCESS_FAILED`
+- `STORAGE_FENCED`, `DATABASE_DAMAGED`, `PROCESS_FAILED`
 
 `desired_state` is `running` or `stopped`. Storage safety overrides desired
 availability: a daemon in `STORAGE_FENCED` does not start Jellyfin until required
 storage has recovered. `manual_stop` prevents automatic recovery from overriding
 an operator stop.
 
+`DATABASE_DAMAGED` is a durable safety fence. It requires a high-confidence
+SQLite corruption signature from newly captured Jellyfin console output plus a
+failed Jellyfin health or authenticated database-backed API probe. Remora stops
+Jellyfin and does not automatically restart it. After repairing or restoring
+the database, `POST /v1/start` explicitly acknowledges and clears the fence;
+`restart` is rejected while it remains latched.
+
 The status document contains additive process identity and resource fields,
 storage results (including `latency_ms`), Jellyfin health, active sessions,
 `playing_users`, Darwin managed-process-tree `ffmpeg_processes`, session-derived
-`active_transcodes`, and transition/error metadata. Timestamps use RFC 3339 JSON time
+`active_transcodes`, additive database `damaged`/`suspected` evidence, and
+transition/error metadata. Timestamps use RFC 3339 JSON time
 encoding. Zero or unavailable optional values may be omitted.
 
 ## Management safety
@@ -127,6 +135,7 @@ Current stable codes are:
 | `log_unavailable` | `404` | The selected safe log file is unavailable |
 | `config_unavailable` | `404` | The active configuration cannot be inspected |
 | `storage_fenced` | `409` | Storage safety prevents the requested start |
+| `database_damaged` | `409` | Confirmed database damage prevents restart until an explicit repaired start |
 | `operation_rejected` | `400` | The supervisor rejected the requested operation |
 | `follow_limit_reached` | `429` | The bounded concurrent log-follow limit was reached |
 | `jellyfin_error` | `502` | Jellyfin could not complete a management request |
