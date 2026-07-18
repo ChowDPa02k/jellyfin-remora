@@ -21,6 +21,9 @@ func TestDarwinSampleLoadsAsCurrentConfiguration(t *testing.T) {
 	if len(cfg.Disks) != 1 || cfg.Disks[0].FailureThreshold != 1 {
 		t.Fatalf("sample disks = %+v", cfg.Disks)
 	}
+	if len(cfg.Jellyfin.Env) != 0 {
+		t.Fatalf("Darwin sample must leave Jellyfin environment overrides commented: %+v", cfg.Jellyfin.Env)
+	}
 }
 
 func TestDarwinRejectsWindowsOnlyConfiguration(t *testing.T) {

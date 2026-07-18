@@ -2,11 +2,13 @@ package config
 
 import (
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadDefaultsAndLegacyHeartbeatAliases(t *testing.T) {
@@ -104,6 +106,18 @@ func TestRejectsIncompleteInitAndWatchdog(t *testing.T) {
 	base.Remora.UserLoginWatchdog = UserLoginWatchdogConfig{Enabled: true, Heartbeat: 1, User: "remora"}
 	if err := base.Validate(); err == nil {
 		t.Fatal("expected incomplete watchdog error")
+	}
+}
+
+func TestRejectsInvalidJellyfinEnvironment(t *testing.T) {
+	base := Config{ConfigVersion: CurrentVersion, RESTAPI: RESTAPIConfig{Listen: "127.0.0.1", Port: 8095}, Remora: RemoraConfig{ServerStartTimeout: Duration{time.Second}, ServerStopTimeout: Duration{time.Second}, HeartbeatInterval: Duration{time.Second}, IOTimeout: Duration{time.Second}, Logs: LogConfig{Level: "info"}}, Jellyfin: JellyfinConfig{Path: "/x", DataDir: "/d", ConfigDir: "/c", CacheDir: "/k", LogDir: "/l", RunAsUser: "nobody"}}
+	base.defaults()
+	for _, env := range []map[string]string{{"": "value"}, {"BAD=NAME": "value"}, {"GOOD": "bad\x00value"}} {
+		candidate := base
+		candidate.Jellyfin.Env = env
+		if err := candidate.Validate(); err == nil || !strings.Contains(err.Error(), "jellyfin.env") {
+			t.Fatalf("environment %q validation error = %v", env, err)
+		}
 	}
 }
 

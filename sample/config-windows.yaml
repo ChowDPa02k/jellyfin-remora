@@ -135,6 +135,15 @@ jellyfin:
   # `default` discovers web assets beside a Windows installation or portable exe.
   web-dir: default
 
+  # Environment variables passed to the Jellyfin server. Jellyfin inherits the
+  # complete Remora service environment first; configured keys only override
+  # it. This is usually unnecessary because Jellyfin follows the Windows proxy.
+  # env:
+  #   HTTP_PROXY: http://127.0.0.1:7890
+  #   HTTPS_PROXY: http://127.0.0.1:7890
+  #   ALL_PROXY: http://127.0.0.1:7890
+  #   NO_PROXY: "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,172.17.0.0/16,192.168.0.0/16,100.64.0.0/10,fc00::/7,fe80::/10"
+
   # Additional version-specific Jellyfin CLI parameters become --key=value.
   parameters:
     package-name: jellyfin-remora

@@ -127,6 +127,16 @@ jellyfin:
   # `default` discovers app-bundle web assets; tarballs require an absolute path.
   web-dir: default
 
+  # Environment variables passed to the Jellyfin server. Jellyfin inherits the
+  # complete Remora environment first; configured keys only override it. This
+  # is usually unnecessary on macOS because Jellyfin follows the system proxy.
+  # HOME, USER, and LOGNAME are always normalized to run-as-user afterward.
+  # env:
+  #   HTTP_PROXY: http://127.0.0.1:7890
+  #   HTTPS_PROXY: http://127.0.0.1:7890
+  #   ALL_PROXY: http://127.0.0.1:7890
+  #   NO_PROXY: "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,172.17.0.0/16,192.168.0.0/16,100.64.0.0/10,fc00::/7,fe80::/10"
+
   # Additional version-specific Jellyfin CLI parameters become --key=value.
   # Jellyfin 10.10.7 rejects the newer hostwebclient parameter.
   parameters:

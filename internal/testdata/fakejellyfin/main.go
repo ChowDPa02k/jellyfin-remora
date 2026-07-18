@@ -14,6 +14,7 @@ import (
 func main() {
 	port := 8096
 	healthFile := ""
+	envFile := ""
 	childPIDFile := ""
 	childMode := false
 	startupMarker := ""
@@ -24,6 +25,8 @@ func main() {
 			port, _ = strconv.Atoi(strings.TrimPrefix(arg, "--fakeport="))
 		case strings.HasPrefix(arg, "--healthfile="):
 			healthFile = strings.TrimPrefix(arg, "--healthfile=")
+		case strings.HasPrefix(arg, "--envfile="):
+			envFile = strings.TrimPrefix(arg, "--envfile=")
 		case strings.HasPrefix(arg, "--childpidfile="):
 			childPIDFile = strings.TrimPrefix(arg, "--childpidfile=")
 		case arg == "--child=true":
@@ -32,6 +35,22 @@ func main() {
 			startupMarker = strings.TrimPrefix(arg, "--startupmarker=")
 		case strings.HasPrefix(arg, "--wizardfalsecount="):
 			wizardFalseCount, _ = strconv.ParseInt(strings.TrimPrefix(arg, "--wizardfalsecount="), 10, 64)
+		}
+	}
+	if envFile != "" {
+		environment := make(map[string]string, len(os.Environ()))
+		for _, entry := range os.Environ() {
+			name, value, ok := strings.Cut(entry, "=")
+			if ok {
+				environment[name] = value
+			}
+		}
+		data, err := json.Marshal(environment)
+		if err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(envFile, data, 0600); err != nil {
+			panic(err)
 		}
 	}
 	if childMode {

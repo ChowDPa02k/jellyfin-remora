@@ -11,6 +11,11 @@ The automated suite's HA-specific coverage includes:
 
 - Supervisor start, healthy transition, graceful stop, fatal storage fencing, configured recovery streak, manual-stop precedence, health-failure threshold restart, single-sample health accounting, transient startup-wizard rejection, bounded first-start initialization retries, five-failure setup/process circuit breakers, administrative circuit reset, serialized concurrent commands, unexpected `SIGKILL`, `D`/`U` process timeout handling, and durable `DATABASE_DAMAGED` fencing after console-plus-API confirmation.
 - Exact-process adoption, original adopted-process uptime, duplicate-process rejection, stale PID-file rejection, process-group descendant cleanup, kernel argv-boundary identity (including paths with spaces), and macOS environment preservation.
+- Managed-process environment tests verify complete inheritance, configured overrides, explicit empty values, and Remora's console defaults through a real child process on Darwin/Linux; config and embedded-sample tests cover all three platform templates.
+- Property coverage drives 100 independently seeded, 128-step command sequences through the real reconcile function and continuously checks manual-stop/fence dominance, at-most-one live generation, bounded and ordered events, and lifecycle accounting.
+- Native Go fuzz targets cover strict YAML migration/validation, REST JSON bodies and query parameters, forward-compatible state-file fields, archive entry containment, and malformed ZIP/TAR.GZ/TAR.XZ streams. CI executes their seed corpora under `go test`; maintainers can run sustained mutation with the commands below.
+- Lifecycle state and PID-file writes, process start/stop, atomic Jellyfin XML replacement, blocked storage probes, and mount-helper termination expose injected failure paths. Start/stop/restart mutations now roll back when their durable acknowledgement fails, including a second-location failure after the first state write succeeds.
+- Restart-interruption tests cover accepted stop before reconciliation, the gap between old-process exit and replacement start, restart-attempt circuit opening after exactly five failures, and Linux replacement adoption without a duplicate process.
 - Required mount-source matching for physical, SMB, NFS, Unicode/escaped SMB shares, isolated timed I/O probes, read-only probes, missing paths, secret redaction, Darwin's media-oriented `vers=3,resvport,nolocks,rsize=65536,wsize=65536,intr,soft` default with explicit-policy/NFSv4 preservation, and consecutive per-disk failure thresholds that reset after recovery while preserving fail-closed startup.
 - macOS mount-target recreation after Disk Arbitration removes `/Volumes/<share>`, including unsafe-path and symlink rejection.
 - Darwin `com.apple.provenance` detection, advisory validation output, and structured daemon warning logging.
@@ -49,6 +54,18 @@ Run with:
 ```sh
 go test -race ./...
 go vet ./...
+```
+
+Run sustained parser mutation one target at a time, for example:
+
+```sh
+go test ./internal/config -fuzz=FuzzParseConfiguration -fuzztime=10m
+go test ./internal/config -fuzz=FuzzMigrateConfiguration -fuzztime=10m
+go test ./internal/control -fuzz=FuzzAPIJSONBody -fuzztime=10m
+go test ./internal/control -fuzz=FuzzAPIQueryParsing -fuzztime=10m
+go test ./internal/supervisor -fuzz=FuzzPersistedStateParsing -fuzztime=10m
+go test ./internal/kickstart -fuzz=FuzzArchiveEntryName -fuzztime=10m
+go test ./internal/kickstart -fuzz=FuzzInspectArchiveBytes -fuzztime=10m
 ```
 
 Portable Linux tarballs have a fixed-epoch reproducibility and manifest test:
@@ -175,6 +192,11 @@ disabled so Remora remained the sole supervisor.
 | Rocky RPM install/upgrade/rollback/erase/reinstall | Versions change correctly; erase preserves operator config and Jellyfin data | Pass |
 | Debian host reboot | New boot ID; systemd starts Remora, loop-backed physical storage plus NFS/SMB recover, and exactly one Jellyfin 10.11.11 reaches `RUNNING` | Pass |
 | Rocky host reboot | New boot ID; loop-backed physical storage, one Remora, one Jellyfin, NFS, and SMB recover | Pass |
+| Rocky `jellyfin.env` propagation | An isolated child retains an unlisted parent value, receives YAML overrides and an explicit empty value, then exits cleanly | Pass (2026-07-18) |
+| Debian `jellyfin.env` propagation | Same full process-boundary assertions using the Debian run-as-user backend | Pass (2026-07-18) |
+| Rocky interrupted-supervisor adoption | Replacement manager adopts the exact live PID and refuses a duplicate start | Pass (2026-07-18) |
+| Debian interrupted-supervisor adoption | Replacement manager adopts the exact live PID and refuses a duplicate start | Pass (2026-07-18) |
+| Rocky/Debian forced descendant cleanup | A managed child process is gone after process-group force stop on both kernels | Pass (2026-07-18) |
 
 The destructive amd64 matrix was repeated against the packaged
 `0.8.0-alpha.7` binaries from core commit `5e9536ad1b20` on 2026-07-16. The

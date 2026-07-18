@@ -26,6 +26,9 @@ func TestWindowsSampleLoadsAsCurrentConfiguration(t *testing.T) {
 	if cfg.Jellyfin.Parameters["package-name"] != "jellyfin-remora" {
 		t.Fatalf("sample parameters = %+v", cfg.Jellyfin.Parameters)
 	}
+	if len(cfg.Jellyfin.Env) != 0 {
+		t.Fatalf("Windows sample must leave Jellyfin environment overrides commented: %+v", cfg.Jellyfin.Env)
+	}
 	if !cfg.Jellyfin.General.Paths.CachePath.Set || !cfg.Jellyfin.Branding.EnableSplashScreen.Set || !cfg.Jellyfin.Playback.Transcoding.TranscodePath.Set {
 		t.Fatal("sample does not exercise all managed Jellyfin setting groups")
 	}

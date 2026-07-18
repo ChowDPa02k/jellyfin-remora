@@ -206,19 +206,20 @@ type DiskConfig struct {
 }
 
 type JellyfinConfig struct {
-	Path       string           `yaml:"path"`
-	RunAsUser  string           `yaml:"run-as-user"`
-	RunAsGroup string           `yaml:"run-as-group"`
-	DataDir    string           `yaml:"data-dir"`
-	ConfigDir  string           `yaml:"config-dir"`
-	CacheDir   string           `yaml:"cache-dir"`
-	LogDir     string           `yaml:"log-dir"`
-	WebDir     string           `yaml:"web-dir"`
-	Parameters map[string]any   `yaml:"parameters"`
-	General    GeneralConfig    `yaml:"general,omitempty"`
-	Branding   BrandingConfig   `yaml:"branding,omitempty"`
-	Playback   PlaybackConfig   `yaml:"playback,omitempty"`
-	Networking NetworkingConfig `yaml:"networking,omitempty"`
+	Path       string            `yaml:"path"`
+	RunAsUser  string            `yaml:"run-as-user"`
+	RunAsGroup string            `yaml:"run-as-group"`
+	DataDir    string            `yaml:"data-dir"`
+	ConfigDir  string            `yaml:"config-dir"`
+	CacheDir   string            `yaml:"cache-dir"`
+	LogDir     string            `yaml:"log-dir"`
+	WebDir     string            `yaml:"web-dir"`
+	Env        map[string]string `yaml:"env,omitempty"`
+	Parameters map[string]any    `yaml:"parameters"`
+	General    GeneralConfig     `yaml:"general,omitempty"`
+	Branding   BrandingConfig    `yaml:"branding,omitempty"`
+	Playback   PlaybackConfig    `yaml:"playback,omitempty"`
+	Networking NetworkingConfig  `yaml:"networking,omitempty"`
 }
 
 type GeneralConfig struct {
@@ -362,6 +363,13 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	return Parse(b)
+}
+
+// Parse migrates, strictly decodes, defaults, and validates one configuration.
+// Keeping parsing independent of filesystem I/O makes every accepted byte
+// sequence subject to the same validation path in fuzz and production use.
+func Parse(b []byte) (*Config, error) {
 	migrated, report, err := Migrate(b)
 	if err != nil {
 		return nil, err
@@ -504,6 +512,14 @@ func (c *Config) Validate() error {
 	}
 	if os.Geteuid() == 0 && c.Jellyfin.RunAsUser == "" {
 		return errors.New("jellyfin.run-as-user is required when jellyfin-remora runs as root")
+	}
+	for name, value := range c.Jellyfin.Env {
+		if name == "" || strings.ContainsAny(name, "=\x00") {
+			return fmt.Errorf("jellyfin.env contains invalid variable name %q", name)
+		}
+		if strings.ContainsRune(value, '\x00') {
+			return fmt.Errorf("jellyfin.env.%s contains a NUL byte", name)
+		}
 	}
 	for i, d := range c.Disks {
 		c.Disks[i].Type = strings.ToLower(d.Type)

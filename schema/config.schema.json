@@ -119,6 +119,11 @@
         "cache-dir": { "type": "string" },
         "log-dir": { "type": "string" },
         "web-dir": { "type": "string" },
+        "env": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[^=\\u0000]+$" },
+          "additionalProperties": { "type": "string" }
+        },
         "parameters": { "type": "object", "additionalProperties": true },
         "general": {
           "type": "object",

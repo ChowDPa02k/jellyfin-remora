@@ -55,6 +55,16 @@ Jellyfin always runs as a separate operating-system process. Remora inherits the
 current environment and does not replace hardware-runtime, CPU, GPU, NPU, library, or
 threading variables.
 
+Optional `jellyfin.env` entries replace matching inherited names
+case-insensitively and append new names; all unlisted variables remain unchanged.
+An explicitly empty value is passed as `NAME=` rather than removing the variable.
+Names containing `=` or NUL bytes and values containing NUL bytes are rejected.
+Environment values are not included in status output, but may still be visible to
+privileged process inspection and through the local configuration endpoint, so proxy
+credentials should use the same owner-only configuration protections as other secrets.
+On POSIX systems, `HOME`, `USER`, and `LOGNAME` are normalized to
+`jellyfin.run-as-user` after this overlay and cannot impersonate another account.
+
 On macOS, a root Remora requires `jellyfin.run-as-user`; running Jellyfin itself as root
 is rejected. The child receives the selected account's HOME, USER, LOGNAME, primary
 group, and supplementary groups. It runs in a distinct process group so graceful and

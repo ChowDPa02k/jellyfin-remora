@@ -5,6 +5,12 @@ systemd. Remora does not impose cgroup CPU, memory, GPU, device, or NUMA limits;
 the Jellyfin child retains the host's normal hardware-acceleration environment.
 SysV init is not supported.
 
+`jellyfin.env` can make proxy, driver, or vendor-runtime values deterministic
+under systemd. It overlays the inherited service environment rather than replacing
+it. The Linux sample enables a localhost proxy example; remove its `HTTP_PROXY`,
+`HTTPS_PROXY`, and `ALL_PROXY` entries unless a proxy is actually listening on the
+configured address. Keep the configuration mode `0600` if values contain secrets.
+
 ## Install and initialize
 
 `jellyfin-remora` and `remoractl` must be in the same directory. The portable

@@ -32,6 +32,13 @@ silently within `v0.9.x`.
   but rejected on an OS that cannot implement it safely. Linux SMB credentials
   accept `file:/absolute/path`, an absolute path, or `libsecret:NAME`; Windows
   accepts `windows-credential-manager`; macOS rejects credential providers.
+- `v0.9.0-beta.3` adds optional `jellyfin.env` string overrides. The child first
+  inherits Remora's complete environment, then replaces only configured names;
+  omission therefore preserves all earlier process and hardware-runtime behavior.
+- `v0.9.0-beta.4` makes lifecycle-operation acknowledgement conditional on a
+  successful durable state write. A failed write rejects and rolls back the
+  in-memory start/stop/restart mutation, then best-effort rewrites the previous
+  intent to both state locations so a one-shot partial write cannot be replayed.
 
 ## Local REST API v1 and CLI
 

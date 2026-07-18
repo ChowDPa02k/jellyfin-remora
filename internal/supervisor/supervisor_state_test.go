@@ -24,13 +24,16 @@ import (
 )
 
 type stateProcess struct {
-	running   bool
-	state     string
-	forceStop bool
-	stopErr   error
-	stopCalls int
-	started   time.Time
-	ports     []int
+	running         bool
+	state           string
+	forceStop       bool
+	startErr        error
+	stopErr         error
+	stopCalls       int
+	startCalls      int
+	duplicateStarts int
+	started         time.Time
+	ports           []int
 }
 
 func TestFirstStartInitializationBacksOffAndOpensCircuit(t *testing.T) {
@@ -371,7 +374,20 @@ func (p *stateProcess) Info(context.Context) (platform.ProcessInfo, bool) {
 	}
 	return platform.ProcessInfo{PID: 42, PGID: 42, State: p.state, Ports: append([]int(nil), p.ports...)}, true
 }
-func (p *stateProcess) Start(context.Context) error { p.running = true; return nil }
+func (p *stateProcess) Start(context.Context) error {
+	if p.running {
+		p.duplicateStarts++
+		return errors.New("duplicate process start")
+	}
+	p.running = true
+	p.startCalls++
+	p.started = time.Now()
+	if p.startErr != nil {
+		p.running = false
+		return p.startErr
+	}
+	return nil
+}
 func (p *stateProcess) Stop(_ context.Context, force bool, _ time.Duration) error {
 	p.stopCalls++
 	p.forceStop = force

@@ -102,11 +102,12 @@ type Supervisor struct {
 	applicationReady     bool
 	events               []model.Event
 	eventSequence        uint64
+	writeStateFile       func(string, []byte, os.FileMode) error
 }
 
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
 	now := time.Now()
-	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32)}
+	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32), writeStateFile: atomicWrite}
 	if b, err := os.ReadFile(filepath.Join(cfg.Remora.DataDir, contract.APIKeyFileName)); err == nil {
 		s.apiKey = strings.TrimSpace(string(b))
 	}
@@ -184,7 +185,33 @@ func (s *Supervisor) Submit(ctx context.Context, action Action, force bool) erro
 
 func (s *Supervisor) handle(req Request) {
 	var err error
+	type lifecycleSnapshot struct {
+		manualStop          bool
+		desired             model.DesiredState
+		forceStop           bool
+		restartRequested    bool
+		processFailed       bool
+		crashes             []time.Time
+		nextStart           time.Time
+		initializationFails int
+		nextInitialization  time.Time
+		databaseDamaged     bool
+		databaseFailures    int
+		database            model.DatabaseResult
+	}
+	lifecycle := req.Action == ActionStart || req.Action == ActionStop || req.Action == ActionRestart
+	var before lifecycleSnapshot
 	s.mu.Lock()
+	if lifecycle {
+		before = lifecycleSnapshot{
+			manualStop: s.status.ManualStop, desired: s.status.DesiredState,
+			forceStop: s.forceStop, restartRequested: s.restartRequested,
+			processFailed: s.processFailed, crashes: append([]time.Time(nil), s.crashes...),
+			nextStart: s.nextStart, initializationFails: s.initializationFails,
+			nextInitialization: s.nextInitialization, databaseDamaged: s.databaseDamaged,
+			databaseFailures: s.databaseFailures, database: s.status.Database,
+		}
+	}
 	switch req.Action {
 	case ActionStart:
 		s.status.ManualStop = false
@@ -197,9 +224,6 @@ func (s *Supervisor) handle(req Request) {
 		s.databaseDamaged = false
 		s.databaseFailures = 0
 		s.status.Database = model.DatabaseResult{}
-		if s.databaseSource != nil {
-			s.databaseSource.Reset()
-		}
 	case ActionStop:
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
@@ -221,7 +245,24 @@ func (s *Supervisor) handle(req Request) {
 	if req.Action == ActionHealthcheck {
 		s.immediateHealthcheck()
 	}
-	_ = s.persist()
+	if persistErr := s.persist(); err == nil && persistErr != nil {
+		err = fmt.Errorf("persist %s operation: %w", req.Action, persistErr)
+		if lifecycle {
+			s.mu.Lock()
+			s.status.ManualStop, s.status.DesiredState = before.manualStop, before.desired
+			s.forceStop, s.restartRequested = before.forceStop, before.restartRequested
+			s.processFailed, s.crashes, s.nextStart = before.processFailed, before.crashes, before.nextStart
+			s.initializationFails, s.nextInitialization = before.initializationFails, before.nextInitialization
+			s.databaseDamaged, s.databaseFailures, s.status.Database = before.databaseDamaged, before.databaseFailures, before.database
+			s.mu.Unlock()
+			// The first of the runtime/durable state writes may already have
+			// succeeded. Best-effort restoration prevents a one-shot second-write
+			// failure from replaying an operation that the API rejected.
+			s.persistBestEffort()
+		}
+	} else if err == nil && req.Action == ActionStart && s.databaseSource != nil {
+		s.databaseSource.Reset()
+	}
 	req.Reply <- err
 }
 
@@ -233,7 +274,7 @@ func (s *Supervisor) immediateHealthcheck() {
 	s.mu.Lock()
 	s.status.Jellyfin = h
 	s.mu.Unlock()
-	_ = s.persist()
+	s.persistBestEffort()
 }
 
 func (s *Supervisor) runStorageChecks(ctx context.Context, all bool) {
@@ -324,7 +365,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		}
 		s.setMountRecoveryAllowed(true)
 		s.clearOneShots()
-		_ = s.persist()
+		s.persistBestEffort()
 		return
 	}
 	if fatal {
@@ -336,14 +377,14 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.setMountRecoveryAllowed(true)
 		s.transition(model.StateStorageFenced, "required storage is unhealthy")
 		s.clearOneShots()
-		_ = s.persist()
+		s.persistBestEffort()
 		return
 	}
 	if s.storageFenced {
 		s.healthyStorageRuns++
 		if s.healthyStorageRuns < s.cfg.Remora.RecoverySuccesses {
 			s.transition(model.StateStorageFenced, fmt.Sprintf("storage recovery confirmation %d/%d", s.healthyStorageRuns, s.cfg.Remora.RecoverySuccesses))
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		s.storageFenced = false
@@ -355,20 +396,20 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		} else {
 			s.transition(model.StateProcessFailed, "restart rate limit exceeded")
 		}
-		_ = s.persist()
+		s.persistBestEffort()
 		return
 	}
 	if s.databaseDamaged {
 		if running {
 			if err := s.stop(ctx, false); err != nil {
 				s.transition(model.StateDatabaseDamaged, "database damage is latched and Jellyfin could not be stopped: "+err.Error())
-				_ = s.persist()
+				s.persistBestEffort()
 				return
 			}
 		}
 		s.transition(model.StateDatabaseDamaged, "Jellyfin database damage is latched; repair or restore the database, then use remoractl start")
 		s.clearOneShots()
-		_ = s.persist()
+		s.persistBestEffort()
 		return
 	}
 	uninterruptible := running && (strings.Contains(pi.State, "D") || strings.Contains(pi.State, "U"))
@@ -381,13 +422,13 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			if err := s.stop(ctx, true); err != nil {
 				s.processFailed = true
 				s.transition(model.StateProcessFailed, "hung Jellyfin process could not be killed")
-				_ = s.persist()
+				s.persistBestEffort()
 				return
 			}
 			s.recordCrash()
 			s.scheduleRestart()
 			s.transition(model.StateRestartBackoff, "Jellyfin remained in an uninterruptible process state")
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		// A transient Darwin U state is common while Jellyfin scans a large
@@ -403,7 +444,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		if err := s.stop(ctx, force); err != nil {
 			s.processFailed = true
 			s.transition(model.StateProcessFailed, "Jellyfin could not be stopped: "+err.Error())
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		running = false
@@ -413,7 +454,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		if time.Now().Before(s.nextStart) {
 			s.transition(model.StateRestartBackoff, "")
 			s.clearOneShots()
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		configurationResult, configurationErr := s.configuration.Reconcile()
@@ -421,7 +462,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.processFailed = true
 			s.transition(model.StateProcessFailed, "Jellyfin configuration reconciliation failed: "+configurationErr.Error())
 			s.clearOneShots()
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		if len(configurationResult.ChangedFiles) > 0 {
@@ -448,7 +489,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			}
 		}
 		s.clearOneShots()
-		_ = s.persist()
+		s.persistBestEffort()
 		return
 	}
 	age := time.Since(s.process.StartedAt())
@@ -484,13 +525,13 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.wizardIncompleteRuns++
 		if age < 10*time.Second || s.wizardIncompleteRuns < 3 {
 			s.transition(model.StateStarting, "confirming incomplete Jellyfin startup wizard")
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		s.transition(model.StateFirstStart, "")
 		if time.Now().Before(s.nextInitialization) {
 			s.transition(model.StateFirstStart, "waiting for Jellyfin first-start initialization retry")
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		if err := s.initializeServer(ctx); err != nil {
@@ -507,7 +548,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 				s.nextInitialization = time.Now().Add(delay)
 				s.transition(model.StateFirstStart, fmt.Sprintf("%s; retrying in %s", message, delay))
 			}
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		s.initializationFails = 0
@@ -515,12 +556,12 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		if err := s.stop(ctx, false); err != nil {
 			s.processFailed = true
 			s.transition(model.StateProcessFailed, "initialized Jellyfin could not be stopped: "+err.Error())
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		s.scheduleRestart()
 		s.transition(model.StateRestartBackoff, "Jellyfin initialization completed; restarting")
-		_ = s.persist()
+		s.persistBestEffort()
 		return
 	}
 	if infoErr != nil || info.StartupWizardCompleted == nil || *info.StartupWizardCompleted {
@@ -548,7 +589,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.transition(model.StateDatabaseDamaged, "confirmed Jellyfin database damage; automatic restart is fenced until remoractl start")
 		}
 		s.clearOneShots()
-		_ = s.persist()
+		s.persistBestEffort()
 		return
 	}
 	if infoErr == nil && s.cfg.Remora.UserLoginWatchdog.Enabled && !s.watchdogReady {
@@ -571,12 +612,12 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 				s.watchdogReady = false
 				if recoverErr := s.ensureAPIKey(ctx); recoverErr != nil {
 					s.transition(model.StateDegraded, "Remora API key recovery failed: "+recoverErr.Error())
-					_ = s.persist()
+					s.persistBestEffort()
 					return
 				}
 			} else {
 				s.transition(model.StateDegraded, "Remora API key validation failed: "+err.Error())
-				_ = s.persist()
+				s.persistBestEffort()
 				return
 			}
 		}
@@ -585,7 +626,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		if err := s.client.EnsureWatchdogUser(ctx, s.adminCredential(), s.cfg.Remora.UserLoginWatchdog); err != nil {
 			s.watchdogFailed = true
 			s.transition(model.StateDegraded, "login watchdog failed: "+err.Error())
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		s.watchdogFailed = false
@@ -634,7 +675,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		if err := s.stop(ctx, false); err != nil {
 			s.processFailed = true
 			s.transition(model.StateProcessFailed, "unhealthy Jellyfin could not be stopped: "+err.Error())
-			_ = s.persist()
+			s.persistBestEffort()
 			return
 		}
 		s.recordCrash()
@@ -644,7 +685,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.transition(model.StateDegraded, health.Error)
 	}
 	s.clearOneShots()
-	_ = s.persist()
+	s.persistBestEffort()
 }
 
 func (s *Supervisor) evaluateDatabaseDamage(ctx context.Context, readiness model.HealthResult) bool {
@@ -1120,13 +1161,23 @@ func (s *Supervisor) statusCopyUpdate(fn func(*model.Status)) {
 func (s *Supervisor) persist() error {
 	st := s.Status()
 	data, damage := encodeState(st, s.databaseDamaged)
-	if err := atomicWrite(filepath.Join(runtimeStateDir(s.cfg), contract.StateFileName), data, 0640); err != nil {
+	writer := s.writeStateFile
+	if writer == nil {
+		writer = atomicWrite
+	}
+	if err := writer(filepath.Join(runtimeStateDir(s.cfg), contract.StateFileName), data, 0640); err != nil {
 		return err
 	}
 	if damage == 1 {
 		return nil
 	}
-	return atomicWrite(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName), data, 0640)
+	return writer(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName), data, 0640)
+}
+
+func (s *Supervisor) persistBestEffort() {
+	if err := s.persist(); err != nil {
+		s.log.Error("cannot persist supervisor state", "error", err)
+	}
 }
 
 func encodeState(st model.Status, databaseDamaged bool) ([]byte, int) {
@@ -1173,6 +1224,10 @@ func readPersistedState(path string) persistedState {
 	if err != nil {
 		return persistedState{}
 	}
+	return parsePersistedState(b)
+}
+
+func parsePersistedState(b []byte) persistedState {
 	lines := strings.Fields(string(b))
 	if len(lines) < 3 {
 		return persistedState{}

@@ -31,6 +31,8 @@ type Manager struct {
 	waitDone   chan error
 	stdout     io.Writer
 	stderr     io.Writer
+	writeFile  func(string, []byte, os.FileMode) error
+	removeFile func(string) error
 }
 
 func New(cfg *config.Config, backend platform.Backend, stdout, stderr io.Writer) (*Manager, error) {
@@ -42,7 +44,7 @@ func New(cfg *config.Config, backend platform.Backend, stdout, stderr io.Writer)
 	if err != nil {
 		return nil, err
 	}
-	return &Manager{cfg: cfg, backend: backend, executable: exe, args: buildArgs(cfg, webDir), stdout: stdout, stderr: stderr}, nil
+	return &Manager{cfg: cfg, backend: backend, executable: exe, args: buildArgs(cfg, webDir), stdout: stdout, stderr: stderr, writeFile: atomicWrite, removeFile: os.Remove}, nil
 }
 
 func resolveExecutable(path string) (string, error) {
@@ -135,7 +137,8 @@ func (m *Manager) Start(ctx context.Context) error {
 		return errors.New("Jellyfin is already managed")
 	}
 	cmd := exec.Command(m.executable, m.args...)
-	cmd.Env = appendEnvDefault(os.Environ(), "DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION", "1")
+	cmd.Env = mergeEnvironment(os.Environ(), m.cfg.Jellyfin.Env)
+	cmd.Env = appendEnvDefault(cmd.Env, "DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION", "1")
 	cmd.Env = appendEnvDefault(cmd.Env, "TERM", "xterm-256color")
 	if err := m.backend.ConfigureProcess(cmd, m.cfg.Jellyfin.RunAsUser, m.cfg.Jellyfin.RunAsGroup); err != nil {
 		return err
@@ -179,6 +182,40 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.mu.Unlock()
 	}()
 	return nil
+}
+
+func mergeEnvironment(inherited []string, overrides map[string]string) []string {
+	env := append([]string(nil), inherited...)
+	keys := make([]string, 0, len(overrides))
+	for name := range overrides {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		env = replaceEnvironment(env, name, overrides[name])
+	}
+	return env
+}
+
+func replaceEnvironment(env []string, name, value string) []string {
+	prefix := name + "="
+	out := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, entry := range env {
+		separator := strings.IndexByte(entry, '=')
+		if separator >= 0 && strings.EqualFold(entry[:separator], name) {
+			if !replaced {
+				out = append(out, prefix+value)
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, entry)
+	}
+	if !replaced {
+		out = append(out, prefix+value)
+	}
+	return out
 }
 
 func appendEnvDefault(env []string, name, value string) []string {
@@ -303,10 +340,18 @@ func (m *Manager) WritePIDFile() error {
 	if pid <= 0 {
 		return errors.New("no managed PID")
 	}
-	return atomicWrite(filepath.Join(m.cfg.Remora.DataDir, contract.PIDFileName), []byte(strconv.Itoa(pid)+"\n"), 0640)
+	writer := m.writeFile
+	if writer == nil {
+		writer = atomicWrite
+	}
+	return writer(filepath.Join(m.cfg.Remora.DataDir, contract.PIDFileName), []byte(strconv.Itoa(pid)+"\n"), 0640)
 }
 func (m *Manager) RemovePIDFile() error {
-	err := os.Remove(filepath.Join(m.cfg.Remora.DataDir, contract.PIDFileName))
+	remove := m.removeFile
+	if remove == nil {
+		remove = os.Remove
+	}
+	err := remove(filepath.Join(m.cfg.Remora.DataDir, contract.PIDFileName))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

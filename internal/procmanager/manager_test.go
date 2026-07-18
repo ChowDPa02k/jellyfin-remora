@@ -114,3 +114,46 @@ func TestAppendEnvDefaultPreservesExplicitColorPreference(t *testing.T) {
 		t.Fatalf("explicit environment was overwritten: %v", got)
 	}
 }
+
+func TestMergeEnvironmentInheritsAndOverridesWithoutDuplicates(t *testing.T) {
+	inherited := []string{"PATH=/usr/bin", "https_proxy=http://old:8080", "KEEP=value"}
+	overrides := map[string]string{
+		"HTTPS_PROXY": "http://127.0.0.1:7890",
+		"NO_PROXY":    "localhost,127.0.0.1",
+	}
+	got := mergeEnvironment(inherited, overrides)
+	want := []string{
+		"PATH=/usr/bin",
+		"HTTPS_PROXY=http://127.0.0.1:7890",
+		"KEEP=value",
+		"NO_PROXY=localhost,127.0.0.1",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("environment=%v, want %v", got, want)
+	}
+}
+
+func TestMergeEnvironmentAllowsExplicitEmptyValue(t *testing.T) {
+	got := mergeEnvironment([]string{"HTTP_PROXY=http://old:8080"}, map[string]string{"HTTP_PROXY": ""})
+	if want := []string{"HTTP_PROXY="}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("environment=%v, want %v", got, want)
+	}
+}
+
+func TestPIDFileSystemCallFailuresAreReturned(t *testing.T) {
+	injected := errors.New("injected filesystem failure")
+	manager := &Manager{
+		cfg: &config.Config{Remora: config.RemoraConfig{DataDir: t.TempDir()}},
+		pid: 42,
+		writeFile: func(string, []byte, os.FileMode) error {
+			return injected
+		},
+		removeFile: func(string) error { return injected },
+	}
+	if err := manager.WritePIDFile(); !errors.Is(err, injected) {
+		t.Fatalf("write error = %v", err)
+	}
+	if err := manager.RemovePIDFile(); !errors.Is(err, injected) {
+		t.Fatalf("remove error = %v", err)
+	}
+}
