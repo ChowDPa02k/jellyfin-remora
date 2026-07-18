@@ -1,5 +1,123 @@
 # Jellyfin Remora
 
+> 䲟鱼（Echeneidae）：
+>
+> 一种背鳍进化成了吸盘的海洋鱼类，吸附在大型海洋生物身上，吃宿主吃剩的残渣和身上的寄生虫，并靠宿主带他们长途迁徙，因此取得通俗名称**吸盘鱼（Remora）**。
+>
+> 吸盘鱼与大型海洋生物之间构成了伴生（共生）关系，这就是本项目名称的由来。我们不妨想象一下吸盘鱼贴在水母（Jellyfin）身上会是什么样子🤔
+
+Jellyfin Remora是媒体服务器项目[Jellyfin](https://jellyfin.org/)的多平台守护程序。它负责监测和管理Jellyfin Server的硬盘挂载、进程健康、内部数据库损坏，适用于裸金属部署场景。典型场景如下：
+
+- Apple Silicon macOS，容器环境无法调用VideoToolbox硬件加速
+- Windows，CUDA/AMF硬件加速的Docker配置复杂
+- Windows，一些硬件系统上基于WSL的Docker运行时Samba挂载稳定性存在问题
+- Linux，部分低端arm芯片的性能较差不足以托管Docker
+- Linux，一些私有化的操作系统无法安装Docker
+
+Jellyfin Remora使用GO语言编写，提供了一个和[Patroni](https://github.com/patroni/patroni)相似的设计（因为作者本人就是PostgreSQL的DBA），由守护程序`jellyfin-remora`负责进程管理，`remoractl`负责外部控制，一个yaml文件配置所有事情。
+
+*当前项目正在活跃开发中，里程碑、路线图可以阅读[ROADMAP.md](ROADMAP.md)*
+
+## 功能
+
+Jellyfin Remora提供以下能力：
+
+- 硬盘健康状况管理：定期检测物理硬盘、SMB网盘、NFS网盘的挂载状况、读写可用性，确保在所有硬盘健康之前Jellyfin进程不会启动，且硬盘损坏时自动停止Jellyfin服务。Jellyfin Remora会读取配置文件中的定义，并**自动挂载硬盘**。
+- 服务器高可用：定期访问官方提供的 `/health` API、（可选）通过一个独立的watchdog用户登录主页，并结合进程PID、日志、端口等信息守护服务器进程，在意外状况时自动拉起。
+- CLI控制：通过`remoractl`启停Jellyfin服务器、修改服务器配置，以及管理API KEY、管理活跃的会话。另外，`remoractl`还提供从0开始的初始化功能。
+
+## 平台支持
+
+Jellyfin Remora的设计目标是在不适合运行[容器](https://docs.linuxserver.io/images/docker-jellyfin/)的场景提供高可用能力，因此该项目优先适配：
+
+1. Apple Silicon M系列芯片的macOS系统
+2. Windows系统
+
+开发过程中有基于部分主流发行版Linux适配，但均未经过长稳验证。
+
+**本项目没有在Intel芯片的macOS进行过测试验证，未来也不会有任何适配计划。**
+
+### 测试矩阵
+
+| 平台                                                         | 架构    | 结果   | 测试内容                                                     |
+| ------------------------------------------------------------ | ------- | ------ | ------------------------------------------------------------ |
+| macOS                                                        | `arm64` | ✅      | Jellyfin 10.10.7, 10.11.11, 12.0.0-rc2，独立tar.xz包和App Bundle安装 |
+| Windows 11 Pro                                               | `amd64` | ✅      | Jellyfin 10.11.11, 12.0.0-rc2，zip和exe安装包                |
+| Windows Server 2022                                          | `amd64` | ✅      | Jellyfin 10.11.11, 12.0.0-rc2，zip和exe安装包                |
+| Windows Server 2025                                          | `amd64` | ✅      | Jellyfin 10.11.11, 12.0.0-rc2，zip和exe安装包                |
+| Windows                                                      | `arm64` | 未开始 | 仅交叉编译通过                                               |
+| Linux <br />(Debian 13 / Ubuntu 24.04 / Rocky Linux 10 / openSUSE Tumbleweed) | `amd64` | ✅      | Jellyfin 10.11.11，独立tar.gz包、DEB、RPM包                  |
+| Linux <br />(Debian 13 / Ubuntu 24.04 / Fedora / openSUSE Tumbleweed) | `arm64` | ✅      | Jellyfin 10.11.11，独立tar.gz包、DEB、RPM包                  |
+
+关于各平台的兼容性说明，可额外参考以下文档：
+
+- macOS平台兼容性
+- Windows平台兼容性
+- Linux平台兼容性
+
+## 快速开始
+
+Jellyfin Remora提供简单和高级两种方式初始化一个服务器。
+
+### 前提条件
+
+- 已经[安装](https://jellyfin.org/downloads/server/)好Jellyfin，且未启动
+- （或者）下载好了你所在平台的独立压缩包
+- 在[Release](https://github.com/ChowDPa02k/jellyfin-remora/releases)下载好了本项目的编译包并解压/安装好
+
+后续Remora将会支持MSI、Homebrew、RPM、DEB。
+
+### 简易启动
+
+```sh
+sudo ./remoractl kickstart
+```
+
+命令会启动一个交互式的向导，填写完所有信息后程序会自动创建配置文件、配置开机启动，并立即启动服务器。
+
+### 高级启动
+
+```sh
+sudo ./remoractl init
+```
+
+命令会根据你所在的操作系统平台启动编辑器，供你在示例的基础上编辑yaml配置文件，保存后会校验yaml、配置开机启动，并询问你现在是否立即启动服务器。
+
+各平台的配置文件详情可以参考[sample](https://github.com/ChowDPa02k/jellyfin-remora/tree/main/sample)。
+
+### 附注
+
+关于开机启动：
+
+- 在macOS平台会创建launchd plist
+- 在Windows平台会创建计划任务
+- 在Linux平台会创建systemd service
+
+不支持SysVinit。
+
+## 开发和编译
+
+```sh
+make build
+```
+
+编译成果会根据平台和架构存放在二级目录下，当前涵盖了：
+
+```text
+build/
+├── darwin/arm64/
+├── linux/arm64/
+├── linux/x86_64/
+├── windows/arm64/
+└── windows/x86_64/
+```
+
+`make build` 只会编译当前平台的二进制文件， `make cross-build` 则会编译全平台的二进制。
+
+在编译时，所有`sample/*.yaml`会被嵌入到二进制文件内部，因此编译成果只有两个程序：`jellyfin-remora`和`remoractl`，我们规定这两个可执行文件工作时必须放在同一个目录下。
+
+---
+
 Jellyfin Remora is a companion supervisor for Jellyfin. The current macOS,
 Windows, and native Linux beta baseline supports storage fencing, process
 supervision, first-run setup, pre-start XML configuration reconciliation,
@@ -14,59 +132,8 @@ Database corruption detection and recovery are documented in [docs/database-safe
 Build and review requirements are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 Native bare-metal/systemd installation is documented in [docs/linux.md](docs/linux.md).
 
-## Platform support
 
-The macOS target is Apple Silicon (`arm64`) only. Intel (`x86_64`/`amd64`)
-Macs are not supported, and there are no plans to add Intel macOS support or
-publish Intel macOS artifacts.
 
-## Platform adaptation test status
-
-The status below records native platform and Jellyfin adaptation testing. A
-passed adaptation test does not by itself mean that every stable-release gate,
-such as long-running soak tests, signing, packaging, upgrade, and uninstall,
-has passed.
-
-| Platform | Architecture | Status | Tested scope or plan |
-|---|---|---|---|
-| macOS | Apple Silicon (`arm64`) | Passed（已通过） | Native clean-install and destructive HA tests with Jellyfin 10.10.7, 10.11.11, and 12.0.0 |
-| macOS | Intel (`x86_64`/`amd64`) | Not planned（不计划） | No adaptation, testing, support, or release artifacts are planned |
-| Windows 11 Pro | `amd64` | Passed（已通过） | Native service/task lifecycle, storage faults, reboot recovery, MSI lifecycle, and Jellyfin 10.11.11 |
-| Windows Server 2022 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
-| Windows Server 2025 | `amd64` | Passed（已通过） | Native service, SMB/NFS fault recovery, reboot, MSI lifecycle, and Jellyfin 10.11.11 |
-| Windows | `arm64` | Not started（未开始） | Cross-build only; native dependencies and the Jellyfin compatibility matrix have not been tested |
-| Linux (Debian 13 / Ubuntu 24.04 / Rocky Linux 10 / openSUSE Tumbleweed) | `amd64` | Passed（已通过） | Native systemd lifecycle, process adoption, physical/SMB/NFS fencing, filesystem/process faults, host reboot, and DEB/RPM lifecycle with Jellyfin 10.11.11 |
-| Linux (Debian 13 / Ubuntu 24.04 / Fedora / openSUSE Tumbleweed) | `arm64` | Passed（已通过） | Native four-distribution ABI matrix plus real Jellyfin 10.11.11 systemd lifecycle, process adoption, physical identity, permission, read-only, full-disk, and process-hang faults on Ubuntu 24.04 ARM |
-
-## Build
-
-```sh
-make build
-```
-
-Local builds always keep the daemon and control CLI together under a normalized
-platform/architecture directory. `amd64` is named `x86_64` on disk:
-
-```text
-build/
-├── darwin/arm64/
-├── linux/arm64/
-├── linux/x86_64/
-├── windows/arm64/
-└── windows/x86_64/
-```
-
-`make build` creates only the native leaf directory. `make cross-build` creates
-all five supported or planned target directories. GitHub workflow layout is
-unchanged for now.
-
-Every `sample/*.yaml` platform template, including
-[`sample/config-darwin.yaml`](sample/config-darwin.yaml) and
-[`sample/config-windows.yaml`](sample/config-windows.yaml), and
-[`sample/config-linux.yaml`](sample/config-linux.yaml), is embedded in
-`remoractl` at build time. Release packages may retain the external files for
-inspection, but init does not depend on them. `--sample-dir` explicitly
-overrides the embedded platform template for development or customized builds.
 For an installed pair of binaries, place `remoractl` and `jellyfin-remora` in
 the same directory and run `remoractl init`. Init refuses to open the editor if
 the sibling daemon is absent. It selects the embedded host template, edits and
@@ -96,8 +163,7 @@ started with that account.
 
 For a zero-knowledge deployment, run `remoractl kickstart` instead. Its Bubble
 Tea wizard detects native Jellyfin installations or validates a Generic
-`.tar.gz`, `.tar.xz`, or `.zip` against the official Jellyfin repository,
-creates a complete Jellyfin home, infers the
+`.tar.gz`, `.tar.xz`, or `.zip`, creates a complete Jellyfin home, infers the
 physical/SMB/NFS mounts containing all entered paths, offers real Jellyfin Web
 language and region selections, and deploys the native service. Privileged
 Linux Kickstart installs both Remora binaries atomically under `/usr/local/bin`
