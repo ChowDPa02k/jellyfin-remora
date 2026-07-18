@@ -1,5 +1,8 @@
 # Jellyfin Remora
 
+![](https://github.com/user-attachments/assets/7d158294-3a05-4c3a-a3a7-e8985c17eca4)
+
+
 > 䲟鱼（Echeneidae）：
 >
 > 一种背鳍进化成了吸盘的海洋鱼类，吸附在大型海洋生物身上，吃宿主吃剩的残渣和身上的寄生虫，并靠宿主带他们长途迁徙，因此取得通俗名称**吸盘鱼（Remora）**。
