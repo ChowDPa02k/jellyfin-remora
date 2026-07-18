@@ -68,6 +68,12 @@ go test ./internal/kickstart -fuzz=FuzzArchiveEntryName -fuzztime=10m
 go test ./internal/kickstart -fuzz=FuzzInspectArchiveBytes -fuzztime=10m
 ```
 
+Kickstart package-validator unit coverage uses bounded local HTTP servers to
+assert official mirrorlist SHA-256 matching, legacy archive download/hash
+fallback, checksum rejection, connection/request deadlines, whole-download
+deadlines, visible TUI progress phases, and rejection when a verified archive
+changes before extraction. These tests do not depend on the public repository.
+
 Portable Linux tarballs have a fixed-epoch reproducibility and manifest test:
 
 ```sh

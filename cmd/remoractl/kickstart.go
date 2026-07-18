@@ -88,6 +88,14 @@ func loadKickstartAnswers(path string, detected kickstart.Installation, found bo
 		if err != nil {
 			return kickstart.Answers{}, err
 		}
+		validation, err := validateKickstartPackage(context.Background(), input.Archive, func(phase kickstart.PackageValidationPhase) {
+			fmt.Fprintf(os.Stderr, "%s…\n", phase)
+		})
+		if err != nil {
+			return kickstart.Answers{}, fmt.Errorf("validate selected Jellyfin package: %w", err)
+		}
+		archive.VerifiedSHA256 = validation.LocalSHA256
+		archive.VerifiedSize = validation.LocalSize
 		installation = kickstart.Installation{Archive: &archive}
 	}
 	home, err := filepath.Abs(input.JellyfinHome)

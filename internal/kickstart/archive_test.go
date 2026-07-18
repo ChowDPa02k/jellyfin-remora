@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -103,6 +104,36 @@ func TestInspectArchiveRejectsTraversal(t *testing.T) {
 	writeTarGZ(t, archive, map[string][]byte{"../jellyfin": []byte("unsafe")})
 	if _, err := InspectArchive(archive); err == nil {
 		t.Fatal("expected path traversal rejection")
+	}
+}
+
+func TestExtractArchiveRejectsPackageChangedAfterVerification(t *testing.T) {
+	binary, err := os.ReadFile(matchingExecutable(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "jellyfin_10.11.11-test.tar.gz")
+	writeTarGZ(t, archive, map[string][]byte{"jellyfin/jellyfin": binary})
+	info, err := InspectArchive(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info.VerifiedSHA256, info.VerifiedSize, err = hashPackageFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(archive, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("changed")); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExtractArchive(info, filepath.Join(t.TempDir(), "server")); err == nil || !strings.Contains(err.Error(), "changed after repository verification") {
+		t.Fatalf("error=%v", err)
 	}
 }
 

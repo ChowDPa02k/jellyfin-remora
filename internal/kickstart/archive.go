@@ -21,6 +21,8 @@ type ArchiveInfo struct {
 	Path            string
 	ExecutableEntry string
 	WebDirEntry     string
+	VerifiedSHA256  string
+	VerifiedSize    int64
 }
 
 func InspectArchive(path string) (ArchiveInfo, error) {
@@ -145,6 +147,9 @@ func readExecutable(reader io.Reader, size int64) ([]byte, error) {
 }
 
 func ExtractArchive(info ArchiveInfo, destination string) (Installation, error) {
+	if err := verifySelectedArchive(info); err != nil {
+		return Installation{}, err
+	}
 	destination, err := filepath.Abs(destination)
 	if err != nil {
 		return Installation{}, err
@@ -189,6 +194,20 @@ func ExtractArchive(info ArchiveInfo, destination string) (Installation, error) 
 		web = filepath.Join(destination, info.WebDirEntry)
 	}
 	return Installation{Executable: executable, WebDir: web}, nil
+}
+
+func verifySelectedArchive(info ArchiveInfo) error {
+	if info.VerifiedSHA256 == "" {
+		return nil
+	}
+	hash, size, err := hashPackageFile(info.Path)
+	if err != nil {
+		return fmt.Errorf("recheck selected Jellyfin package: %w", err)
+	}
+	if hash != info.VerifiedSHA256 || size != info.VerifiedSize {
+		return errors.New("selected Jellyfin package changed after repository verification")
+	}
+	return nil
 }
 
 func requireEmptyDestination(path string) error {

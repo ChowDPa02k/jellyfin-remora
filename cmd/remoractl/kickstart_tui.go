@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/kickstart"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -17,6 +19,7 @@ type kickstartStage int
 const (
 	stageInstallation kickstartStage = iota
 	stageArchive
+	stageArchiveValidation
 	stageHome
 	stageMedia
 	stageServerName
@@ -32,16 +35,22 @@ type selectionItem string
 func (i selectionItem) FilterValue() string { return string(i) }
 
 type kickstartModel struct {
-	detected kickstart.Installation
-	found    bool
-	stage    kickstartStage
-	choice   int
-	input    textinput.Model
-	list     list.Model
-	catalog  kickstart.LocalizationCatalog
-	answers  kickstart.Answers
-	err      error
-	done     bool
+	detected           kickstart.Installation
+	found              bool
+	stage              kickstartStage
+	choice             int
+	input              textinput.Model
+	list               list.Model
+	spinner            spinner.Model
+	catalog            kickstart.LocalizationCatalog
+	answers            kickstart.Answers
+	pendingArchive     kickstart.ArchiveInfo
+	pendingArchivePath string
+	validationProgress <-chan tea.Msg
+	validationCancel   context.CancelFunc
+	validationStatus   kickstart.PackageValidationPhase
+	err                error
+	done               bool
 }
 
 var (
@@ -49,6 +58,16 @@ var (
 	kickstartHint  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	kickstartError = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 )
+
+var validateKickstartPackage = kickstart.ValidatePackage
+
+type kickstartPackageProgressMsg struct {
+	phase kickstart.PackageValidationPhase
+}
+type kickstartPackageDoneMsg struct {
+	validation kickstart.PackageValidation
+	err        error
+}
 
 func runKickstartTUI(detected kickstart.Installation, found bool) (kickstart.Answers, error) {
 	catalog, err := kickstart.Localizations()
@@ -68,7 +87,9 @@ func runKickstartTUI(detected kickstart.Installation, found bool) (kickstart.Ans
 }
 
 func newKickstartModel(detected kickstart.Installation, found bool, catalog kickstart.LocalizationCatalog) kickstartModel {
-	model := kickstartModel{detected: detected, found: found, catalog: catalog, stage: stageInstallation}
+	activity := spinner.New()
+	activity.Spinner = spinner.Dot
+	model := kickstartModel{detected: detected, found: found, catalog: catalog, stage: stageInstallation, spinner: activity}
 	if !found {
 		model.stage = stageArchive
 		model.setInput("Archive path", false)
@@ -84,8 +105,42 @@ func (m kickstartModel) Init() tea.Cmd {
 }
 
 func (m kickstartModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch typed := message.(type) {
+	case kickstartPackageProgressMsg:
+		m.validationStatus = typed.phase
+		return m, waitForKickstartPackageProgress(m.validationProgress)
+	case kickstartPackageDoneMsg:
+		if m.validationCancel != nil {
+			m.validationCancel()
+			m.validationCancel = nil
+		}
+		if typed.err != nil {
+			m.stage = stageArchive
+			m.setInput("Archive path", false)
+			m.input.SetValue(m.pendingArchivePath)
+			m.input.CursorEnd()
+			m.err = typed.err
+			return m, textinput.Blink
+		}
+		m.pendingArchive.VerifiedSHA256 = typed.validation.LocalSHA256
+		m.pendingArchive.VerifiedSize = typed.validation.LocalSize
+		m.answers.Installation = kickstart.Installation{Archive: &m.pendingArchive}
+		m.err = nil
+		m.stage = stageHome
+		m.setInput("Jellyfin home", false)
+		return m, textinput.Blink
+	case spinner.TickMsg:
+		if m.stage == stageArchiveValidation {
+			var command tea.Cmd
+			m.spinner, command = m.spinner.Update(typed)
+			return m, command
+		}
+	}
 	key, isKey := message.(tea.KeyMsg)
 	if isKey && key.String() == "ctrl+c" {
+		if m.validationCancel != nil {
+			m.validationCancel()
+		}
 		return m, tea.Quit
 	}
 	if m.isSelectionStage() {
@@ -96,6 +151,9 @@ func (m kickstartModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		var command tea.Cmd
 		m.list, command = m.list.Update(message)
 		return m, command
+	}
+	if m.stage == stageArchiveValidation {
+		return m, nil
 	}
 	if m.stage == stageInstallation || m.stage == stageSubmit {
 		if isKey {
@@ -130,6 +188,15 @@ func (m kickstartModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	}
 	if isKey && key.String() == "enter" {
+		if m.stage == stageArchive {
+			command, err := m.beginPackageValidation(strings.TrimSpace(m.input.Value()))
+			if err != nil {
+				m.err = err
+				return m, nil
+			}
+			m.err = nil
+			return m, tea.Batch(command, waitForKickstartPackageProgress(m.validationProgress), m.spinner.Tick)
+		}
 		if err := m.acceptText(); err != nil {
 			m.err = err
 			return m, nil
@@ -145,14 +212,6 @@ func (m kickstartModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m *kickstartModel) acceptText() error {
 	value := strings.TrimSpace(m.input.Value())
 	switch m.stage {
-	case stageArchive:
-		archive, err := kickstart.InspectArchive(value)
-		if err != nil {
-			return err
-		}
-		m.answers.Installation = kickstart.Installation{Archive: &archive}
-		m.stage = stageHome
-		m.setInput("Jellyfin home", false)
 	case stageHome:
 		if value == "" {
 			return fmt.Errorf("Jellyfin home is required")
@@ -196,6 +255,39 @@ func (m *kickstartModel) acceptText() error {
 		m.choice = 0
 	}
 	return nil
+}
+
+func (m *kickstartModel) beginPackageValidation(path string) (tea.Cmd, error) {
+	archive, err := kickstart.InspectArchive(path)
+	if err != nil {
+		return nil, err
+	}
+	progress := make(chan tea.Msg, 3)
+	validationContext, cancel := context.WithCancel(context.Background())
+	m.pendingArchive = archive
+	m.pendingArchivePath = path
+	m.validationProgress = progress
+	m.validationCancel = cancel
+	m.validationStatus = kickstart.PackageValidationConnecting
+	m.stage = stageArchiveValidation
+	return func() tea.Msg {
+		validation, validationErr := validateKickstartPackage(validationContext, path, func(phase kickstart.PackageValidationPhase) {
+			progress <- kickstartPackageProgressMsg{phase: phase}
+		})
+		progress <- kickstartPackageDoneMsg{validation: validation, err: validationErr}
+		close(progress)
+		return nil
+	}, nil
+}
+
+func waitForKickstartPackageProgress(progress <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		message, ok := <-progress
+		if !ok {
+			return nil
+		}
+		return message
+	}
 }
 
 func (m *kickstartModel) acceptSelection(value string) {
@@ -251,6 +343,8 @@ func (m kickstartModel) View() string {
 		body = fmt.Sprintf("Compatible Jellyfin detected:\n%s\n\nUse this installation?\n%s", m.detected.Executable, choices(m.choice, "Yes", "No"))
 	case stageArchive:
 		body = "Select a Generic Jellyfin .tar.gz, .tar.xz, or .zip package.\nThe executable OS and architecture will be checked before deployment.\n\n" + m.input.View()
+	case stageArchiveValidation:
+		body = fmt.Sprintf("Validating selected package against the official Jellyfin repository.\n\n%s %s…\n%s", m.spinner.View(), m.validationStatus, m.pendingArchivePath)
 	case stageHome:
 		body = "Choose Jellyfin home. Kickstart will create data, config, cache, logs, and transcode below it.\n\n" + m.input.View()
 	case stageMedia:

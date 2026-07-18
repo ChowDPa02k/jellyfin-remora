@@ -96,7 +96,8 @@ started with that account.
 
 For a zero-knowledge deployment, run `remoractl kickstart` instead. Its Bubble
 Tea wizard detects native Jellyfin installations or validates a Generic
-`.tar.gz`, `.tar.xz`, or `.zip`, creates a complete Jellyfin home, infers the
+`.tar.gz`, `.tar.xz`, or `.zip` against the official Jellyfin repository,
+creates a complete Jellyfin home, infers the
 physical/SMB/NFS mounts containing all entered paths, offers real Jellyfin Web
 language and region selections, and deploys the native service. Privileged
 Linux Kickstart installs both Remora binaries atomically under `/usr/local/bin`

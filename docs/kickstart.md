@@ -21,7 +21,11 @@ Kickstart performs these steps:
 2. If the detected installation is declined, it accepts a Generic `.tar.gz`,
    `.tar.xz`, or `.zip`. Archive entries are checked for path traversal and the
    contained executable must match the current OS and architecture before any
-   extraction occurs.
+   extraction occurs. Kickstart then verifies the selected file against the
+   official Jellyfin repository. It prefers the repository's published SHA-256;
+   for legacy archive-only releases without checksum metadata, it downloads the
+   equally sized official package and compares hashes. A package that cannot be
+   verified is not installed.
 3. It asks for Jellyfin home. Deployment creates `data`, `config`, `cache`,
    `logs`, and `transcode` below that directory and adds the containing
    filesystem to the storage watchdog with read/write probes.
@@ -87,6 +91,21 @@ Use `archive: /path/to/jellyfin.tar.xz` with `use-detected: false` for a
 Generic package. `--no-start` installs or generates the service without
 starting it. The answer-file mode is intended for repeatable validation and
 provisioning; the TUI remains the normal user path.
+
+## Repository verification and network timeouts
+
+The interactive validation screen uses a spinner and always exposes its active
+network phase as `Connecting Jellyfin repo` or `Downloading package`. The
+answer-file mode prints the same phase text to standard error, so package
+verification never appears to hang silently.
+
+Repository access uses bounded DNS/TCP and TLS connection timeouts, bounded
+response-header/request timeouts, and a bounded whole-package download timeout.
+The legacy download path also limits the response to the selected package's
+known size. After a successful online comparison, Kickstart hashes the selected
+file again immediately before extraction and rejects it if its size or content
+changed. Proxy discovery continues to use Go's standard environment behavior
+(`HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`).
 
 ## macOS Generic packages and Gatekeeper
 
