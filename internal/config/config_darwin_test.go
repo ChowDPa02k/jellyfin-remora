@@ -60,3 +60,14 @@ func TestDarwinRejectsWindowsOnlyConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestDarwinRejectsRootRunAsUserAliases(t *testing.T) {
+	for _, runAsUser := range []string{"root", "0"} {
+		t.Run(runAsUser, func(t *testing.T) {
+			cfg := Config{Jellyfin: JellyfinConfig{RunAsUser: runAsUser}}
+			if err := validatePlatformConfig(&cfg); err == nil {
+				t.Fatalf("run-as-user %q was accepted on Darwin", runAsUser)
+			}
+		})
+	}
+}

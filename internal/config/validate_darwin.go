@@ -8,7 +8,7 @@ func validatePlatformConfig(c *Config) error {
 	if c.RESTAPI.NamedPipe != "" {
 		return fmt.Errorf("restapi.named-pipe is only supported on Windows")
 	}
-	if c.Jellyfin.RunAsUser == "root" {
+	if c.Jellyfin.RunAsUser == "root" || c.Jellyfin.RunAsUser == "0" {
 		return fmt.Errorf("refusing to run Jellyfin as root")
 	}
 	return nil
