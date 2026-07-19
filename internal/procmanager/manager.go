@@ -172,6 +172,8 @@ func (m *Manager) Start(ctx context.Context) error {
 			cleaner.ProcessExited(pid)
 		}
 		err = errors.Join(err, console.finish())
+		flushConsoleWriter(m.stdout)
+		flushConsoleWriter(m.stderr)
 		done <- err
 		close(done)
 		m.mu.Lock()
@@ -182,6 +184,12 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.mu.Unlock()
 	}()
 	return nil
+}
+
+func flushConsoleWriter(writer io.Writer) {
+	if flusher, ok := writer.(interface{ Flush() }); ok {
+		flusher.Flush()
+	}
 }
 
 func mergeEnvironment(inherited []string, overrides map[string]string) []string {

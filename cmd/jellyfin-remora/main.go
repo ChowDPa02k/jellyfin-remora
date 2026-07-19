@@ -99,7 +99,7 @@ func runDaemon(ctx context.Context, activeConfigPath string) error {
 	}
 	defer jellyfinLog.Close()
 	databaseDetector := &databasemonitor.Detector{}
-	consoleWriter := io.MultiWriter(jellyfinLog, databaseDetector)
+	consoleWriter := databasemonitor.NewConsoleWriter(jellyfinLog, databaseDetector)
 	pm, err := procmanager.New(cfg, backend, consoleWriter, consoleWriter)
 	if err != nil {
 		return err

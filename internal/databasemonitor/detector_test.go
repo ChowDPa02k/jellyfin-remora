@@ -1,6 +1,7 @@
 package databasemonitor
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,5 +35,34 @@ func TestDetectorDoesNotClassifyOperationalSQLiteErrorsAsCorruption(t *testing.T
 		if evidence, ok := d.Candidate(time.Minute); ok {
 			t.Fatalf("%q produced corruption evidence %+v", line, evidence)
 		}
+	}
+}
+
+func TestDetectorFlushesUnterminatedCrashLine(t *testing.T) {
+	d := &Detector{}
+	_, _ = d.Write([]byte("SQLite Error 11: database disk image is malformed"))
+	if _, ok := d.Candidate(time.Minute); ok {
+		t.Fatal("unterminated line was observed before EOF")
+	}
+	d.Flush()
+	if _, ok := d.Candidate(time.Minute); !ok {
+		t.Fatal("unterminated crash-final line was not observed at EOF")
+	}
+}
+
+func TestDetectorScansOversizedLineAcrossChunkBoundary(t *testing.T) {
+	d := &Detector{}
+	prefix := strings.Repeat("x", maxBufferedLine-10)
+	_, _ = d.Write([]byte(prefix + "database disk image is malformed" + strings.Repeat("y", maxBufferedLine)))
+	if _, ok := d.Candidate(time.Minute); !ok {
+		t.Fatal("signature spanning the scan boundary was not observed")
+	}
+}
+
+func TestDetectorStripsOSCAndDCSTerminalSequences(t *testing.T) {
+	d := &Detector{}
+	_, _ = d.Write([]byte("database disk\x1b]0;title\x07 image is\x1bPpayload\x1b\\ malformed\n"))
+	if _, ok := d.Candidate(time.Minute); !ok {
+		t.Fatal("terminal control strings defeated corruption matching")
 	}
 }
