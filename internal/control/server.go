@@ -271,13 +271,15 @@ func (s *Server) logPathForSource(source string) (string, error) {
 	}
 }
 
+var openFollowLog = openRegularLog
+
 func (s *Server) followLog(w http.ResponseWriter, r *http.Request, source, path string, lines int) {
-	f, info, err := openRegularLog(path)
+	f, info, err := openFollowLog(path)
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "log_unavailable", err.Error(), operationID(r))
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	initial, _, err := tailLinesFromOpenFile(f, info, lines)
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "log_unavailable", err.Error(), operationID(r))
@@ -332,7 +334,7 @@ func (s *Server) followLog(w http.ResponseWriter, r *http.Request, source, path 
 			if pathErr != nil || pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() || os.SameFile(current, pathInfo) {
 				continue
 			}
-			replacement, _, openErr := openRegularLog(path)
+			replacement, _, openErr := openFollowLog(path)
 			if openErr != nil {
 				continue
 			}

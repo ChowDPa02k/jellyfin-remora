@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -268,6 +269,16 @@ func TestFollowLogStreamsRawANSIAndAppendedContent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("initial\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	oldOpen := openFollowLog
+	opened := make(chan *os.File, 2)
+	openFollowLog = func(path string) (*os.File, os.FileInfo, error) {
+		file, info, err := oldOpen(path)
+		if err == nil {
+			opened <- file
+		}
+		return file, info, err
+	}
+	t.Cleanup(func() { openFollowLog = oldOpen })
 	s := NewWithOptions(&config.Config{}, &fakeController{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{JellyfinLogPath: path})
 	server := httptest.NewServer(s.handler())
 	defer server.Close()
@@ -306,6 +317,21 @@ func TestFollowLogStreamsRawANSIAndAppendedContent(t *testing.T) {
 	}
 	if line, err := reader.ReadString('\n'); err != nil || line != "after rotation\n" {
 		t.Fatalf("rotated line=%q err=%v", line, err)
+	}
+	<-opened // original descriptor
+	rotated := <-opened
+	cancel()
+	_ = resp.Body.Close()
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, err := rotated.Stat()
+		if errors.Is(err, os.ErrClosed) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rotated descriptor remained open: %v", err)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
