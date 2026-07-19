@@ -59,10 +59,24 @@ API v1 operations, response evolution rules, error envelope, stable error
 codes, and headers are defined in [api-v1.md](api-v1.md). Routes are never
 repurposed within v1. New response fields and enum values are additive.
 
+`v0.9.0-beta.8` adds `restapi.tcp-enabled`. Existing v2 configurations that
+omit it retain the historical loopback TCP listener; all generated and sample
+configurations set it to `false`, using the Unix socket or Windows named pipe.
+Unix auto-discovery prefers the private runtime directory, validates the socket
+owner, and authenticates the connected peer UID. The legacy `/tmp` fallback is
+warning-only and accepts only root/current-user owners and peers. Windows pipes
+permit SYSTEM, Administrators, and the actual service identity, not the broad
+Interactive Users group.
+
 `remoractl` exit codes are frozen as follows: 0 success, 1 unclassified local
 failure, 2 usage or invalid request, 3 unavailable daemon/transport/server, 4
 safety or state conflict, and 5 lifecycle convergence timeout. Scripts should
 use exit status and `--json`, not parse the pretty tables.
+
+On Unix, the daemon rejects configuration files readable by group or others.
+`edit-config` preserves the original uid/gid across atomic replacement.
+Persistence failures and unavailable queued-operation results are retryable
+service failures (HTTP 503 and CLI exit 3), not operator-usage errors.
 
 ## Durable and runtime files
 

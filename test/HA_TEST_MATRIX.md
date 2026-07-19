@@ -465,3 +465,27 @@ runs and the complete repeated race gate passed.
 All Round 2 extraction and rollback gates used Go test-owned isolated temporary
 directories. No Jellyfin data, NFS/SMB share, installed service, container, or
 virtual machine was modified or left behind.
+
+## 2026-07-19 external-review Round 3 gate (`v0.9.0-beta.8`)
+
+The fifteen local-control, credential-boundary, and observability findings in
+Round 3 were kept as fifteen independent commits. `go test -race ./...`,
+`go vet ./...`, `govulncheck ./...`, the five-target cross-build, and
+Linux/Windows arm64/amd64 cross-test compilation passed.
+
+| Live or deterministic gate | Result |
+|---|---|
+| macOS socket-only clean initialization | Pass; TCP 8095 stayed closed while the owner-verified Unix socket initialized Jellyfin 10.11.11 and reached `RUNNING` |
+| macOS generation-aware credential target | Pass; first-start administrator provisioning and later missing-key recovery completed only while the managed Jellyfin PID owned 8096 |
+| macOS Remora crash and API-key recovery | Pass; Remora `SIGKILL` preserved and re-adopted the exact Jellyfin PID, then recreated the deleted key file as mode 0600 |
+| macOS concurrent immediate healthchecks | Pass; six concurrent requests returned without blocking control status or the supervisor tick |
+| macOS explicit TCP enable | Pass; 8095 appeared only after `tcp-enabled: true`, and loopback status succeeded |
+| Debian private runtime socket | Pass; socket-only mode reached Jellyfin 10.11.11 `RUNNING`, created `/run/jellyfin-remora/remora.sock` as mode 0660 `root:jellyfin`, and did not listen on 8095 |
+| Debian forged `/tmp` socket | Pass; root `remoractl` ignored a live `.s.remora.8095` owned by the unprivileged Jellyfin account and failed closed |
+| Debian explicit TCP enable | Pass; 8095 appeared only with explicit enable and returned the managed status |
+| Rotated follow descriptor | Pass in a real temporary-file HTTP follow test; cancellation after replacement closed the current descriptor under race instrumentation |
+
+The macOS test used only `/Users/zhoudingpeng/Appdata/jellyfin` and removed its
+contents afterward. Debian used transient `remora-round3*` units and `/tmp`
+artifacts; all were removed, and the original `jellyfin-remora.service` was
+restored to one healthy Jellyfin 10.11.11 process.
