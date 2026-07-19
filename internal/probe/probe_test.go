@@ -16,6 +16,20 @@ func TestPathReadWrite(t *testing.T) {
 		t.Fatalf("probe files left behind: %v %v", matches, err)
 	}
 }
+
+func TestPathOwnedUsesAndRemovesExactProbeFile(t *testing.T) {
+	d := t.TempDir()
+	token := "00112233445566778899aabbccddeeff"
+	if err := PathOwned(d, "rw", token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(d, ".remora-probe-"+token)); !os.IsNotExist(err) {
+		t.Fatalf("owned probe file was not removed: %v", err)
+	}
+	if err := PathOwned(d, "rw", "../not-a-token"); err == nil {
+		t.Fatal("invalid cleanup token was accepted")
+	}
+}
 func TestPathMissing(t *testing.T) {
 	if err := Path(filepath.Join(t.TempDir(), "missing"), "r"); err == nil {
 		t.Fatal("expected error")

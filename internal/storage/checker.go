@@ -3,12 +3,15 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -262,7 +265,15 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 	if c.probeOverride != nil {
 		return c.probeOverride(ctx, path, permission)
 	}
-	cmd := exec.Command(c.executable, "internal-probe", "--path", path, "--permission", permission)
+	cleanupToken, cleanupPath, err := ownedProbeFile(path, permission)
+	if err != nil {
+		return infrastructureProbeError(fmt.Errorf("prepare storage probe cleanup: %w", err))
+	}
+	commandArgs := []string{"internal-probe", "--path", path, "--permission", permission}
+	if cleanupToken != "" {
+		commandArgs = append(commandArgs, "--cleanup-token", cleanupToken)
+	}
+	cmd := exec.Command(c.executable, commandArgs...)
 	if c.probeUsername != "" {
 		if err := c.backend.ConfigureProcess(cmd, c.probeUsername, c.probeGroup); err != nil {
 			return fmt.Errorf("configure storage probe identity: %w", err)
@@ -318,6 +329,9 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 	go func() {
 		pending.err = cmd.Wait()
 		pending.output = append([]byte(nil), output.Bytes()...)
+		if cleanupPath != "" {
+			_ = os.Remove(cleanupPath)
+		}
 		close(pending.done)
 	}()
 
@@ -343,6 +357,18 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 		}
 		return errors.New("storage I/O probe timed out")
 	}
+}
+
+func ownedProbeFile(path, permission string) (token, filename string, err error) {
+	if permission == "r" {
+		return "", "", nil
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", "", err
+	}
+	token = hex.EncodeToString(nonce[:])
+	return token, filepath.Join(path, ".remora-probe-"+token), nil
 }
 
 func (c *Checker) expectedSource(ctx context.Context, disk config.DiskConfig) (string, error) {

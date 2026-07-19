@@ -1,6 +1,8 @@
 package probe
 
 import (
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +12,10 @@ import (
 var writePayload = []byte("jellyfin-remora-storage-probe\n")
 
 func Path(path, permission string) error {
+	return PathOwned(path, permission, "")
+}
+
+func PathOwned(path, permission, cleanupToken string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open target: %w", err)
@@ -28,7 +34,18 @@ func Path(path, permission string) error {
 	if err := ensureWriteCapacity(path, uint64(len(writePayload))); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(path, ".remora-probe-*")
+	var tmp *os.File
+	if cleanupToken == "" {
+		tmp, err = os.CreateTemp(path, ".remora-probe-*")
+	} else {
+		if len(cleanupToken) != 32 {
+			return errors.New("invalid probe cleanup token")
+		}
+		if _, decodeErr := hex.DecodeString(cleanupToken); decodeErr != nil {
+			return errors.New("invalid probe cleanup token")
+		}
+		tmp, err = os.OpenFile(filepath.Join(path, ".remora-probe-"+cleanupToken), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	}
 	if err != nil {
 		return fmt.Errorf("create probe: %w", err)
 	}

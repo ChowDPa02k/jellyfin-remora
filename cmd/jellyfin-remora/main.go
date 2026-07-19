@@ -296,13 +296,14 @@ func runProbe(args []string) error {
 	fs := flag.NewFlagSet("internal-probe", flag.ContinueOnError)
 	path := fs.String("path", "", "path")
 	permission := fs.String("permission", "r", "r or rw")
+	cleanupToken := fs.String("cleanup-token", "", "parent-owned probe cleanup token")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *path == "" {
 		return errors.New("--path is required")
 	}
-	return probe.Path(*path, *permission)
+	return probe.PathOwned(*path, *permission, *cleanupToken)
 }
 func newLogger(cfg *config.Config) (*slog.Logger, io.Closer) {
 	level := slog.LevelInfo

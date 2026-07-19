@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -311,6 +312,54 @@ func TestLeftoverDiscoveryDoesNotConsumeIOProbeDeadline(t *testing.T) {
 	}
 	if err := checker.probePath(context.Background(), directory, "r"); err != nil {
 		t.Fatalf("probe inherited leftover-discovery latency: %v", err)
+	}
+}
+
+func TestKilledConcurrentWriteProbesCleanOnlyOwnedFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a POSIX shell")
+	}
+	directory := t.TempDir()
+	helper := filepath.Join(directory, "probe")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\ntouch \"$3/.remora-probe-$7\"\nexec sleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nonOwned := filepath.Join(directory, ".remora-probe-user-file")
+	if err := os.WriteFile(nonOwned, []byte("not owned by this probe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checkers := []*Checker{
+		{cfg: &config.Config{Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: 100 * time.Millisecond}}}, backend: &mismatchBackend{}, executable: helper, pendingProbes: make(map[string]*pendingProbe)},
+		{cfg: &config.Config{Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: 100 * time.Millisecond}}}, backend: &mismatchBackend{}, executable: helper, pendingProbes: make(map[string]*pendingProbe)},
+	}
+	var wait sync.WaitGroup
+	errorsByProbe := make([]error, len(checkers))
+	for index, checker := range checkers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			errorsByProbe[index] = checker.probePath(context.Background(), directory, "rw")
+		}()
+	}
+	wait.Wait()
+	for index, err := range errorsByProbe {
+		if err == nil || !strings.Contains(err.Error(), "timed out") {
+			t.Fatalf("probe %d error = %v", index, err)
+		}
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		matches, err := filepath.Glob(filepath.Join(directory, ".remora-probe-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) == 1 && matches[0] == nonOwned {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("owned cleanup affected the wrong files: %v", matches)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
