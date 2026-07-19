@@ -1210,10 +1210,34 @@ func (s *Supervisor) persist() error {
 	if err := writer(filepath.Join(runtimeStateDir(s.cfg), contract.StateFileName), data, 0640); err != nil {
 		return err
 	}
-	if damage == 1 {
+	if damage == 1 && !durableStatePathSafe(s.cfg.Remora.DataDir, st.Storage) {
 		return nil
 	}
 	return writer(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName), data, 0640)
+}
+
+func durableStatePathSafe(dataDir string, storage []model.StorageResult) bool {
+	cleanDataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return false
+	}
+	for _, result := range storage {
+		if !result.Fatal {
+			continue
+		}
+		if result.Target == "" {
+			return false
+		}
+		cleanTarget, err := filepath.Abs(result.Target)
+		if err != nil {
+			return false
+		}
+		relative, err := filepath.Rel(cleanTarget, cleanDataDir)
+		if err != nil || relative == "." || relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Supervisor) persistBestEffort() {

@@ -57,6 +57,37 @@ func TestSecondStateWriteFailureRestoresPreviousDurableIntent(t *testing.T) {
 	}
 }
 
+func TestManualStopPersistsWhenFatalStorageIsOnAnotherVolume(t *testing.T) {
+	s := persistentStateSupervisor(t.TempDir(), &stateProcess{})
+	s.status.ManualStop = true
+	s.status.Storage = []model.StorageResult{{Target: "/Volumes/unavailable-media", Healthy: false, Fatal: true}}
+	var paths []string
+	s.writeStateFile = func(path string, _ []byte, _ os.FileMode) error {
+		paths = append(paths, path)
+		return nil
+	}
+	if err := s.persist(); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[1] != filepath.Join(s.cfg.Remora.DataDir, "jellyfin.state") {
+		t.Fatalf("state writes=%v, want runtime and healthy durable copies", paths)
+	}
+}
+
+func TestFatalStatePathIsNotWritten(t *testing.T) {
+	s := persistentStateSupervisor(t.TempDir(), &stateProcess{})
+	s.status.ManualStop = true
+	s.status.Storage = []model.StorageResult{{Target: filepath.Dir(s.cfg.Remora.DataDir), Healthy: false, Fatal: true}}
+	writes := 0
+	s.writeStateFile = func(string, []byte, os.FileMode) error { writes++; return nil }
+	if err := s.persist(); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 1 {
+		t.Fatalf("writes=%d, want runtime copy only", writes)
+	}
+}
+
 func TestRestartBetweenAcceptedStopAndReconcilePreservesIntent(t *testing.T) {
 	directory := t.TempDir()
 	process := &stateProcess{running: true, started: time.Now()}
