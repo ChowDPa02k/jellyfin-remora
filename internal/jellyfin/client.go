@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	defaultDeviceID  = "jellyfin-remora"
-	adminDeviceID    = "jellyfin-remora-admin"
-	watchdogDeviceID = "jellyfin-remora-watchdog"
+	defaultDeviceID         = "jellyfin-remora"
+	adminDeviceID           = "jellyfin-remora-admin"
+	watchdogDeviceID        = "jellyfin-remora-watchdog"
+	maxSuccessResponseBytes = 8 << 20
 )
 
 type Client struct {
@@ -471,7 +472,14 @@ func (c *Client) doWithDeviceIDAndErrorPath(ctx context.Context, method, path, e
 		return &APIError{StatusCode: resp.StatusCode, Method: method, Path: errorPath, Message: strings.TrimSpace(string(data))}
 	}
 	if out != nil {
-		return json.NewDecoder(resp.Body).Decode(out)
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxSuccessResponseBytes+1))
+		if err != nil {
+			return err
+		}
+		if len(data) > maxSuccessResponseBytes {
+			return fmt.Errorf("Jellyfin %s %s response exceeds %d bytes", method, path, maxSuccessResponseBytes)
+		}
+		return json.Unmarshal(data, out)
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil

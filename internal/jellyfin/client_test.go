@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -202,6 +203,30 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 	if redirected {
 		t.Fatal("Jellyfin client followed redirect")
 	}
+}
+
+func TestSuccessfulResponseBodyIsLimited(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"Version":"`)
+		_, _ = io.CopyN(w, zeroReader{'x'}, maxSuccessResponseBytes)
+		_, _ = io.WriteString(w, `"}`)
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, time.Second).PublicInfo(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+type zeroReader struct{ value byte }
+
+func (r zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = r.value
+	}
+	return len(p), nil
 }
 
 func TestProbeDatabaseUsesAuthenticatedReadOnlyUsersRequest(t *testing.T) {
