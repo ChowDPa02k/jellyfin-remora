@@ -182,6 +182,48 @@ func TestInitMismatchAllowanceDoesNotChangeRuntimeCheck(t *testing.T) {
 	}
 }
 
+func TestMountSourceMismatchBypassesFailureThreshold(t *testing.T) {
+	cfg := &config.Config{
+		Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: time.Second}},
+		Disks: []config.DiskConfig{{
+			Type: "physical", Device: "/dev/expected", Target: "/Volumes/AppData", Permission: "rw", FailureThreshold: 3,
+		}},
+	}
+	backend := &mismatchBackend{mounts: []platform.MountInfo{{Source: "/dev/expected", Target: "/Volumes/AppData", FSType: "apfs"}}}
+	checker := &Checker{
+		cfg: cfg, backend: backend, failureCounts: make([]int, 1), confirmedHealthy: make([]bool, 1),
+		probeOverride: func(context.Context, string, string) error { return nil },
+	}
+	if got := checker.CheckDisk(context.Background(), 0); !got.Healthy {
+		t.Fatalf("healthy baseline = %+v", got)
+	}
+	backend.mounts[0].Source = "/dev/wrong"
+	if got := checker.CheckDisk(context.Background(), 0); !got.Fatal || !strings.Contains(got.Message, "mount source mismatch") {
+		t.Fatalf("identity mismatch was delayed by threshold: %+v", got)
+	}
+}
+
+func TestResolvedVolumeIdentityMismatchBypassesFailureThreshold(t *testing.T) {
+	cfg := &config.Config{
+		Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: time.Second}},
+		Disks: []config.DiskConfig{{
+			Type: "physical", Device: "/dev/expected", Target: "/Volumes/AppData", Permission: "rw", FailureThreshold: 3,
+		}},
+	}
+	backend := &mismatchBackend{mounts: []platform.MountInfo{{Source: "/dev/expected", Target: "/Volumes/AppData", FSType: "apfs"}}}
+	checker := &Checker{
+		cfg: cfg, backend: backend, failureCounts: make([]int, 1), confirmedHealthy: make([]bool, 1),
+		probeOverride: func(context.Context, string, string) error { return nil },
+	}
+	if got := checker.CheckDisk(context.Background(), 0); !got.Healthy {
+		t.Fatalf("healthy baseline = %+v", got)
+	}
+	backend.resolveError = platform.MountIdentityError{Err: errors.New("volume UUID mismatch: got wrong")}
+	if got := checker.CheckDisk(context.Background(), 0); !got.Fatal || !strings.Contains(got.Message, "volume UUID mismatch") {
+		t.Fatalf("resolved identity mismatch was delayed by threshold: %+v", got)
+	}
+}
+
 func TestRuntimeMountLossFencesBeforeRecoveryMount(t *testing.T) {
 	cfg := &config.Config{
 		Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: time.Second}},
@@ -279,6 +321,7 @@ type mismatchBackend struct {
 	leaveSignaledProcess bool
 	signaledPID          int
 	findDelay            time.Duration
+	resolveError         error
 }
 
 func (b *mismatchBackend) Mounts(context.Context) ([]platform.MountInfo, error) {
@@ -291,7 +334,11 @@ func (b *mismatchBackend) Mount(_ context.Context, disk config.DiskConfig) error
 	}
 	return nil
 }
-func (*mismatchBackend) ResolvePhysical(context.Context, config.DiskConfig) (string, error) {
+
+func (b *mismatchBackend) ResolvePhysical(context.Context, config.DiskConfig) (string, error) {
+	if b.resolveError != nil {
+		return "", b.resolveError
+	}
 	return "/dev/expected", nil
 }
 func (*mismatchBackend) ExecutableProvenance(string) (bool, error)        { return false, nil }

@@ -189,10 +189,10 @@ func (w *windowsBackend) ResolvePhysical(_ context.Context, disk config.DiskConf
 		return "", fmt.Errorf("inspect Windows volume %s: %w", volume, err)
 	}
 	if disk.VolumeLabel != "" && !strings.EqualFold(label, disk.VolumeLabel) {
-		return "", fmt.Errorf("volume label mismatch: got %q, want %q", label, disk.VolumeLabel)
+		return "", MountIdentityError{Err: fmt.Errorf("volume label mismatch: got %q, want %q", label, disk.VolumeLabel)}
 	}
 	if disk.Filesystem != "" && !strings.EqualFold(filesystem, disk.Filesystem) {
-		return "", fmt.Errorf("filesystem mismatch: got %q, want %q", filesystem, disk.Filesystem)
+		return "", MountIdentityError{Err: fmt.Errorf("filesystem mismatch: got %q, want %q", filesystem, disk.Filesystem)}
 	}
 	return volume, nil
 }

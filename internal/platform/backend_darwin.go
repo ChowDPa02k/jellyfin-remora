@@ -85,7 +85,7 @@ func (d *darwinBackend) ResolvePhysical(ctx context.Context, disk config.DiskCon
 		return "", fmt.Errorf("decode diskutil info: %w", err)
 	}
 	if disk.UUID != "" && !strings.EqualFold(info.VolumeUUID, disk.UUID) {
-		return "", fmt.Errorf("volume UUID mismatch: got %s", info.VolumeUUID)
+		return "", MountIdentityError{Err: fmt.Errorf("volume UUID mismatch: got %s", info.VolumeUUID)}
 	}
 	if info.DeviceNode == "" {
 		return "", errors.New("diskutil did not return a device node")

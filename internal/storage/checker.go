@@ -95,7 +95,11 @@ func (c *Checker) CheckDisk(ctx context.Context, index int) model.StorageResult 
 	c.mountMu.RLock()
 	allowMount := c.recoveryMounts
 	c.mountMu.RUnlock()
-	return c.applyFailureThreshold(index, disk, c.checkRaw(ctx, index, disk, allowMount, false))
+	result, bypassThreshold := c.checkRaw(ctx, index, disk, allowMount, false)
+	if bypassThreshold {
+		return result
+	}
+	return c.applyFailureThreshold(index, disk, result)
 }
 
 // SetMountRecoveryAllowed separates safe startup/fenced recovery from runtime
@@ -111,7 +115,8 @@ func (c *Checker) InspectDisk(ctx context.Context, index int) model.StorageResul
 	if index < 0 || index >= len(c.cfg.Disks) {
 		return model.StorageResult{Index: index, Fatal: true, Message: "disk index out of range", CheckedAt: time.Now()}
 	}
-	return c.checkRaw(ctx, index, c.cfg.Disks[index], false, false)
+	result, _ := c.checkRaw(ctx, index, c.cfg.Disks[index], false, false)
+	return result
 }
 
 // CheckDiskForInit performs the same mount and I/O validation as CheckDisk but
@@ -121,7 +126,8 @@ func (c *Checker) CheckDiskForInit(ctx context.Context, index int, allowSourceMi
 	if index < 0 || index >= len(c.cfg.Disks) {
 		return model.StorageResult{Index: index, Fatal: true, Message: "disk index out of range", CheckedAt: time.Now()}
 	}
-	return c.checkRaw(ctx, index, c.cfg.Disks[index], true, allowSourceMismatch)
+	result, _ := c.checkRaw(ctx, index, c.cfg.Disks[index], true, allowSourceMismatch)
+	return result
 }
 
 func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
@@ -149,7 +155,7 @@ func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
 	return results
 }
 
-func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfig, allowMount, allowSourceMismatch bool) (r model.StorageResult) {
+func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfig, allowMount, allowSourceMismatch bool) (r model.StorageResult, bypassThreshold bool) {
 	started := time.Now()
 	r = model.StorageResult{Index: index, Type: disk.Type, Device: redactDevice(disk), Target: disk.Target, CheckedAt: started}
 	defer func() { r.LatencyMS = time.Since(started).Milliseconds() }()
@@ -157,7 +163,7 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 	if err != nil {
 		r.Fatal = true
 		r.Message = err.Error()
-		return r
+		return
 	}
 	mi, mounted := findTarget(mounts, disk.Target)
 	if !mounted && allowMount {
@@ -180,13 +186,14 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 		} else {
 			r.Message = "target is not mounted"
 		}
-		return r
+		return
 	}
 	expected, err := c.expectedSource(ctx, disk)
 	if err != nil {
 		r.Fatal = true
 		r.Message = err.Error()
-		return r
+		bypassThreshold = platform.IsMountIdentityError(err)
+		return
 	}
 	sourceEquivalent := sourceMatches(mi, disk.Type, expected)
 	if !sourceEquivalent && disk.Type == "smb" {
@@ -198,7 +205,8 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 		r.Message = fmt.Sprintf("mount source mismatch: got %s", mi.Source)
 		if !allowSourceMismatch {
 			r.Fatal = true
-			return r
+			bypassThreshold = true
+			return
 		}
 	}
 	probePath := disk.ProbePath
@@ -208,7 +216,7 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 	if err := c.probePath(ctx, probePath, disk.Permission); err != nil {
 		r.Fatal = true
 		r.Message = err.Error()
-		return r
+		return
 	}
 	r.Writable = disk.Permission == "rw"
 	r.Healthy = true
@@ -220,7 +228,7 @@ func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfi
 		}
 		r.Message += "server port unreachable while mounted I/O remains healthy"
 	}
-	return r
+	return
 }
 
 func (c *Checker) applyFailureThreshold(index int, disk config.DiskConfig, result model.StorageResult) model.StorageResult {

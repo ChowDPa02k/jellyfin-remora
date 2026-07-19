@@ -2,11 +2,22 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 )
+
+type MountIdentityError struct{ Err error }
+
+func (e MountIdentityError) Error() string { return e.Err.Error() }
+func (e MountIdentityError) Unwrap() error { return e.Err }
+
+func IsMountIdentityError(err error) bool {
+	var identityError MountIdentityError
+	return errors.As(err, &identityError)
+}
 
 type MountInfo struct {
 	Source  string
