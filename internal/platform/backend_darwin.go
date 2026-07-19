@@ -246,33 +246,52 @@ func (d *darwinBackend) ConfigureProcess(cmd *exec.Cmd, username, groupname stri
 		if err != nil {
 			return fmt.Errorf("lookup user: %w", err)
 		}
-		uid, _ := strconv.ParseUint(u.Uid, 10, 32)
-		gidText := u.Gid
-		if groupname != "" {
-			g, err := user.LookupGroup(groupname)
-			if err != nil {
-				return fmt.Errorf("lookup group: %w", err)
-			}
-			gidText = g.Gid
+		groupIDs, groupIDsErr := u.GroupIds()
+		credential, err := darwinProcessCredential(u, groupname, groupIDs, groupIDsErr, user.LookupGroup, os.Geteuid(), os.Getegid())
+		if err != nil {
+			return err
 		}
-		gid, _ := strconv.ParseUint(gidText, 10, 32)
-		groupIDs, _ := u.GroupIds()
-		groups := make([]uint32, 0, len(groupIDs))
-		for _, text := range groupIDs {
-			value, err := strconv.ParseUint(text, 10, 32)
-			if err == nil {
-				groups = append(groups, uint32(value))
-			}
-		}
-		if uint64(os.Geteuid()) != uid {
-			attr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid), Groups: groups}
-		}
+		attr.Credential = credential
 		cmd.Env = replaceEnv(cmd.Env, "HOME", u.HomeDir)
 		cmd.Env = replaceEnv(cmd.Env, "USER", u.Username)
 		cmd.Env = replaceEnv(cmd.Env, "LOGNAME", u.Username)
 	}
 	cmd.SysProcAttr = attr
 	return nil
+}
+
+func darwinProcessCredential(account *user.User, groupname string, groupIDs []string, groupIDsErr error, lookupGroup func(string) (*user.Group, error), euid, egid int) (*syscall.Credential, error) {
+	uid, err := strconv.ParseUint(account.Uid, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("parse UID for %s: %w", account.Username, err)
+	}
+	gidText := account.Gid
+	if groupname != "" {
+		group, err := lookupGroup(groupname)
+		if err != nil {
+			return nil, fmt.Errorf("lookup group %s: %w", groupname, err)
+		}
+		gidText = group.Gid
+	}
+	gid, err := strconv.ParseUint(gidText, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("parse GID for %s: %w", account.Username, err)
+	}
+	if groupIDsErr != nil {
+		return nil, fmt.Errorf("lookup supplementary groups for %s: %w", account.Username, groupIDsErr)
+	}
+	groups := make([]uint32, 0, len(groupIDs))
+	for _, text := range groupIDs {
+		value, err := strconv.ParseUint(text, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("parse supplementary GID %q for %s: %w", text, account.Username, err)
+		}
+		groups = append(groups, uint32(value))
+	}
+	if uint64(euid) == uid && uint64(egid) == gid {
+		return nil, nil
+	}
+	return &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid), Groups: groups}, nil
 }
 
 func replaceEnv(env []string, key, value string) []string {

@@ -4,7 +4,9 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -101,6 +103,41 @@ func TestDarwinProcessInfoHasStableKernelIdentityAndExactArguments(t *testing.T)
 	}
 	if !reflect.DeepEqual(first.Arguments, os.Args) {
 		t.Fatalf("arguments = %#v, want %#v", first.Arguments, os.Args)
+	}
+}
+
+func TestDarwinProcessCredentialRejectsInvalidUIDAndGID(t *testing.T) {
+	lookupGroup := func(string) (*user.Group, error) { return &user.Group{Gid: "invalid"}, nil }
+	if _, err := darwinProcessCredential(&user.User{Username: "media", Uid: "invalid", Gid: "20"}, "", nil, nil, lookupGroup, 501, 20); err == nil || !strings.Contains(err.Error(), "parse UID") {
+		t.Fatalf("invalid UID error = %v", err)
+	}
+	if _, err := darwinProcessCredential(&user.User{Username: "media", Uid: "501", Gid: "invalid"}, "", nil, nil, lookupGroup, 501, 20); err == nil || !strings.Contains(err.Error(), "parse GID") {
+		t.Fatalf("invalid account GID error = %v", err)
+	}
+	if _, err := darwinProcessCredential(&user.User{Username: "media", Uid: "501", Gid: "20"}, "staff", nil, nil, lookupGroup, 501, 20); err == nil || !strings.Contains(err.Error(), "parse GID") {
+		t.Fatalf("invalid selected GID error = %v", err)
+	}
+	lookupErr := errors.New("directory service unavailable")
+	if _, err := darwinProcessCredential(&user.User{Username: "media", Uid: "501", Gid: "20"}, "", nil, lookupErr, lookupGroup, 501, 20); !errors.Is(err, lookupErr) {
+		t.Fatalf("supplementary group lookup error = %v", err)
+	}
+	if _, err := darwinProcessCredential(&user.User{Username: "media", Uid: "501", Gid: "20"}, "", []string{"invalid"}, nil, lookupGroup, 501, 20); err == nil || !strings.Contains(err.Error(), "parse supplementary GID") {
+		t.Fatalf("invalid supplementary GID error = %v", err)
+	}
+}
+
+func TestDarwinProcessCredentialHonorsDifferentPrimaryGroupForSameUID(t *testing.T) {
+	credential, err := darwinProcessCredential(
+		&user.User{Username: "media", Uid: "501", Gid: "20"},
+		"media", []string{"20", "80"}, nil,
+		func(string) (*user.Group, error) { return &user.Group{Gid: "80"}, nil },
+		501, 20,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential == nil || credential.Uid != 501 || credential.Gid != 80 || !reflect.DeepEqual(credential.Groups, []uint32{20, 80}) {
+		t.Fatalf("credential = %#v", credential)
 	}
 }
 
