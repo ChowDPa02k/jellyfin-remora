@@ -13,6 +13,7 @@ import (
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/databasemonitor"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 )
@@ -165,6 +166,34 @@ func TestMalformedPersistentSafetyStateFailsClosed(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestStartDoesNotEraseDatabaseEvidenceArrivingDuringPersist(t *testing.T) {
+	s := persistentStateSupervisor(t.TempDir(), &stateProcess{})
+	detector := &databasemonitor.Detector{}
+	s.SetDatabaseDamageSource(detector)
+	writeStarted := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	writes := 0
+	s.writeStateFile = func(string, []byte, os.FileMode) error {
+		writes++
+		if writes == 1 {
+			close(writeStarted)
+			<-releaseWrite
+		}
+		return nil
+	}
+	reply := make(chan error, 1)
+	go s.handle(Request{Action: ActionStart, Reply: reply})
+	<-writeStarted
+	_, _ = detector.Write([]byte("SQLite Error 11: database disk image is malformed\n"))
+	close(releaseWrite)
+	if err := <-reply; err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := detector.Candidate(time.Minute); !ok {
+		t.Fatal("start erased corruption evidence observed during state persistence")
 	}
 }
 

@@ -151,3 +151,14 @@ func (d *Detector) Reset() {
 	d.evidence = Evidence{}
 	d.mu.Unlock()
 }
+
+// ResetBefore clears evidence that predates an administrative recovery action
+// without discarding an unterminated console fragment or evidence arriving
+// while the action is being persisted.
+func (d *Detector) ResetBefore(cutoff time.Time) {
+	d.mu.Lock()
+	if !d.evidence.DetectedAt.After(cutoff) {
+		d.evidence = Evidence{}
+	}
+	d.mu.Unlock()
+}

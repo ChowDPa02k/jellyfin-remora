@@ -66,3 +66,17 @@ func TestDetectorStripsOSCAndDCSTerminalSequences(t *testing.T) {
 		t.Fatal("terminal control strings defeated corruption matching")
 	}
 }
+
+func TestResetBeforeRetainsNewEvidenceAndPartialLine(t *testing.T) {
+	d := &Detector{}
+	cutoff := time.Now()
+	_, _ = d.Write([]byte("SQLite Error 11: database disk image is malformed\npartial "))
+	d.ResetBefore(cutoff)
+	if _, ok := d.Candidate(time.Minute); !ok {
+		t.Fatal("new evidence was cleared")
+	}
+	_, _ = d.Write([]byte("database disk image is malformed\n"))
+	if _, ok := d.Candidate(time.Minute); !ok {
+		t.Fatal("partial console line was cleared")
+	}
+}

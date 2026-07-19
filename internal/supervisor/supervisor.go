@@ -64,7 +64,7 @@ type ConfigurationReconciler interface {
 
 type DatabaseDamageSource interface {
 	Candidate(time.Duration) (databasemonitor.Evidence, bool)
-	Reset()
+	ResetBefore(time.Time)
 }
 
 type Supervisor struct {
@@ -192,6 +192,7 @@ func (s *Supervisor) Submit(ctx context.Context, action Action, force bool) erro
 
 func (s *Supervisor) handle(req Request) {
 	var err error
+	actionStarted := time.Now()
 	type lifecycleSnapshot struct {
 		manualStop          bool
 		desired             model.DesiredState
@@ -270,7 +271,7 @@ func (s *Supervisor) handle(req Request) {
 			s.persistBestEffort()
 		}
 	} else if err == nil && req.Action == ActionStart && s.databaseSource != nil {
-		s.databaseSource.Reset()
+		s.databaseSource.ResetBefore(actionStarted)
 	}
 	req.Reply <- err
 }
