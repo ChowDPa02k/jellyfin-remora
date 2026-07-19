@@ -109,6 +109,34 @@ func TestRejectsIncompleteInitAndWatchdog(t *testing.T) {
 	}
 }
 
+func TestParseRejectsNonStringJellyfinEnvironmentScalars(t *testing.T) {
+	base := `config-version: 2
+restapi:
+  listen: 127.0.0.1
+remora:
+  data-dir: /var/lib/remora
+jellyfin:
+  path: /opt/jellyfin
+  run-as-user: nobody
+  data-dir: /srv/jellyfin/data
+  config-dir: /srv/jellyfin/config
+  cache-dir: /srv/jellyfin/cache
+  log-dir: /srv/jellyfin/log
+  env:
+    VALUE: %s
+`
+	for _, scalar := range []string{"1", "true", "null", "[one, two]", "{nested: value}"} {
+		t.Run(scalar, func(t *testing.T) {
+			if _, err := Parse([]byte(fmt.Sprintf(base, scalar))); err == nil || !strings.Contains(err.Error(), "YAML strings") {
+				t.Fatalf("parse error = %v", err)
+			}
+		})
+	}
+	if cfg, err := Parse([]byte(fmt.Sprintf(base, `"true"`))); err != nil || cfg.Jellyfin.Env["VALUE"] != "true" {
+		t.Fatalf("quoted string rejected: cfg=%#v err=%v", cfg, err)
+	}
+}
+
 func TestRejectsNonPositiveRuntimeIntervalsThresholdsAndRotation(t *testing.T) {
 	base := Config{ConfigVersion: CurrentVersion, RESTAPI: RESTAPIConfig{Listen: "127.0.0.1", Port: 8095}, Jellyfin: JellyfinConfig{Path: "/x", DataDir: "/d", ConfigDir: "/c", CacheDir: "/k", LogDir: "/l", RunAsUser: "nobody"}}
 	base.defaults()

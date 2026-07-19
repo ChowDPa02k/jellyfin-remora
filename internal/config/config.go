@@ -386,6 +386,9 @@ func Parse(b []byte) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateEnvironmentScalars(migrated); err != nil {
+		return nil, err
+	}
 	var c Config
 	decoder := yaml.NewDecoder(bytes.NewReader(migrated))
 	decoder.KnownFields(true)
@@ -399,6 +402,34 @@ func Parse(b []byte) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+func validateEnvironmentScalars(data []byte) error {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	if len(document.Content) == 0 {
+		return nil
+	}
+	jellyfin := mappingValue(document.Content[0], "jellyfin")
+	if jellyfin == nil {
+		return nil
+	}
+	environment := mappingValue(jellyfin, "env")
+	if environment == nil {
+		return nil
+	}
+	if environment.Kind != yaml.MappingNode {
+		return errors.New("jellyfin.env must be a mapping of string values")
+	}
+	for i := 0; i+1 < len(environment.Content); i += 2 {
+		name, value := environment.Content[i], environment.Content[i+1]
+		if name.Kind != yaml.ScalarNode || name.Tag != "!!str" || value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+			return errors.New("jellyfin.env names and values must be YAML strings")
+		}
+	}
+	return nil
 }
 
 func (c *Config) defaults() {
