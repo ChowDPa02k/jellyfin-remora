@@ -318,10 +318,11 @@ func sanitizeCell(value string) string {
 
 func shortID(value string) string {
 	value = sanitizeCell(value)
-	if len(value) <= 8 {
+	runes := []rune(value)
+	if len(runes) <= 8 {
 		return value
 	}
-	return value[:8]
+	return string(runes[:8])
 }
 
 func fallback(value string) string {
