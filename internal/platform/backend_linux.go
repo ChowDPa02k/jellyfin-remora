@@ -115,12 +115,12 @@ func parseLinuxMountInfo(data []byte) ([]MountInfo, error) {
 		line := scanner.Text()
 		left, right, ok := strings.Cut(line, " - ")
 		if !ok {
-			return nil, fmt.Errorf("malformed mountinfo line %q", line)
+			continue
 		}
 		before := strings.Fields(left)
 		after := strings.Fields(right)
 		if len(before) < 6 || len(after) < 3 {
-			return nil, fmt.Errorf("malformed mountinfo line %q", line)
+			continue
 		}
 		source := decodeMountInfoField(after[1])
 		if strings.HasPrefix(source, "/dev/") {

@@ -36,6 +36,19 @@ func TestParseLinuxMountInfoEscapesAndCIFS(t *testing.T) {
 	}
 }
 
+func TestParseLinuxMountInfoSkipsMalformedRecords(t *testing.T) {
+	raw := "36 25 0:32 / /srv/one rw - ext4 /dev/sda1 rw\n" +
+		"not mountinfo\n" +
+		"37 25 0:33 / /srv/two rw - nfs nas:/two rw\n"
+	mounts, err := parseLinuxMountInfo([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mounts) != 2 || mounts[0].Target != "/srv/one" || mounts[1].Target != "/srv/two" {
+		t.Fatalf("valid mounts lost around malformed record: %#v", mounts)
+	}
+}
+
 func TestParseLinuxProcStatHandlesParentheses(t *testing.T) {
 	fields := []string{"S", "10", "11", "0", "0", "0", "0", "0", "0", "0", "0", "12", "3", "0", "0", "0", "0", "0", "0", "456", "0", "7"}
 	process, err := parseLinuxProcStat([]byte("42 (name with ) parenthesis) " + strings.Join(fields, " ")))
