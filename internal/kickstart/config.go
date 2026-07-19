@@ -175,7 +175,7 @@ func BuildConfiguration(answers Answers, disks []config.DiskConfig, watchdogPass
 
 	root := map[string]any{
 		"config-version": 2,
-		"restapi":        map[string]any{"listen": "127.0.0.1", "port": 8095, platformControlKey(): platformControlValue()},
+		"restapi":        map[string]any{"listen": "127.0.0.1", "port": 8095, "tcp-enabled": false, platformControlKey(): platformControlValue()},
 		"remora": map[string]any{
 			"server-start-timeout": "10m", "server-stop-timeout": "1m", "io-timeout": "5s", "recovery-successes": 2,
 			"data-dir": filepath.Join(home, ".remora"),

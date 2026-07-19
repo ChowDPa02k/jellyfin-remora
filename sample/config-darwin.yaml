@@ -11,6 +11,8 @@ restapi:
   listen: 127.0.0.1
   # Local TCP control port.
   port: 8095
+  # Keep control on the Unix socket unless loopback TCP is explicitly needed.
+  tcp-enabled: false
   # Preferred local Unix socket. Include restapi.port so remoractl can discover
   # the endpoint automatically and multiple instances cannot collide.
   unix-socket: /tmp/.s.remora.8095

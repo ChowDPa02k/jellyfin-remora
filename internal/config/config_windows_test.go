@@ -17,6 +17,9 @@ func TestWindowsSampleLoadsAsCurrentConfiguration(t *testing.T) {
 	if cfg.ConfigVersion != CurrentVersion {
 		t.Fatalf("config version = %d, want %d", cfg.ConfigVersion, CurrentVersion)
 	}
+	if cfg.RESTAPI.TCPControlEnabled() {
+		t.Fatal("Windows sample unexpectedly enables loopback TCP control")
+	}
 	if len(cfg.Disks) != 1 || cfg.Disks[0].VolumeGUID == "" || cfg.Disks[0].ProbePath == "" {
 		t.Fatalf("sample physical disk = %+v", cfg.Disks)
 	}

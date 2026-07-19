@@ -33,6 +33,9 @@ func TestLinuxSampleConfigurationLoads(t *testing.T) {
 	if cfg.ConfigVersion != CurrentVersion || cfg.Jellyfin.RunAsUser != "jellyfin" || len(cfg.Disks) == 0 {
 		t.Fatalf("unexpected Linux sample: %+v", cfg)
 	}
+	if cfg.RESTAPI.TCPControlEnabled() {
+		t.Fatal("Linux sample unexpectedly enables loopback TCP control")
+	}
 	if cfg.Jellyfin.Env["HTTPS_PROXY"] != "http://127.0.0.1:7890" || cfg.Jellyfin.Env["NO_PROXY"] == "" {
 		t.Fatalf("Linux sample environment = %+v", cfg.Jellyfin.Env)
 	}

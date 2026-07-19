@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,4 +57,51 @@ func TestSafeRemoveSocketRejectsRegularFile(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("regular file was removed: %v", err)
 	}
+}
+
+func TestExplicitTCPDisableOnlyStartsUnixSocket(t *testing.T) {
+	reservation, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := reservation.Addr().(*net.TCPAddr).Port
+	t.Cleanup(func() { _ = reservation.Close() })
+
+	socket := filepath.Join(os.TempDir(), fmt.Sprintf("remora-tcp-disabled-%d.sock", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.Remove(socket) })
+	cfg := &config.Config{RESTAPI: config.RESTAPIConfig{
+		Listen: "127.0.0.1", Port: port, UnixSocket: socket,
+		TCPEnabled: config.Optional[bool]{Set: true, Value: false},
+	}}
+	server := New(cfg, &fakeController{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Run(ctx) }()
+	defer func() {
+		cancel()
+		if runErr := <-done; runErr != nil {
+			t.Errorf("server shutdown: %v", runErr)
+		}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !isSocket(socket) {
+		if time.Now().After(deadline) {
+			t.Fatal("Unix socket did not appear")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := reservation.Close(); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+	if err == nil {
+		connection.Close()
+		t.Fatal("TCP listener accepted a connection while disabled")
+	}
+}
+
+func isSocket(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode()&os.ModeSocket != 0
 }

@@ -1,5 +1,10 @@
 # Local control API v1
 
+New configurations set `restapi.tcp-enabled: false` and use the platform-local Unix
+socket or Windows named pipe. Existing version 2 configurations that omit the setting
+retain the historical loopback TCP listener; set it explicitly to `false` to disable
+that compatibility behavior.
+
 Jellyfin Remora API v1 is a local control-plane contract. The daemon listens on
 an owner-restricted Unix socket by default and may additionally listen on an
 explicit loopback address. Remote control is not supported by v1.

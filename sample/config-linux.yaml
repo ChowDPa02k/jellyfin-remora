@@ -10,6 +10,8 @@ restapi:
   listen: 127.0.0.1
   # Local TCP control port used when the Unix socket is unavailable.
   port: 8095
+  # Keep control on the Unix socket unless loopback TCP is explicitly needed.
+  tcp-enabled: false
   # systemd creates /run/jellyfin-remora before starting the daemon.
   unix-socket: /run/jellyfin-remora/remora.sock
 

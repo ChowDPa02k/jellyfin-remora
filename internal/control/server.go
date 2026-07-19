@@ -101,6 +101,7 @@ type DiagnosticBundle struct {
 type DiagnosticConfig struct {
 	Version      int      `json:"version"`
 	Control      string   `json:"control"`
+	TCPEnabled   bool     `json:"tcp_enabled"`
 	UnixSocket   string   `json:"unix_socket"`
 	NamedPipe    string   `json:"named_pipe,omitempty"`
 	DataDir      string   `json:"data_dir"`
@@ -132,26 +133,32 @@ func NewWithOptions(cfg *config.Config, s Controller, log *slog.Logger, options 
 
 func (s *Server) Run(ctx context.Context) error {
 	h := s.handler()
-	s.tcp = managedHTTPServer(net.JoinHostPort(s.cfg.RESTAPI.Listen, strconv.Itoa(s.cfg.RESTAPI.Port)), h)
 	s.local = managedHTTPServer("", h)
 	localListener, localDescription, err := listenLocalControl(s.cfg, s.log)
 	if err != nil {
 		return err
 	}
-	tl, err := net.Listen("tcp", s.tcp.Addr)
-	if err != nil {
-		localListener.Close()
-		return fmt.Errorf("listen REST API: %w", err)
-	}
 	errCh := make(chan error, 2)
 	go func() { errCh <- s.local.Serve(localListener) }()
-	go func() { errCh <- s.tcp.Serve(tl) }()
-	s.log.Info("control API listening", "tcp", s.tcp.Addr, "local", localDescription)
+	tcpDescription := "disabled"
+	if s.cfg.RESTAPI.TCPControlEnabled() {
+		s.tcp = managedHTTPServer(net.JoinHostPort(s.cfg.RESTAPI.Listen, strconv.Itoa(s.cfg.RESTAPI.Port)), h)
+		tl, listenErr := net.Listen("tcp", s.tcp.Addr)
+		if listenErr != nil {
+			localListener.Close()
+			return fmt.Errorf("listen REST API: %w", listenErr)
+		}
+		tcpDescription = s.tcp.Addr
+		go func() { errCh <- s.tcp.Serve(tl) }()
+	}
+	s.log.Info("control API listening", "tcp", tcpDescription, "local", localDescription)
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.tcp.Shutdown(shutdownCtx)
+		if s.tcp != nil {
+			_ = s.tcp.Shutdown(shutdownCtx)
+		}
 		_ = s.local.Shutdown(shutdownCtx)
 		cleanupLocalControl(s.cfg)
 		return nil
@@ -408,7 +415,7 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 		Build:       buildinfo.Current("jellyfin-remora"),
 		Status:      s.supervisor.Status(),
 		Events:      s.supervisor.Events(256),
-		Config:      DiagnosticConfig{Version: s.cfg.ConfigVersion, Control: net.JoinHostPort(s.cfg.RESTAPI.Listen, strconv.Itoa(s.cfg.RESTAPI.Port)), UnixSocket: s.cfg.RESTAPI.UnixSocket, NamedPipe: s.cfg.RESTAPI.NamedPipe, DataDir: s.cfg.Remora.DataDir, JellyfinPath: s.cfg.Jellyfin.Path, Storage: storage},
+		Config:      DiagnosticConfig{Version: s.cfg.ConfigVersion, Control: net.JoinHostPort(s.cfg.RESTAPI.Listen, strconv.Itoa(s.cfg.RESTAPI.Port)), TCPEnabled: s.cfg.RESTAPI.TCPControlEnabled(), UnixSocket: s.cfg.RESTAPI.UnixSocket, NamedPipe: s.cfg.RESTAPI.NamedPipe, DataDir: s.cfg.Remora.DataDir, JellyfinPath: s.cfg.Jellyfin.Path, Storage: storage},
 		Logs:        LogResponse{Source: "remora", Path: s.logPath, Lines: logs, Truncated: truncated},
 	}
 	writeJSON(w, http.StatusOK, bundle)

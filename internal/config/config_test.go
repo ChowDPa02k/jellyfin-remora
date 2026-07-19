@@ -172,3 +172,13 @@ jellyfin:
 		t.Fatalf("bind settings = %#v", address.BindToLocalNetworkAddress)
 	}
 }
+
+func TestTCPControlCompatibilityDefaultAndExplicitDisable(t *testing.T) {
+	if !(RESTAPIConfig{}).TCPControlEnabled() {
+		t.Fatal("version 2 configuration without tcp-enabled lost its compatibility listener")
+	}
+	disabled := RESTAPIConfig{TCPEnabled: Optional[bool]{Set: true, Value: false}}
+	if disabled.TCPControlEnabled() {
+		t.Fatal("explicit tcp-enabled: false was ignored")
+	}
+}

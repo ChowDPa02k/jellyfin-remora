@@ -18,6 +18,9 @@ func TestDarwinSampleLoadsAsCurrentConfiguration(t *testing.T) {
 	if cfg.RESTAPI.UnixSocket != "/tmp/.s.remora.8095" {
 		t.Fatalf("Unix socket = %q", cfg.RESTAPI.UnixSocket)
 	}
+	if cfg.RESTAPI.TCPControlEnabled() {
+		t.Fatal("Darwin sample unexpectedly enables loopback TCP control")
+	}
 	if len(cfg.Disks) != 1 || cfg.Disks[0].FailureThreshold != 1 {
 		t.Fatalf("sample disks = %+v", cfg.Disks)
 	}

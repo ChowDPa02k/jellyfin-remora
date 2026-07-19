@@ -120,10 +120,17 @@ type Config struct {
 }
 
 type RESTAPIConfig struct {
-	Listen     string `yaml:"listen"`
-	Port       int    `yaml:"port"`
-	UnixSocket string `yaml:"unix-socket"`
-	NamedPipe  string `yaml:"named-pipe"`
+	Listen     string         `yaml:"listen"`
+	Port       int            `yaml:"port"`
+	TCPEnabled Optional[bool] `yaml:"tcp-enabled"`
+	UnixSocket string         `yaml:"unix-socket"`
+	NamedPipe  string         `yaml:"named-pipe"`
+}
+
+// TCPControlEnabled preserves compatibility with existing v2 configurations,
+// which predate restapi.tcp-enabled and always exposed the loopback listener.
+func (r RESTAPIConfig) TCPControlEnabled() bool {
+	return !r.TCPEnabled.Set || r.TCPEnabled.Value
 }
 
 type RemoraConfig struct {
@@ -490,6 +497,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RESTAPI.Port < 1 || c.RESTAPI.Port > 65535 {
 		return errors.New("restapi.port must be between 1 and 65535")
+	}
+	if c.RESTAPI.TCPEnabled.Set && c.RESTAPI.TCPEnabled.Null {
+		return errors.New("restapi.tcp-enabled must be true or false")
 	}
 	if c.Remora.HeartbeatInterval.Duration <= 0 || c.Remora.Monitoring.JellyfinAPI.Interval.Duration <= 0 || c.Remora.ServerStartTimeout.Duration <= 0 || c.Remora.ServerStopTimeout.Duration <= 0 || c.Remora.IOTimeout.Duration <= 0 {
 		return errors.New("remora intervals and timeouts must be positive")

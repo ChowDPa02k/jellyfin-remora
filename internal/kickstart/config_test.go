@@ -61,6 +61,10 @@ func TestBuildConfigurationOmitsAdvancedSections(t *testing.T) {
 		t.Fatal(err)
 	}
 	jellyfin := root["jellyfin"].(map[string]any)
+	restapi := root["restapi"].(map[string]any)
+	if enabled, ok := restapi["tcp-enabled"].(bool); !ok || enabled {
+		t.Fatalf("generated restapi.tcp-enabled = %#v, want false", restapi["tcp-enabled"])
+	}
 	for _, forbidden := range []string{"parameters", "general", "networking"} {
 		if _, exists := jellyfin[forbidden]; exists {
 			t.Errorf("forbidden jellyfin.%s was emitted\n%s", forbidden, data)

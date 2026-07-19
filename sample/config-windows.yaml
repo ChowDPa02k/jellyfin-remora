@@ -12,6 +12,8 @@ restapi:
   listen: 127.0.0.1
   # Local TCP control port.
   port: 8095
+  # Keep control on the named pipe unless loopback TCP is explicitly needed.
+  tcp-enabled: false
   # Preferred local named pipe. Unix sockets are not supported on Windows.
   named-pipe: '\\.\pipe\jellyfin-remora'
 
