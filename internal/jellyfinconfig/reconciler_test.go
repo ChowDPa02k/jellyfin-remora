@@ -159,6 +159,67 @@ func TestReconcileValidatesCustomAssetsBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestCustomAssetsRejectSymlinksAndOversizeFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not reliably available to unprivileged Windows tests")
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := filepath.Join(dir, "custom.css")
+	image := filepath.Join(dir, "splash.png")
+	writeFixture(t, css, "body {}")
+	writeFixture(t, image, "png")
+	cssLink := filepath.Join(dir, "linked.css")
+	imageLink := filepath.Join(dir, "linked.png")
+	if err := os.Symlink(css, cssLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(image, imageLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readCSS(cssLink); err == nil || !strings.Contains(err.Error(), "symbolic links") {
+		t.Fatalf("readCSS symlink error = %v", err)
+	}
+	if err := validateImage(imageLink); err == nil || !strings.Contains(err.Error(), "symbolic links") {
+		t.Fatalf("validateImage symlink error = %v", err)
+	}
+	realDir := filepath.Join(dir, "assets")
+	if err := os.Mkdir(realDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(realDir, "nested.css"), "body {}")
+	writeFixture(t, filepath.Join(realDir, "nested.png"), "png")
+	linkedDir := filepath.Join(dir, "linked-assets")
+	if err := os.Symlink(realDir, linkedDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readCSS(filepath.Join(linkedDir, "nested.css")); err == nil || !strings.Contains(err.Error(), "symbolic links") {
+		t.Fatalf("readCSS parent symlink error = %v", err)
+	}
+	if err := validateImage(filepath.Join(linkedDir, "nested.png")); err == nil || !strings.Contains(err.Error(), "symbolic links") {
+		t.Fatalf("validateImage parent symlink error = %v", err)
+	}
+
+	largeCSS := filepath.Join(dir, "large.css")
+	writeFixture(t, largeCSS, "")
+	if err := os.Truncate(largeCSS, maxCustomCSSBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readCSS(largeCSS); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("readCSS oversized error = %v", err)
+	}
+	largeImage := filepath.Join(dir, "large.png")
+	writeFixture(t, largeImage, "")
+	if err := os.Truncate(largeImage, maxSplashImageBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImage(largeImage); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("validateImage oversized error = %v", err)
+	}
+}
+
 func TestReconcileRollsBackEarlierFileWhenLaterWriteFails(t *testing.T) {
 	cfg := fixtureConfig(t)
 	paths := []string{filepath.Join(cfg.Jellyfin.ConfigDir, "encoding.xml"), filepath.Join(cfg.Jellyfin.ConfigDir, "system.xml")}

@@ -16,7 +16,10 @@ import (
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 )
 
-const maxCustomCSSBytes = 4 << 20
+const (
+	maxCustomCSSBytes   = 4 << 20
+	maxSplashImageBytes = 16 << 20
+)
 
 type Result struct {
 	ChangedFiles []string
@@ -292,17 +295,7 @@ func readCSS(path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		return "", errors.New("must be an absolute file path")
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("must reference a regular file")
-	}
-	if info.Size() > maxCustomCSSBytes {
-		return "", fmt.Errorf("file exceeds %d bytes", maxCustomCSSBytes)
-	}
-	data, err := os.ReadFile(path)
+	data, err := readBoundedAsset(path, maxCustomCSSBytes, false)
 	if err != nil {
 		return "", err
 	}
@@ -316,19 +309,72 @@ func validateImage(path string) error {
 	if !filepath.IsAbs(path) {
 		return errors.New("must be an absolute file path")
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return errors.New("must reference a non-empty regular file")
-	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".png", ".jpg", ".jpeg", ".webp":
-		return nil
 	default:
 		return errors.New("supported image extensions are png, jpg, jpeg, and webp")
 	}
+	_, err := readBoundedAsset(path, maxSplashImageBytes, true)
+	return err
+}
+
+func readBoundedAsset(path string, limit int64, requireContent bool) ([]byte, error) {
+	pathInfo, err := lstatPathWithoutSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, errors.New("must reference a regular file")
+	}
+	if pathInfo.Size() > limit {
+		return nil, fmt.Errorf("file exceeds %d bytes", limit)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		return nil, errors.New("asset changed while it was being opened")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("file exceeds %d bytes", limit)
+	}
+	if requireContent && len(data) == 0 {
+		return nil, errors.New("must reference a non-empty regular file")
+	}
+	return data, nil
+}
+
+func lstatPathWithoutSymlinks(path string) (os.FileInfo, error) {
+	clean := filepath.Clean(path)
+	var leaf os.FileInfo
+	for current := clean; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("symbolic links are not allowed: %s", current)
+		}
+		if current == clean {
+			leaf = info
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	return leaf, nil
 }
 
 func atomicWrite(path string, data []byte, mode os.FileMode) (err error) {
