@@ -29,7 +29,6 @@ type Manager struct {
 	pid        int
 	startedAt  time.Time
 	cmd        *exec.Cmd
-	waitDone   chan error
 	stdout     io.Writer
 	stderr     io.Writer
 	writeFile  func(string, []byte, os.FileMode) error
@@ -169,19 +168,15 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err == nil && !info.StartedAt.IsZero() {
 		m.startedAt = info.StartedAt
 	}
-	m.waitDone = make(chan error, 1)
 	pid := m.pid
-	done := m.waitDone
 	go func() {
-		err := cmd.Wait()
+		_ = cmd.Wait()
 		if cleaner, ok := m.backend.(interface{ ProcessExited(int) }); ok {
 			cleaner.ProcessExited(pid)
 		}
-		err = errors.Join(err, console.finish())
+		_ = console.finish()
 		flushConsoleWriter(stdout)
 		flushConsoleWriter(stderr)
-		done <- err
-		close(done)
 		m.mu.Lock()
 		if m.pid == pid {
 			m.pid = 0
@@ -317,6 +312,7 @@ func (m *Manager) Info(ctx context.Context) (platform.ProcessInfo, bool) {
 		m.mu.Lock()
 		if m.pid == pid {
 			m.pid = 0
+			m.cmd = nil
 		}
 		m.mu.Unlock()
 		return platform.ProcessInfo{}, false

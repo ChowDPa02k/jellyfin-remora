@@ -138,3 +138,7 @@ migration, credential storage, or control endpoints must answer:
 Linux HA tests use a descendant that escapes the Jellyfin process group and
 only accept `ESRCH` as proof that it exited; permission failures are test
 failures, not successful cleanup.
+
+Process exit is observed through the single `ProcessInfo` lifecycle path; stale
+PID and command handles are cleared together rather than maintaining a second,
+unused waiter channel.

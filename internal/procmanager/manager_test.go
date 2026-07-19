@@ -6,6 +6,7 @@ import (
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/platform"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -50,6 +51,23 @@ func TestInfoRejectsReusedPIDGeneration(t *testing.T) {
 	}
 	if backend.exited != 42 {
 		t.Fatalf("backend cleanup PID = %d, want 42", backend.exited)
+	}
+}
+
+func TestInfoClearsStaleCommandWithExitedPID(t *testing.T) {
+	manager := &Manager{
+		backend:   alreadyExitedBackend{},
+		pid:       42,
+		startedAt: time.Now(),
+		cmd:       &exec.Cmd{},
+	}
+	if _, running := manager.Info(context.Background()); running {
+		t.Fatal("exited process reported as running")
+	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.pid != 0 || manager.cmd != nil {
+		t.Fatalf("stale manager state: pid=%d cmd=%v", manager.pid, manager.cmd)
 	}
 }
 
