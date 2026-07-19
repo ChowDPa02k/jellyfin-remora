@@ -158,6 +158,11 @@ func (w *windowsBackend) Mounts(ctx context.Context) ([]MountInfo, error) {
 		}
 		mounts = append(mounts, MountInfo{Source: volume, Target: target, FSType: filesystem})
 	}
+	volumeMounts, err := windowsVolumeMounts(DiscoverVolumes)
+	if err != nil {
+		return nil, err
+	}
+	mounts = mergeWindowsVolumeMounts(mounts, volumeMounts)
 	if _, err := windowsSystemMountExecutable(); err == nil {
 		nfsMounts, err := windowsNFSMounts(ctx)
 		if err != nil {
@@ -166,6 +171,40 @@ func (w *windowsBackend) Mounts(ctx context.Context) ([]MountInfo, error) {
 		mounts = mergeWindowsNFSMounts(mounts, nfsMounts)
 	}
 	return mounts, nil
+}
+
+func windowsVolumeMounts(discover func() ([]VolumeInfo, error)) ([]MountInfo, error) {
+	volumes, err := discover()
+	if err != nil {
+		return nil, fmt.Errorf("enumerate Windows volumes: %w", err)
+	}
+	var mounts []MountInfo
+	for _, volume := range volumes {
+		for _, target := range volume.Paths {
+			mounts = append(mounts, MountInfo{
+				Source: volume.GUID,
+				Target: target,
+				FSType: volume.Filesystem,
+			})
+		}
+	}
+	return mounts, nil
+}
+
+func mergeWindowsVolumeMounts(mounts, volumeMounts []MountInfo) []MountInfo {
+	for _, volumeMount := range volumeMounts {
+		found := false
+		for _, mount := range mounts {
+			if strings.EqualFold(mount.Target, volumeMount.Target) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			mounts = append(mounts, volumeMount)
+		}
+	}
+	return mounts
 }
 
 func mergeWindowsNFSMounts(mounts, nfsMounts []MountInfo) []MountInfo {

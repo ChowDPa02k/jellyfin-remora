@@ -39,6 +39,35 @@ func TestMergeWindowsNFSMountsOverridesProviderGuess(t *testing.T) {
 	}
 }
 
+func TestWindowsVolumeMountsIncludesFolderOnlyMount(t *testing.T) {
+	const folderMount = `C:\mnt\media\`
+	mounts, err := windowsVolumeMounts(func() ([]VolumeInfo, error) {
+		return []VolumeInfo{{
+			GUID:       `\\?\Volume{11111111-2222-3333-4444-555555555555}\`,
+			Paths:      []string{folderMount},
+			Filesystem: "NTFS",
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mounts) != 1 || mounts[0].Target != folderMount || mounts[0].FSType != "NTFS" {
+		t.Fatalf("folder-only volume mounts = %#v", mounts)
+	}
+	got := mergeWindowsVolumeMounts([]MountInfo{{Source: "existing", Target: `D:\`, FSType: "NTFS"}}, mounts)
+	if len(got) != 2 || got[1] != mounts[0] {
+		t.Fatalf("merged folder-only volume mounts = %#v", got)
+	}
+}
+
+func TestWindowsVolumeMountsPropagatesDiscoveryError(t *testing.T) {
+	want := errors.New("volume API unavailable")
+	_, err := windowsVolumeMounts(func() ([]VolumeInfo, error) { return nil, want })
+	if !errors.Is(err, want) {
+		t.Fatalf("windowsVolumeMounts() error = %v, want %v", err, want)
+	}
+}
+
 func TestWindowsNFSCommandSource(t *testing.T) {
 	for input, want := range map[string]string{
 		"server:/exports/media":  `\\server\exports\media`,
