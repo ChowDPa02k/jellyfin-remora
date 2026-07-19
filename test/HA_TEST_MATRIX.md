@@ -442,3 +442,26 @@ Live tests used only `remora-review-20260719-round1` directories on NFS and
 SMB. Those directories, temporary binaries, transient units, test scripts,
 credentials transport, and added test-only packages were removed after the
 gate. Both Linux services were returned to one healthy `RUNNING` Jellyfin.
+
+## 2026-07-19 external-review Round 2 gate (`v0.9.0-beta.7`)
+
+The eight Kickstart, archive, and initialization findings in Round 2 were kept
+as eight independent commits. `go test -race ./...`, `go vet ./...`,
+`govulncheck ./...`, the five-target cross-build, and Linux/Windows arm64/amd64
+cross-test compilation passed. One initial full-race run observed the existing
+Darwin descendant fixture miss its PID-file deadline; five immediate targeted
+runs and the complete repeated race gate passed.
+
+| Isolated local gate | Result |
+|---|---|
+| Real tar.gz inspection and extraction | Pass; the verified executable was extracted from the selected archive |
+| Real ZIP inspection and extraction | Pass; the verified executable was extracted through `zip.NewReader` from the already-open file |
+| Missing verification metadata | Pass; extraction failed closed before creating the destination |
+| Package path replacement after verification | Pass; extraction continued from the verified open file description rather than the replacement pathname |
+| Declared expansion-limit rejection | Pass; oversized extraction left neither destination nor staging directory |
+| Injected Kickstart start failure | Pass; generated home, configuration, and launchd artifact were removed in reverse order |
+| Injected incomplete rollback | Pass; the error listed each remaining path or service in an exact cleanup manifest |
+
+All Round 2 extraction and rollback gates used Go test-owned isolated temporary
+directories. No Jellyfin data, NFS/SMB share, installed service, container, or
+virtual machine was modified or left behind.

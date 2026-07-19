@@ -39,6 +39,19 @@ silently within `v0.9.x`.
   successful durable state write. A failed write rejects and rolls back the
   in-memory start/stop/restart mutation, then best-effort rewrites the previous
   intent to both state locations so a one-shot partial write cannot be replayed.
+- `v0.9.0-beta.7` makes repeated interactive `remoractl init` edit the existing
+  configuration and create an owner-only timestamped backup. Unattended
+  replacement now requires the explicit `--no-edit --force` combination.
+
+## Kickstart package and installation safety
+
+From `v0.9.0-beta.7`, every extracted Generic package requires a verified
+SHA-256 digest and size. Verification and extraction use the same open file
+description; each expanded file is limited to 512 MiB, the complete expansion
+to 4 GiB, and the archive to 100,000 entries. Repository rate limits, server
+failures, and timeouts remain repository errors rather than package-absence
+results. A failed deployment rolls back completed installation steps in reverse
+order and reports an exact cleanup manifest if rollback cannot finish.
 
 ## Local REST API v1 and CLI
 
