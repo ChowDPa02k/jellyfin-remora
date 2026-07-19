@@ -584,6 +584,11 @@ func (s *Server) action(action supervisor.Action) http.HandlerFunc {
 				writeAPIError(w, http.StatusServiceUnavailable, "persistence_unavailable", err.Error(), operationID(r))
 				return
 			}
+			var resultErr *supervisor.OperationResultError
+			if errors.As(err, &resultErr) {
+				writeAPIError(w, http.StatusServiceUnavailable, "operation_result_unavailable", err.Error(), operationID(r))
+				return
+			}
 			writeAPIError(w, http.StatusBadRequest, "operation_rejected", err.Error(), operationID(r))
 			return
 		}

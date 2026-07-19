@@ -49,6 +49,17 @@ func (e *PersistError) Error() string {
 
 func (e *PersistError) Unwrap() error { return e.Err }
 
+// OperationResultError means an operation was queued, but the supervisor did
+// not publish its result within the internal bound. It is not an operator
+// validation error and should be reported as retryable/unavailable.
+type OperationResultError struct {
+	Action Action
+}
+
+func (e *OperationResultError) Error() string {
+	return fmt.Sprintf("result for queued %s operation was not available before the internal deadline", e.Action)
+}
+
 type Request struct {
 	Action Action
 	Force  bool
@@ -126,6 +137,7 @@ type Supervisor struct {
 	stateRestorePending  bool
 	rollbackState        *persistedState
 	healthcheckRunning   atomic.Bool
+	submitResultTimeout  time.Duration
 }
 
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
@@ -134,7 +146,7 @@ func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.
 
 func newSupervisor(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger, localStatePath string) *Supervisor {
 	now := time.Now()
-	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32), writeStateFile: atomicWrite, removeStateFile: os.Remove, localStatePath: localStatePath}
+	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32), writeStateFile: atomicWrite, removeStateFile: os.Remove, localStatePath: localStatePath, submitResultTimeout: 30 * time.Second}
 	if b, err := os.ReadFile(filepath.Join(cfg.Remora.DataDir, contract.APIKeyFileName)); err == nil {
 		s.apiKey = strings.TrimSpace(string(b))
 	}
@@ -209,11 +221,19 @@ func (s *Supervisor) Submit(ctx context.Context, action Action, force bool) erro
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	// Once accepted by the event loop, the operation owns its lifecycle. A
+	// disconnected HTTP client must not rewrite an applied result as rejected.
+	timeout := s.submitResultTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case err := <-reply:
 		return err
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-timer.C:
+		return &OperationResultError{Action: action}
 	}
 }
 

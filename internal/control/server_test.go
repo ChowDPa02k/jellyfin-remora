@@ -38,8 +38,14 @@ type cancellationController struct{ *fakeController }
 
 type persistenceFailureController struct{ *fakeController }
 
+type resultUnavailableController struct{ *fakeController }
+
 func (c *persistenceFailureController) Submit(context.Context, supervisor.Action, bool) error {
 	return &supervisor.PersistError{Action: supervisor.ActionStop, Err: syscall.ENOSPC}
+}
+
+func (c *resultUnavailableController) Submit(context.Context, supervisor.Action, bool) error {
+	return &supervisor.OperationResultError{Action: supervisor.ActionRestart}
 }
 
 func (c *cancellationController) Submit(ctx context.Context, _ supervisor.Action, _ bool) error {
@@ -462,6 +468,16 @@ func TestPersistenceFailureIsServiceUnavailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/stop", nil))
 	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "persistence_unavailable") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestQueuedOperationResultTimeoutIsServiceUnavailable(t *testing.T) {
+	controller := &resultUnavailableController{fakeController: &fakeController{}}
+	s := New(&config.Config{}, controller, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w := httptest.NewRecorder()
+	s.handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/restart", nil))
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "operation_result_unavailable") {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
 }
