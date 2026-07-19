@@ -242,18 +242,18 @@ func (c *Checker) applyFailureThreshold(index int, disk config.DiskConfig, resul
 		c.confirmedHealthy = append(c.confirmedHealthy, false)
 	}
 	threshold := max(1, disk.FailureThreshold)
-	if !result.Fatal {
+	if result.Healthy {
 		c.failureCounts[index] = 0
-		if result.Healthy {
-			c.confirmedHealthy[index] = true
-		}
+		c.confirmedHealthy[index] = true
 		return result
 	}
 	if !c.confirmedHealthy[index] || threshold == 1 {
+		result.Fatal = true
 		return result
 	}
 	c.failureCounts[index]++
 	if c.failureCounts[index] >= threshold {
+		result.Fatal = true
 		return result
 	}
 	result.Fatal = false

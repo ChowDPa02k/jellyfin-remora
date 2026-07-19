@@ -158,6 +158,24 @@ func TestDiskFailureThresholdRequiresConsecutiveFailuresAfterHealthyCheck(t *tes
 	}
 }
 
+func TestDegradedResultPreservesDiskFailureStreak(t *testing.T) {
+	checker := &Checker{}
+	disk := config.DiskConfig{FailureThreshold: 3}
+	checker.applyFailureThreshold(0, disk, model.StorageResult{Healthy: true})
+
+	results := []model.StorageResult{
+		{Fatal: true, Message: "I/O failed"},
+		{Healthy: false, Fatal: false, Message: "server unreachable"},
+		{Fatal: true, Message: "I/O failed again"},
+	}
+	for i, result := range results {
+		got := checker.applyFailureThreshold(0, disk, result)
+		if got.Fatal != (i == len(results)-1) {
+			t.Fatalf("failure %d fatal=%t message=%q", i+1, got.Fatal, got.Message)
+		}
+	}
+}
+
 func TestInitMismatchAllowanceDoesNotChangeRuntimeCheck(t *testing.T) {
 	cfg := &config.Config{
 		Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: time.Second}},
