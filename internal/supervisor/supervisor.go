@@ -381,6 +381,12 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		return
 	}
 	if s.storageFenced {
+		if degraded {
+			s.healthyStorageRuns = 0
+			s.transition(model.StateStorageFenced, "storage recovery requires every check to be healthy")
+			s.persistBestEffort()
+			return
+		}
 		s.healthyStorageRuns++
 		if s.healthyStorageRuns < s.cfg.Remora.RecoverySuccesses {
 			s.transition(model.StateStorageFenced, fmt.Sprintf("storage recovery confirmation %d/%d", s.healthyStorageRuns, s.cfg.Remora.RecoverySuccesses))

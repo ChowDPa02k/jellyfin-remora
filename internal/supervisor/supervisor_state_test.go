@@ -445,6 +445,23 @@ func stateSupervisor(t *testing.T, process *stateProcess) *Supervisor {
 	return New(cfg, process, stateStorage{}, jellyfin.New("http://127.0.0.1:1", time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
+func TestStorageFenceRecoveryRejectsDegradedChecks(t *testing.T) {
+	s := stateSupervisor(t, &stateProcess{})
+	s.cfg.Remora.RecoverySuccesses = 3
+	s.storageFenced = true
+	s.healthyStorageRuns = 2
+	s.mu.Lock()
+	s.status.Storage = []model.StorageResult{{Healthy: false, Fatal: false, Message: "server unreachable"}}
+	s.mu.Unlock()
+
+	for range 3 {
+		s.reconcile(context.Background())
+	}
+	if !s.storageFenced || s.healthyStorageRuns != 0 || s.Status().State != model.StateStorageFenced {
+		t.Fatalf("degraded recovery cleared fence: fenced=%t healthy-runs=%d state=%s", s.storageFenced, s.healthyStorageRuns, s.Status().State)
+	}
+}
+
 func TestStatusPortsAreObservedAndCleared(t *testing.T) {
 	process := &stateProcess{running: true, ports: []int{8096}, started: time.Now().Add(-time.Minute)}
 	s := stateSupervisor(t, process)
