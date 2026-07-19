@@ -137,6 +137,49 @@ func TestExtractArchiveRejectsPackageChangedAfterVerification(t *testing.T) {
 	}
 }
 
+func TestArchiveBudgetLimitsExpandedContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*archiveBudget) error
+		want    string
+	}{
+		{
+			name: "single file",
+			prepare: func(b *archiveBudget) error {
+				return b.account("oversized", maxArchiveFileSize+1)
+			},
+			want: "512 MiB",
+		},
+		{
+			name: "expanded total",
+			prepare: func(b *archiveBudget) error {
+				for index := 0; index < 8; index++ {
+					if err := b.account("part", maxArchiveFileSize); err != nil {
+						return err
+					}
+				}
+				return b.account("overflow", 1)
+			},
+			want: "4 GiB",
+		},
+		{
+			name: "entry count",
+			prepare: func(b *archiveBudget) error {
+				b.entries = maxArchiveEntries
+				return b.account("one-too-many", 0)
+			},
+			want: "100000 entries",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.prepare(&archiveBudget{}); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error=%v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
 func matchingExecutable(t *testing.T) string {
 	t.Helper()
 	path, err := os.Executable()

@@ -15,7 +15,35 @@ import (
 	"github.com/ulikunitz/xz"
 )
 
-const maxArchiveExecutableSize = 256 << 20
+const (
+	maxArchiveExecutableSize = 256 << 20
+	maxArchiveFileSize       = int64(512 << 20)
+	maxArchiveExpandedSize   = int64(4 << 30)
+	maxArchiveEntries        = 100_000
+)
+
+type archiveBudget struct {
+	entries int
+	total   int64
+}
+
+func (b *archiveBudget) account(name string, size int64) error {
+	if size < 0 {
+		return fmt.Errorf("archive entry %s has a negative size", name)
+	}
+	b.entries++
+	if b.entries > maxArchiveEntries {
+		return fmt.Errorf("archive contains more than %d entries", maxArchiveEntries)
+	}
+	if size > maxArchiveFileSize {
+		return fmt.Errorf("archive entry %s exceeds the 512 MiB file limit", name)
+	}
+	if size > maxArchiveExpandedSize-b.total {
+		return errors.New("archive exceeds the 4 GiB expanded-size limit")
+	}
+	b.total += size
+	return nil
+}
 
 type ArchiveInfo struct {
 	Path            string
@@ -51,9 +79,13 @@ func inspectZip(path string) (ArchiveInfo, error) {
 	defer reader.Close()
 	result := ArchiveInfo{Path: path}
 	var binaryErrors []string
+	var budget archiveBudget
 	for _, entry := range reader.File {
 		name, err := safeArchiveName(entry.Name)
 		if err != nil {
+			return ArchiveInfo{}, err
+		}
+		if err := budget.account(name, int64(entry.UncompressedSize64)); err != nil {
 			return ArchiveInfo{}, err
 		}
 		if isWebIndex(name) && result.WebDirEntry == "" {
@@ -89,6 +121,7 @@ func inspectTar(path string) (ArchiveInfo, error) {
 	defer stream.Close()
 	result := ArchiveInfo{Path: path}
 	var binaryErrors []string
+	var budget archiveBudget
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -99,6 +132,9 @@ func inspectTar(path string) (ArchiveInfo, error) {
 		}
 		name, err := safeArchiveName(header.Name)
 		if err != nil {
+			return ArchiveInfo{}, err
+		}
+		if err := budget.account(name, header.Size); err != nil {
 			return ArchiveInfo{}, err
 		}
 		if isWebIndex(name) && result.WebDirEntry == "" {
@@ -230,9 +266,13 @@ func extractZip(path, root string) error {
 		return err
 	}
 	defer reader.Close()
+	var budget archiveBudget
 	for _, entry := range reader.File {
 		name, err := safeArchiveName(entry.Name)
 		if err != nil {
+			return err
+		}
+		if err := budget.account(name, int64(entry.UncompressedSize64)); err != nil {
 			return err
 		}
 		target := filepath.Join(root, name)
@@ -262,7 +302,7 @@ func extractZip(path, root string) error {
 		if err != nil {
 			return err
 		}
-		if err := writeArchiveFile(target, stream, mode); err != nil {
+		if err := writeArchiveFile(target, stream, mode, int64(entry.UncompressedSize64)); err != nil {
 			stream.Close()
 			return err
 		}
@@ -277,6 +317,7 @@ func extractTar(path, root string) error {
 		return err
 	}
 	defer stream.Close()
+	var budget archiveBudget
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -289,6 +330,9 @@ func extractTar(path, root string) error {
 		if err != nil {
 			return err
 		}
+		if err := budget.account(name, header.Size); err != nil {
+			return err
+		}
 		target := filepath.Join(root, name)
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -296,7 +340,7 @@ func extractTar(path, root string) error {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := writeArchiveFile(target, reader, os.FileMode(header.Mode)); err != nil {
+			if err := writeArchiveFile(target, reader, os.FileMode(header.Mode), header.Size); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
@@ -310,7 +354,7 @@ func extractTar(path, root string) error {
 	}
 }
 
-func writeArchiveFile(path string, reader io.Reader, sourceMode os.FileMode) error {
+func writeArchiveFile(path string, reader io.Reader, sourceMode os.FileMode, expectedSize int64) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
@@ -322,10 +366,13 @@ func writeArchiveFile(path string, reader io.Reader, sourceMode os.FileMode) err
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(file, reader)
+	written, copyErr := io.Copy(file, io.LimitReader(reader, maxArchiveFileSize+1))
 	closeErr := file.Close()
 	if copyErr != nil {
 		return copyErr
+	}
+	if written != expectedSize {
+		return fmt.Errorf("archive entry size changed while extracting: expected %d bytes, got %d", expectedSize, written)
 	}
 	return closeErr
 }
