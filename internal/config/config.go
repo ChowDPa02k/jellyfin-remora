@@ -501,8 +501,11 @@ func (c *Config) Validate() error {
 	if c.RESTAPI.TCPEnabled.Set && c.RESTAPI.TCPEnabled.Null {
 		return errors.New("restapi.tcp-enabled must be true or false")
 	}
-	if c.Remora.HeartbeatInterval.Duration <= 0 || c.Remora.Monitoring.JellyfinAPI.Interval.Duration <= 0 || c.Remora.ServerStartTimeout.Duration <= 0 || c.Remora.ServerStopTimeout.Duration <= 0 || c.Remora.IOTimeout.Duration <= 0 {
+	if c.Remora.Monitoring.Interval.Duration <= 0 || c.Remora.Monitoring.JellyfinAPI.Interval.Duration <= 0 || c.Remora.ServerStartTimeout.Duration <= 0 || c.Remora.ServerStopTimeout.Duration <= 0 || c.Remora.IOTimeout.Duration <= 0 {
 		return errors.New("remora intervals and timeouts must be positive")
+	}
+	if c.Remora.Monitoring.JellyfinAPI.FailureThreshold < 1 || c.Remora.RecoverySuccesses < 1 {
+		return errors.New("remora monitoring thresholds must be positive")
 	}
 	if c.Remora.Monitoring.Database.ConfirmationWindow.Duration <= 0 || c.Remora.Monitoring.Database.FailureThreshold < 1 {
 		return errors.New("remora.monitoring.database confirmation-window and failure-threshold must be positive")
@@ -511,6 +514,9 @@ func (c *Config) Validate() error {
 	case "debug", "info", "warning", "warn", "error":
 	default:
 		return fmt.Errorf("remora.logs.level %q is invalid", c.Remora.Logs.Level)
+	}
+	if c.Remora.Logs.RotationTime.Duration <= 0 || c.Remora.Logs.RotationSizeMB <= 0 || c.Remora.Logs.PreserveTime.Duration <= 0 {
+		return errors.New("remora.logs rotation-time, rotation-size-mb, and preserve-time must be positive")
 	}
 	if c.Jellyfin.Path == "" {
 		return errors.New("jellyfin.path is required")
@@ -603,7 +609,7 @@ func (c *Config) Validate() error {
 		if c.Remora.UserLoginWatchdog.User == "" || c.Remora.UserLoginWatchdog.Password == "" {
 			return errors.New("remora.monitoring.user-login.user and password are required when user-login monitoring is enabled")
 		}
-		if c.Remora.UserLoginWatchdog.Heartbeat < 1 {
+		if c.Remora.Monitoring.UserLogin.Interval.Duration <= 0 {
 			return errors.New("remora.monitoring.user-login.interval must be positive when user-login monitoring is enabled")
 		}
 	}

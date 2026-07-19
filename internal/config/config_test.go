@@ -121,6 +121,37 @@ func TestRejectsInvalidJellyfinEnvironment(t *testing.T) {
 	}
 }
 
+func TestRejectsNonPositiveRuntimeIntervalsThresholdsAndRotation(t *testing.T) {
+	base := Config{ConfigVersion: CurrentVersion, RESTAPI: RESTAPIConfig{Listen: "127.0.0.1", Port: 8095}, Jellyfin: JellyfinConfig{Path: "/x", DataDir: "/d", ConfigDir: "/c", CacheDir: "/k", LogDir: "/l", RunAsUser: "nobody"}}
+	base.defaults()
+
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"monitoring interval", func(c *Config) { c.Remora.Monitoring.Interval.Duration = -time.Second }},
+		{"Jellyfin API interval", func(c *Config) { c.Remora.Monitoring.JellyfinAPI.Interval.Duration = -time.Second }},
+		{"Jellyfin API failure threshold", func(c *Config) { c.Remora.Monitoring.JellyfinAPI.FailureThreshold = -1 }},
+		{"recovery successes", func(c *Config) { c.Remora.RecoverySuccesses = -1 }},
+		{"user login interval", func(c *Config) {
+			c.Remora.Monitoring.UserLogin = UserLoginWatchdogConfig{Enabled: true, Interval: Duration{-time.Second}, User: "remora", Password: "secret", Heartbeat: 1}
+			c.Remora.UserLoginWatchdog = c.Remora.Monitoring.UserLogin
+		}},
+		{"log rotation time", func(c *Config) { c.Remora.Logs.RotationTime.Duration = -time.Second }},
+		{"log rotation size", func(c *Config) { c.Remora.Logs.RotationSizeMB = -1 }},
+		{"log preserve time", func(c *Config) { c.Remora.Logs.PreserveTime.Duration = -time.Second }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate := base
+			tt.mutate(&candidate)
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func TestLoadManagedJellyfinSettingsTracksNullAndConfiguredValues(t *testing.T) {
 	root := filepath.ToSlash(t.TempDir())
 	body := fmt.Sprintf(`config-version: 1
