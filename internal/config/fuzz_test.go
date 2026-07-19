@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func FuzzParseConfiguration(f *testing.F) {
 	f.Add([]byte(`config-version: 2
@@ -16,6 +19,20 @@ jellyfin:
 `))
 	f.Add([]byte("config-version: 999\nunknown: true\n"))
 	f.Add([]byte("&a [*a]\n"))
+	f.Add([]byte(`config-version: 2
+restapi: {listen: 127.0.0.1}
+remora: {data-dir: /var/lib/remora}
+jellyfin:
+  path: /opt/jellyfin
+  run-as-user: nobody
+  data-dir: /srv/jellyfin/data
+  config-dir: /srv/jellyfin/config
+  cache-dir: /srv/jellyfin/cache
+  log-dir: /srv/jellyfin/log
+  env: {HTTP_PROXY: "http://127.0.0.1:7890", EMPTY: "", BOOL_TEXT: "true"}
+`))
+	f.Add([]byte("config-version: 2\njellyfin:\n  env: {COUNT: 1, ENABLED: true}\n"))
+	f.Add([]byte("config-version: 2\njellyfin:\n  env: {PATH: /bin, path: /custom}\n"))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 1<<20 {
 			t.Skip()
@@ -29,6 +46,11 @@ jellyfin:
 		}
 		if cfg.Remora.HeartbeatInterval.Duration <= 0 || cfg.Remora.IOTimeout.Duration <= 0 {
 			t.Fatalf("accepted non-positive runtime intervals: %+v", cfg.Remora)
+		}
+		for name, value := range cfg.Jellyfin.Env {
+			if name == "" || strings.ContainsAny(name, "=\x00") || strings.ContainsRune(value, '\x00') {
+				t.Fatalf("accepted invalid environment entry %q=%q", name, value)
+			}
 		}
 	})
 }
