@@ -44,6 +44,20 @@ func TestWindowsSampleLoadsAsCurrentConfiguration(t *testing.T) {
 	}
 }
 
+func TestWindowsRejectsInvalidJellyfinEnvironment(t *testing.T) {
+	base, err := Load(filepath.Join("..", "..", "sample", "config-windows.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []map[string]string{{"": "value"}, {"BAD=NAME": "value"}, {"GOOD": "bad\x00value"}} {
+		candidate := *base
+		candidate.Jellyfin.Env = env
+		if err := candidate.Validate(); err == nil || !strings.Contains(err.Error(), "jellyfin.env") {
+			t.Fatalf("environment %q validation error = %v", env, err)
+		}
+	}
+}
+
 func TestWindowsPhysicalVolumeConfiguration(t *testing.T) {
 	root := t.TempDir()
 	body := `config-version: 2
