@@ -688,6 +688,9 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.nextInitialization = time.Time{}
 	}
 	if infoErr == nil {
+		if info.ProductName != "" && info.ProductName != "Jellyfin Server" {
+			s.log.Debug("Jellyfin public endpoint reported an unexpected product name", "product_name", info.ProductName)
+		}
 		s.mu.Lock()
 		s.status.Version = info.Version
 		s.status.ServerName = info.ServerName
@@ -912,11 +915,14 @@ func (s *Supervisor) setMountRecoveryAllowed(allowed bool) {
 }
 
 func (s *Supervisor) initializeServer(ctx context.Context) error {
-	bootstrapUser, err := s.client.CompleteStartup(ctx, s.cfg.Init)
+	if err := s.requireManagedJellyfinListener(ctx); err != nil {
+		return err
+	}
+	bootstrapUser, err := s.client.CompleteStartupGuarded(ctx, s.cfg.Init, s.requireManagedJellyfinListener)
 	if err != nil {
 		return err
 	}
-	auth, err := s.client.Authenticate(ctx, bootstrapUser, s.cfg.Init.Password)
+	auth, err := s.authenticateAdministrator(ctx, bootstrapUser)
 	if err != nil {
 		return err
 	}
@@ -924,7 +930,7 @@ func (s *Supervisor) initializeServer(ctx context.Context) error {
 		if err := s.client.UpdateUsername(ctx, auth.AccessToken, auth.User, s.cfg.Init.User); err != nil {
 			return err
 		}
-		auth, err = s.client.Authenticate(ctx, s.cfg.Init.User, s.cfg.Init.Password)
+		auth, err = s.authenticateAdministrator(ctx, s.cfg.Init.User)
 		if err != nil {
 			return err
 		}
@@ -941,7 +947,7 @@ func (s *Supervisor) initializeServer(ctx context.Context) error {
 func (s *Supervisor) ensureAPIKey(ctx context.Context) error {
 	credential := s.adminCredential()
 	if credential == "" {
-		auth, err := s.client.Authenticate(ctx, s.cfg.Init.User, s.cfg.Init.Password)
+		auth, err := s.authenticateAdministrator(ctx, s.cfg.Init.User)
 		if err != nil {
 			return err
 		}
@@ -957,6 +963,27 @@ func (s *Supervisor) ensureAPIKey(ctx context.Context) error {
 	}
 	s.setAPIKey(key)
 	return nil
+}
+
+func (s *Supervisor) authenticateAdministrator(ctx context.Context, user string) (jellyfin.AuthenticationResult, error) {
+	if err := s.requireManagedJellyfinListener(ctx); err != nil {
+		return jellyfin.AuthenticationResult{}, err
+	}
+	return s.client.Authenticate(ctx, user, s.cfg.Init.Password)
+}
+
+func (s *Supervisor) requireManagedJellyfinListener(ctx context.Context) error {
+	port := s.cfg.Jellyfin.Networking.ServerAddressSettings.LocalHTTPPort
+	info, running := s.process.Info(ctx)
+	if !running {
+		return errors.New("refusing to send administrator credentials: the managed Jellyfin process generation is not running")
+	}
+	for _, ownedPort := range info.Ports {
+		if ownedPort == port {
+			return nil
+		}
+	}
+	return fmt.Errorf("refusing to send administrator credentials: managed Jellyfin process generation %d does not own TCP port %d", info.PID, port)
 }
 func (s *Supervisor) ensureWatchdog(ctx context.Context) error {
 	if !s.cfg.Remora.UserLoginWatchdog.Enabled {

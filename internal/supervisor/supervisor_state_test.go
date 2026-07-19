@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -58,6 +59,9 @@ func TestFirstStartInitializationBacksOffAndOpensCircuit(t *testing.T) {
 	process := &stateProcess{running: true, started: time.Now().Add(-time.Minute)}
 	s := stateSupervisor(t, process)
 	s.client = jellyfin.New(server.URL, time.Second)
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	process.ports = []int{port}
+	s.cfg.Jellyfin.Networking.ServerAddressSettings.LocalHTTPPort = port
 	s.cfg.Init = config.InitConfig{User: "admin", Password: "secret"}
 	s.wizardIncompleteRuns = 3
 	for want := 1; want <= 5; want++ {
@@ -83,6 +87,67 @@ func TestFirstStartInitializationBacksOffAndOpensCircuit(t *testing.T) {
 	}
 	if s.processFailed || s.initializationFails != 0 || !s.nextInitialization.IsZero() {
 		t.Fatal("administrative start did not reset initialization circuit")
+	}
+}
+
+func TestInitializationRefusesCredentialsWhenManagedGenerationDoesNotOwnPort(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{"ProductName": "Jellyfin Server"})
+	}))
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	process := &stateProcess{running: true, started: time.Now(), ports: []int{port + 1}}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.cfg.Init = config.InitConfig{User: "admin", Password: "do-not-send"}
+	s.cfg.Jellyfin.Networking.ServerAddressSettings.LocalHTTPPort = port
+
+	err := s.initializeServer(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "does not own TCP port") {
+		t.Fatalf("error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("sent %d requests before generation-aware listener validation", requests)
+	}
+}
+
+func TestInitializationRechecksPortOwnershipImmediatelyBeforePassword(t *testing.T) {
+	passwordRequests := 0
+	var process *stateProcess
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/Startup/User":
+			_ = json.NewEncoder(w).Encode(jellyfin.StartupUser{Name: "admin"})
+		case r.Method == http.MethodGet && r.URL.Path == "/Startup/Configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/Localization/"):
+			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodPost && r.URL.Path == "/Startup/Configuration":
+			process.ports = []int{1}
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/Startup/User":
+			passwordRequests++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	process = &stateProcess{running: true, started: time.Now(), ports: []int{port}}
+	s := stateSupervisor(t, process)
+	s.client = jellyfin.New(server.URL, time.Second)
+	s.cfg.Init = config.InitConfig{User: "admin", Password: "do-not-send"}
+	s.cfg.Jellyfin.Networking.ServerAddressSettings.LocalHTTPPort = port
+
+	err := s.initializeServer(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "does not own TCP port") {
+		t.Fatalf("error = %v", err)
+	}
+	if passwordRequests != 0 {
+		t.Fatalf("sent %d password requests after listener ownership changed", passwordRequests)
 	}
 }
 

@@ -33,6 +33,7 @@ type Client struct {
 type PublicInfo struct {
 	Version                string `json:"Version"`
 	ServerName             string `json:"ServerName"`
+	ProductName            string `json:"ProductName"`
 	StartupWizardCompleted *bool  `json:"StartupWizardCompleted"`
 }
 type AuthenticationResult struct {
@@ -124,6 +125,12 @@ func (c *Client) ProbeDatabase(ctx context.Context, token string) error {
 }
 
 func (c *Client) CompleteStartup(ctx context.Context, cfg config.InitConfig) (string, error) {
+	return c.CompleteStartupGuarded(ctx, cfg, nil)
+}
+
+// CompleteStartupGuarded invokes beforeCredentials immediately before the
+// setup request that carries the administrator password.
+func (c *Client) CompleteStartupGuarded(ctx context.Context, cfg config.InitConfig, beforeCredentials func(context.Context) error) (string, error) {
 	if cfg.User == "" || cfg.Password == "" {
 		return "", fmt.Errorf("init.user and init.password are required for first startup")
 	}
@@ -144,6 +151,11 @@ func (c *Client) CompleteStartup(ctx context.Context, cfg config.InitConfig) (st
 	}
 	// Jellyfin 12 seeds the first user from the OS account. Its setup endpoint
 	// can set that user's password but cannot rename it in the same request.
+	if beforeCredentials != nil {
+		if err := beforeCredentials(ctx); err != nil {
+			return "", err
+		}
+	}
 	if err := c.do(ctx, http.MethodPost, "/Startup/User", "", map[string]any{"Name": bootstrapUser, "Password": cfg.Password}, nil, http.StatusNoContent); err != nil {
 		return "", err
 	}
