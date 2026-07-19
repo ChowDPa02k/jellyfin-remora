@@ -88,6 +88,8 @@ type Supervisor struct {
 	tick                 uint64
 	wasRunning           bool
 	processFailed        bool
+	stopFailures         int
+	nextStopRetry        time.Time
 	crashes              []time.Time
 	nextStart            time.Time
 	hungSince            time.Time
@@ -217,6 +219,8 @@ func (s *Supervisor) handle(req Request) {
 		s.status.ManualStop = false
 		s.status.DesiredState = model.DesiredRunning
 		s.processFailed = false
+		s.stopFailures = 0
+		s.nextStopRetry = time.Time{}
 		s.crashes = nil
 		s.nextStart = time.Time{}
 		s.initializationFails = 0
@@ -359,8 +363,21 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	s.wasRunning = running
 	if manual || desired == model.DesiredStopped {
 		if running {
-			_ = s.stop(ctx, force)
+			if time.Now().Before(s.nextStopRetry) {
+				s.transition(model.StateProcessFailed, "manual stop is waiting for bounded retry backoff")
+				s.persistBestEffort()
+				return
+			}
+			if err := s.stop(ctx, force); err != nil {
+				s.recordStopFailure("manual stop", err)
+				s.persistBestEffort()
+				return
+			}
+			s.stopFailures = 0
+			s.nextStopRetry = time.Time{}
 		} else {
+			s.stopFailures = 0
+			s.nextStopRetry = time.Time{}
 			s.transition(model.StateStopped, "")
 		}
 		s.setMountRecoveryAllowed(true)
@@ -372,7 +389,18 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.storageFenced = true
 		s.healthyStorageRuns = 0
 		if running {
-			_ = s.stop(ctx, false)
+			if time.Now().Before(s.nextStopRetry) {
+				s.transition(model.StateProcessFailed, "storage fence stop is waiting for bounded retry backoff")
+				s.persistBestEffort()
+				return
+			}
+			if err := s.stop(ctx, false); err != nil {
+				s.recordStopFailure("storage fence stop", err)
+				s.persistBestEffort()
+				return
+			}
+			s.stopFailures = 0
+			s.nextStopRetry = time.Time{}
 		}
 		s.setMountRecoveryAllowed(true)
 		s.transition(model.StateStorageFenced, "required storage is unhealthy")
@@ -692,6 +720,14 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	}
 	s.clearOneShots()
 	s.persistBestEffort()
+}
+
+func (s *Supervisor) recordStopFailure(operation string, err error) {
+	s.stopFailures++
+	s.processFailed = true
+	delay := retryDelay(s.stopFailures)
+	s.nextStopRetry = time.Now().Add(delay)
+	s.transition(model.StateProcessFailed, fmt.Sprintf("%s failed (attempt %d); retrying in %s: %v", operation, s.stopFailures, delay, err))
 }
 
 func (s *Supervisor) evaluateDatabaseDamage(ctx context.Context, readiness model.HealthResult) bool {

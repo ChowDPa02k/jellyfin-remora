@@ -111,6 +111,45 @@ func TestReconcilePerformsOneHealthRequestPerTick(t *testing.T) {
 	}
 }
 
+func TestManualAndStorageStopFailuresAreVisibleAndBackedOff(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		setup  func(*Supervisor)
+		detail string
+	}{
+		{name: "manual", setup: func(s *Supervisor) {
+			s.status.ManualStop = true
+			s.status.DesiredState = model.DesiredStopped
+		}, detail: "manual stop failed"},
+		{name: "storage", setup: func(s *Supervisor) {
+			s.status.Storage = []model.StorageResult{{Healthy: false, Fatal: true}}
+		}, detail: "storage fence stop failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			process := &stateProcess{running: true, stopErr: errors.New("signal timeout"), started: time.Now()}
+			s := stateSupervisor(t, process)
+			tc.setup(s)
+			s.reconcile(context.Background())
+			firstRetry := s.nextStopRetry
+			s.reconcile(context.Background())
+			if process.stopCalls != 1 || !s.nextStopRetry.Equal(firstRetry) {
+				t.Fatalf("stop retry ignored backoff: calls=%d next=%s", process.stopCalls, s.nextStopRetry)
+			}
+			for range 4 {
+				s.nextStopRetry = time.Time{}
+				s.reconcile(context.Background())
+			}
+			status := s.Status()
+			if process.stopCalls != 5 || !s.processFailed || status.State != model.StateProcessFailed {
+				t.Fatalf("calls=%d failed=%t state=%s", process.stopCalls, s.processFailed, status.State)
+			}
+			if !strings.Contains(status.LastError, tc.detail) || !strings.Contains(status.LastError, "retrying in") {
+				t.Fatalf("stop failure is not observable: %q", status.LastError)
+			}
+		})
+	}
+}
+
 func TestFrozenStateFormatAndForwardCompatibleManualStop(t *testing.T) {
 	data, damage := encodeState(model.Status{
 		ManualStop: true,
