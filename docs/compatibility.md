@@ -78,6 +78,16 @@ On Unix, the daemon rejects configuration files readable by group or others.
 Persistence failures and unavailable queued-operation results are retryable
 service failures (HTTP 503 and CLI exit 3), not operator-usage errors.
 
+`v0.9.0-beta.9` freezes environment overrides as YAML string scalars. Variable
+names are case-sensitive on Darwin/Linux; Windows rejects names that differ
+only by case. `remora.data-dir` and the resolved log path must be absolute.
+Custom CSS and splash files must be bounded regular files reached without a
+symlink component. Darwin rejects both `root` and numeric user `0`, propagates
+directory-service UID/GID errors, and applies an explicitly different primary
+group even when the target UID matches the caller. Windows physical-volume
+discovery includes drive-letter and folder mount points. Generated systemd path
+values encode every control byte and cannot inject additional unit directives.
+
 ## Durable and runtime files
 
 | File | Frozen format and rule |

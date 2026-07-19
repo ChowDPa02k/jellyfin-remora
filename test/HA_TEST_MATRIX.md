@@ -489,3 +489,27 @@ The macOS test used only `/Users/zhoudingpeng/Appdata/jellyfin` and removed its
 contents afterward. Debian used transient `remora-round3*` units and `/tmp`
 artifacts; all were removed, and the original `jellyfin-remora.service` was
 restored to one healthy Jellyfin 10.11.11 process.
+
+## 2026-07-19 external-review Round 4 gate (`v0.9.0-beta.9`)
+
+The fourteen configuration, platform, and contract-consistency findings in
+Round 4 were kept as fourteen independent commits. `go test -race ./...`,
+`go vet ./...`, `govulncheck ./...`, the five-target cross-build, and
+Linux/Windows arm64/amd64 cross-test compilation passed. The environment parser
+also completed its targeted fuzz gate.
+
+| Live or deterministic gate | Result |
+|---|---|
+| macOS init directory preparation | Pass; non-privileged init validated the physical APFS volume, created all four missing Jellyfin directories, wrote a mode 0600 configuration, and generated a launchd plist |
+| macOS repeated init | Pass; `--no-edit` refused implicit replacement, while explicit `--force` wrote a timestamped mode 0600 backup and regenerated the same service artifact |
+| macOS configuration permissions | Pass; mode 0644 failed before daemon startup with an owner-only diagnostic, and mode 0600 started with socket-only control |
+| macOS environment propagation | Pass; the managed Jellyfin process contained the configured `REMORA_ROUND4_ENV` override while retaining the normal inherited environment |
+| macOS ownership-preserving edit | Pass; `edit-config` changed the validated YAML and retained uid 501, gid 20, and mode 0600 across atomic replacement |
+| Rocky Linux init and systemd artifact | Pass; unprivileged init created owned data paths, a mode 0600 config and a systemd-analyze-valid unit; forced repeat produced a timestamped backup |
+| Debian Linux init and systemd artifact | Pass; the same lifecycle and permission gates passed with the Debian Jellyfin layout and ext4 root volume |
+| Linux installed-service isolation | Pass; both pre-existing `jellyfin-remora.service` instances remained active throughout; generated test units were never installed or started |
+| Windows platform behavior | Pass in amd64/arm64 cross-build and deterministic Volume API, environment-case, and validation seams; native execution remains a release gate |
+
+All local and remote artifacts used unique `round4` names and were removed.
+No installed unit, existing Jellyfin data, NFS/SMB content, container, virtual
+machine, or user SSH configuration was changed.
