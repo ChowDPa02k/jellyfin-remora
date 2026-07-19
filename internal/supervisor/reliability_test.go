@@ -36,6 +36,33 @@ func TestControlOperationReportsStatePersistenceFailure(t *testing.T) {
 	}
 }
 
+func TestFailedRollbackJournalPreventsRejectedIntentReplay(t *testing.T) {
+	directory := t.TempDir()
+	process := &stateProcess{running: true, started: time.Now()}
+	s := persistentStateSupervisor(directory, process)
+	realWriter := s.writeStateFile
+	writes := 0
+	s.writeStateFile = func(path string, data []byte, mode os.FileMode) error {
+		writes++
+		if writes >= 3 { // journal + runtime succeed; local and any restore fail
+			return errors.New("injected persistent failure")
+		}
+		return realWriter(path, data, mode)
+	}
+	reply := make(chan error, 1)
+	s.handle(Request{Action: ActionStop, Reply: reply})
+	if err := <-reply; err == nil {
+		t.Fatal("stop unexpectedly succeeded")
+	}
+	replacement := persistentStateSupervisor(directory, process)
+	if replacement.Status().ManualStop || replacement.Status().DesiredState != model.DesiredRunning {
+		t.Fatalf("rejected stop was replayed despite rollback journal: %+v", replacement.Status())
+	}
+	if replacement.rollbackState == nil {
+		t.Fatal("replacement did not discover pending rollback recovery")
+	}
+}
+
 func TestSecondStateWriteFailureRestoresPreviousDurableIntent(t *testing.T) {
 	directory := t.TempDir()
 	process := &stateProcess{running: true, started: time.Now()}
@@ -246,8 +273,7 @@ func persistentStateSupervisor(directory string, process *stateProcess) *Supervi
 		},
 		Jellyfin: config.JellyfinConfig{DataDir: filepath.Join(directory, "jellyfin")},
 	}
-	s := New(cfg, process, stateStorage{}, jellyfin.New("http://127.0.0.1:1", time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	s.localStatePath = filepath.Join(directory, "local-state", contract.StateFileName)
+	s := newSupervisor(cfg, process, stateStorage{}, jellyfin.New("http://127.0.0.1:1", time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)), filepath.Join(directory, "local-state", contract.StateFileName))
 	s.stateRestorePending = false
 	return s
 }

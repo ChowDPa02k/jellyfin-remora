@@ -106,13 +106,19 @@ type Supervisor struct {
 	events               []model.Event
 	eventSequence        uint64
 	writeStateFile       func(string, []byte, os.FileMode) error
+	removeStateFile      func(string) error
 	localStatePath       string
 	stateRestorePending  bool
+	rollbackState        *persistedState
 }
 
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
+	return newSupervisor(cfg, pm, sc, jc, log, localPersistentStatePath(cfg))
+}
+
+func newSupervisor(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger, localStatePath string) *Supervisor {
 	now := time.Now()
-	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32), writeStateFile: atomicWrite, localStatePath: localPersistentStatePath(cfg)}
+	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32), writeStateFile: atomicWrite, removeStateFile: os.Remove, localStatePath: localStatePath}
 	if b, err := os.ReadFile(filepath.Join(cfg.Remora.DataDir, contract.APIKeyFileName)); err == nil {
 		s.apiKey = strings.TrimSpace(string(b))
 	}
@@ -123,6 +129,11 @@ func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.
 	localState, _, localErr := readPersistedStateResult(s.localStatePath)
 	durableState, _, durableErr := readPersistedStateResult(filepath.Join(cfg.Remora.DataDir, contract.StateFileName))
 	s.stateRestorePending = localErr != nil || durableErr != nil
+	if rollback, exists, err := readPersistedStateResult(s.rollbackJournalPath()); err == nil && exists {
+		s.rollbackState = &rollback
+		s.stateRestorePending = true
+		runtimeState, localState, durableState = rollback, rollback, rollback
+	}
 	if runtimeState.ManualStop || localState.ManualStop || durableState.ManualStop {
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
@@ -193,6 +204,7 @@ func (s *Supervisor) Submit(ctx context.Context, action Action, force bool) erro
 func (s *Supervisor) handle(req Request) {
 	var err error
 	actionStarted := time.Now()
+	var beforeData []byte
 	type lifecycleSnapshot struct {
 		manualStop          bool
 		desired             model.DesiredState
@@ -211,6 +223,7 @@ func (s *Supervisor) handle(req Request) {
 	var before lifecycleSnapshot
 	s.mu.Lock()
 	if lifecycle {
+		beforeData, _ = encodeState(s.status, s.databaseDamaged)
 		before = lifecycleSnapshot{
 			manualStop: s.status.ManualStop, desired: s.status.DesiredState,
 			forceStop: s.forceStop, restartRequested: s.restartRequested,
@@ -255,8 +268,32 @@ func (s *Supervisor) handle(req Request) {
 	if req.Action == ActionHealthcheck {
 		s.immediateHealthcheck()
 	}
-	if persistErr := s.persist(); err == nil && persistErr != nil {
-		err = fmt.Errorf("persist %s operation: %w", req.Action, persistErr)
+	journalCreated := false
+	if err == nil && lifecycle {
+		writer := s.writeStateFile
+		if writer == nil {
+			writer = atomicWrite
+		}
+		if journalErr := writer(s.rollbackJournalPath(), beforeData, 0640); journalErr != nil {
+			err = fmt.Errorf("create %s rollback journal: %w", req.Action, journalErr)
+		} else {
+			journalCreated = true
+		}
+	}
+	if err == nil {
+		if persistErr := s.persist(); persistErr != nil {
+			err = fmt.Errorf("persist %s operation: %w", req.Action, persistErr)
+		} else if lifecycle {
+			remover := s.removeStateFile
+			if remover == nil {
+				remover = os.Remove
+			}
+			if removeErr := remover(s.rollbackJournalPath()); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				err = fmt.Errorf("commit %s operation: remove rollback journal: %w", req.Action, removeErr)
+			}
+		}
+	}
+	if err != nil {
 		if lifecycle {
 			s.mu.Lock()
 			s.status.ManualStop, s.status.DesiredState = before.manualStop, before.desired
@@ -268,7 +305,9 @@ func (s *Supervisor) handle(req Request) {
 			// The first of the runtime/durable state writes may already have
 			// succeeded. Best-effort restoration prevents a one-shot second-write
 			// failure from replaying an operation that the API rejected.
-			s.persistBestEffort()
+			if !journalCreated {
+				s.persistBestEffort()
+			}
 		}
 	} else if err == nil && req.Action == ActionStart && s.databaseSource != nil {
 		s.databaseSource.ResetBefore(actionStarted)
@@ -1262,6 +1301,21 @@ func (s *Supervisor) persist() error {
 }
 
 func (s *Supervisor) reloadPersistentSafetyState() error {
+	if s.rollbackState != nil {
+		if err := s.persist(); err != nil {
+			return fmt.Errorf("restore rejected lifecycle operation: %w", err)
+		}
+		remover := s.removeStateFile
+		if remover == nil {
+			remover = os.Remove
+		}
+		if err := remover(s.rollbackJournalPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove rollback journal: %w", err)
+		}
+		s.rollbackState = nil
+		s.stateRestorePending = false
+		return nil
+	}
 	localState, _, localErr := readPersistedStateResult(s.localStatePath)
 	durableState, _, durableErr := readPersistedStateResult(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName))
 	if localErr != nil && !errors.Is(localErr, os.ErrNotExist) {
@@ -1283,6 +1337,8 @@ func (s *Supervisor) reloadPersistentSafetyState() error {
 	s.mu.Unlock()
 	return nil
 }
+
+func (s *Supervisor) rollbackJournalPath() string { return s.localStatePath + ".rollback" }
 
 func durableStatePathSafe(dataDir string, storage []model.StorageResult) bool {
 	cleanDataDir, err := filepath.Abs(dataDir)
