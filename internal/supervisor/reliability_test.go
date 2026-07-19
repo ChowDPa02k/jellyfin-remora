@@ -63,6 +63,34 @@ func TestFailedRollbackJournalPreventsRejectedIntentReplay(t *testing.T) {
 	}
 }
 
+func TestLifecycleIntentIsNotVisibleBeforePersistenceCommits(t *testing.T) {
+	s := persistentStateSupervisor(t.TempDir(), &stateProcess{running: true, started: time.Now()})
+	writeStarted := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	writes := 0
+	s.writeStateFile = func(string, []byte, os.FileMode) error {
+		writes++
+		if writes == 2 { // rollback journal is durable; proposed runtime write is blocked
+			close(writeStarted)
+			<-releaseWrite
+		}
+		return nil
+	}
+	reply := make(chan error, 1)
+	go s.handle(Request{Action: ActionStop, Reply: reply})
+	<-writeStarted
+	if status := s.Status(); status.ManualStop || status.DesiredState != model.DesiredRunning {
+		t.Fatalf("uncommitted lifecycle intent became visible: %+v", status)
+	}
+	close(releaseWrite)
+	if err := <-reply; err != nil {
+		t.Fatal(err)
+	}
+	if status := s.Status(); !status.ManualStop || status.DesiredState != model.DesiredStopped {
+		t.Fatalf("committed lifecycle intent is not visible: %+v", status)
+	}
+}
+
 func TestSecondStateWriteFailureRestoresPreviousDurableIntent(t *testing.T) {
 	directory := t.TempDir()
 	process := &stateProcess{running: true, started: time.Now()}

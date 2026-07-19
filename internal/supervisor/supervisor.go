@@ -206,11 +206,14 @@ func (s *Supervisor) handle(req Request) {
 	actionStarted := time.Now()
 	var beforeData []byte
 	type lifecycleSnapshot struct {
+		status              model.Status
 		manualStop          bool
 		desired             model.DesiredState
 		forceStop           bool
 		restartRequested    bool
 		processFailed       bool
+		stopFailures        int
+		nextStopRetry       time.Time
 		crashes             []time.Time
 		nextStart           time.Time
 		initializationFails int
@@ -219,19 +222,32 @@ func (s *Supervisor) handle(req Request) {
 		databaseFailures    int
 		database            model.DatabaseResult
 	}
+	snapshot := func() lifecycleSnapshot {
+		return lifecycleSnapshot{
+			status: s.status, manualStop: s.status.ManualStop, desired: s.status.DesiredState,
+			forceStop: s.forceStop, restartRequested: s.restartRequested,
+			processFailed: s.processFailed, stopFailures: s.stopFailures, nextStopRetry: s.nextStopRetry,
+			crashes: append([]time.Time(nil), s.crashes...), nextStart: s.nextStart,
+			initializationFails: s.initializationFails, nextInitialization: s.nextInitialization,
+			databaseDamaged: s.databaseDamaged, databaseFailures: s.databaseFailures,
+			database: s.status.Database,
+		}
+	}
+	apply := func(state lifecycleSnapshot) {
+		s.status = state.status
+		s.status.ManualStop, s.status.DesiredState = state.manualStop, state.desired
+		s.forceStop, s.restartRequested = state.forceStop, state.restartRequested
+		s.processFailed, s.stopFailures, s.nextStopRetry = state.processFailed, state.stopFailures, state.nextStopRetry
+		s.crashes, s.nextStart = append([]time.Time(nil), state.crashes...), state.nextStart
+		s.initializationFails, s.nextInitialization = state.initializationFails, state.nextInitialization
+		s.databaseDamaged, s.databaseFailures, s.status.Database = state.databaseDamaged, state.databaseFailures, state.database
+	}
 	lifecycle := req.Action == ActionStart || req.Action == ActionStop || req.Action == ActionRestart
-	var before lifecycleSnapshot
+	var before, proposed lifecycleSnapshot
 	s.mu.Lock()
 	if lifecycle {
 		beforeData, _ = encodeState(s.status, s.databaseDamaged)
-		before = lifecycleSnapshot{
-			manualStop: s.status.ManualStop, desired: s.status.DesiredState,
-			forceStop: s.forceStop, restartRequested: s.restartRequested,
-			processFailed: s.processFailed, crashes: append([]time.Time(nil), s.crashes...),
-			nextStart: s.nextStart, initializationFails: s.initializationFails,
-			nextInitialization: s.nextInitialization, databaseDamaged: s.databaseDamaged,
-			databaseFailures: s.databaseFailures, database: s.status.Database,
-		}
+		before = snapshot()
 	}
 	switch req.Action {
 	case ActionStart:
@@ -264,11 +280,14 @@ func (s *Supervisor) handle(req Request) {
 	default:
 		err = fmt.Errorf("unknown action %q", req.Action)
 	}
+	if lifecycle {
+		proposed = snapshot()
+		apply(before)
+	}
 	s.mu.Unlock()
 	if req.Action == ActionHealthcheck {
 		s.immediateHealthcheck()
 	}
-	journalCreated := false
 	if err == nil && lifecycle {
 		writer := s.writeStateFile
 		if writer == nil {
@@ -276,12 +295,16 @@ func (s *Supervisor) handle(req Request) {
 		}
 		if journalErr := writer(s.rollbackJournalPath(), beforeData, 0640); journalErr != nil {
 			err = fmt.Errorf("create %s rollback journal: %w", req.Action, journalErr)
-		} else {
-			journalCreated = true
 		}
 	}
 	if err == nil {
-		if persistErr := s.persist(); persistErr != nil {
+		var persistErr error
+		if lifecycle {
+			persistErr = s.persistState(proposed.status, proposed.databaseDamaged)
+		} else {
+			persistErr = s.persist()
+		}
+		if persistErr != nil {
 			err = fmt.Errorf("persist %s operation: %w", req.Action, persistErr)
 		} else if lifecycle {
 			remover := s.removeStateFile
@@ -293,23 +316,12 @@ func (s *Supervisor) handle(req Request) {
 			}
 		}
 	}
-	if err != nil {
-		if lifecycle {
-			s.mu.Lock()
-			s.status.ManualStop, s.status.DesiredState = before.manualStop, before.desired
-			s.forceStop, s.restartRequested = before.forceStop, before.restartRequested
-			s.processFailed, s.crashes, s.nextStart = before.processFailed, before.crashes, before.nextStart
-			s.initializationFails, s.nextInitialization = before.initializationFails, before.nextInitialization
-			s.databaseDamaged, s.databaseFailures, s.status.Database = before.databaseDamaged, before.databaseFailures, before.database
-			s.mu.Unlock()
-			// The first of the runtime/durable state writes may already have
-			// succeeded. Best-effort restoration prevents a one-shot second-write
-			// failure from replaying an operation that the API rejected.
-			if !journalCreated {
-				s.persistBestEffort()
-			}
-		}
-	} else if err == nil && req.Action == ActionStart && s.databaseSource != nil {
+	if err == nil && lifecycle {
+		s.mu.Lock()
+		apply(proposed)
+		s.mu.Unlock()
+	}
+	if err == nil && req.Action == ActionStart && s.databaseSource != nil {
 		s.databaseSource.ResetBefore(actionStarted)
 	}
 	req.Reply <- err
@@ -1283,7 +1295,11 @@ func (s *Supervisor) statusCopyUpdate(fn func(*model.Status)) {
 
 func (s *Supervisor) persist() error {
 	st := s.Status()
-	data, damage := encodeState(st, s.databaseDamaged)
+	return s.persistState(st, s.databaseDamaged)
+}
+
+func (s *Supervisor) persistState(st model.Status, databaseDamaged bool) error {
+	data, damage := encodeState(st, databaseDamaged)
 	writer := s.writeStateFile
 	if writer == nil {
 		writer = atomicWrite
