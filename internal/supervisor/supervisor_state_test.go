@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/databasemonitor"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfinconfig"
@@ -188,6 +189,31 @@ func TestFrozenStateFormatAndForwardCompatibleManualStop(t *testing.T) {
 	}
 	if state := readPersistedState(path); state.ManualStop || state.DatabaseDamaged {
 		t.Fatalf("truncated state file enabled a fence: %+v", state)
+	}
+}
+
+func TestLegacyThreeLineStateUpgradesWithDatabaseDamageClear(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		state      string
+		manualStop bool
+	}{
+		{name: "running", state: "0\n0\n0\n"},
+		{name: "manual-stop", state: "1\n2\n1\n", manualStop: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), contract.StateFileName)
+			if err := os.WriteFile(path, []byte(tc.state), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			state, exists, err := readPersistedStateResult(path)
+			if err != nil || !exists {
+				t.Fatalf("legacy state rejected: exists=%t err=%v", exists, err)
+			}
+			if state.ManualStop != tc.manualStop || state.DatabaseDamaged {
+				t.Fatalf("legacy state=%+v, want manual=%t database=false", state, tc.manualStop)
+			}
+		})
 	}
 }
 
@@ -497,7 +523,9 @@ func stateSupervisor(t *testing.T, process *stateProcess) *Supervisor {
 	t.Helper()
 	d := t.TempDir()
 	cfg := &config.Config{Remora: config.RemoraConfig{ServerStopTimeout: config.Duration{Duration: 10 * time.Millisecond}, DataDir: d, RecoverySuccesses: 1, HealthAPIHeartbeat: 1, APIFailureThreshold: 1}, Jellyfin: config.JellyfinConfig{DataDir: filepath.Join(d, "data")}}
-	return New(cfg, process, stateStorage{}, jellyfin.New("http://127.0.0.1:1", time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := New(cfg, process, stateStorage{}, jellyfin.New("http://127.0.0.1:1", time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.stateRestorePending = false
+	return s
 }
 
 func TestStorageFenceRecoveryRejectsDegradedChecks(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
+	"github.com/ChowDPa02K/jellyfin-remora/internal/contract"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/jellyfin"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
 )
@@ -69,8 +70,8 @@ func TestManualStopPersistsWhenFatalStorageIsOnAnotherVolume(t *testing.T) {
 	if err := s.persist(); err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 2 || paths[1] != filepath.Join(s.cfg.Remora.DataDir, "jellyfin.state") {
-		t.Fatalf("state writes=%v, want runtime and healthy durable copies", paths)
+	if len(paths) != 3 || paths[2] != filepath.Join(s.cfg.Remora.DataDir, "jellyfin.state") {
+		t.Fatalf("state writes=%v, want runtime, local, and healthy durable copies", paths)
 	}
 }
 
@@ -83,8 +84,8 @@ func TestFatalStatePathIsNotWritten(t *testing.T) {
 	if err := s.persist(); err != nil {
 		t.Fatal(err)
 	}
-	if writes != 1 {
-		t.Fatalf("writes=%d, want runtime copy only", writes)
+	if writes != 2 {
+		t.Fatalf("writes=%d, want runtime and local copies only", writes)
 	}
 }
 
@@ -106,6 +107,64 @@ func TestRestartBetweenAcceptedStopAndReconcilePreservesIntent(t *testing.T) {
 	replacement.reconcile(context.Background())
 	if process.running || process.startCalls != 0 || process.stopCalls != 1 || replacement.Status().State != model.StateStopped {
 		t.Fatalf("restart recovery running=%t starts=%d stops=%d state=%s", process.running, process.startCalls, process.stopCalls, replacement.Status().State)
+	}
+}
+
+func TestDatabaseFenceRestoresAfterDurableStorageReturns(t *testing.T) {
+	directory := t.TempDir()
+	dataDir := filepath.Join(directory, "offline-share")
+	s := persistentStateSupervisor(dataDir, &stateProcess{})
+	s.localStatePath = filepath.Join(directory, "missing-local", contract.StateFileName)
+	s.stateRestorePending = true
+	s.status.Storage = []model.StorageResult{{Target: dataDir, Healthy: true}}
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, contract.StateFileName), []byte("1\n0\n0\n1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcile(context.Background())
+	if !s.databaseDamaged || !s.Status().Database.Damaged || s.process.(*stateProcess).startCalls != 0 {
+		t.Fatalf("database fence was not restored before start: damaged=%t status=%+v", s.databaseDamaged, s.Status())
+	}
+}
+
+func TestPendingSafetyStateStopsAdoptedProcessWhileStorageIsDown(t *testing.T) {
+	process := &stateProcess{running: true, started: time.Now()}
+	s := persistentStateSupervisor(t.TempDir(), process)
+	s.stateRestorePending = true
+	s.status.Storage = []model.StorageResult{{Target: "/offline/share", Healthy: false, Fatal: true}}
+	s.reconcile(context.Background())
+	if process.running || process.stopCalls != 1 || s.Status().State != model.StateStorageFenced {
+		t.Fatalf("pending safety state did not stop adopted process: running=%t stops=%d status=%+v", process.running, process.stopCalls, s.Status())
+	}
+}
+
+func TestMalformedPersistentSafetyStateFailsClosed(t *testing.T) {
+	for _, location := range []string{"local", "durable"} {
+		for _, value := range []string{"0\n", "0\n0\nmanual\n0\n", "0\n9\n0\n0\n"} {
+			t.Run(location+"_"+strings.ReplaceAll(value, "\n", "_"), func(t *testing.T) {
+				directory := t.TempDir()
+				process := &stateProcess{running: true, started: time.Now()}
+				s := persistentStateSupervisor(directory, process)
+				path := filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName)
+				if location == "local" {
+					path = s.localStatePath
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				s.stateRestorePending = true
+				s.status.Storage = []model.StorageResult{{Target: directory, Healthy: true}}
+				s.reconcile(context.Background())
+				if process.running || s.Status().State != model.StateStorageFenced || !s.stateRestorePending {
+					t.Fatalf("malformed state did not fail closed: running=%t pending=%t status=%+v", process.running, s.stateRestorePending, s.Status())
+				}
+			})
+		}
 	}
 }
 
@@ -158,5 +217,8 @@ func persistentStateSupervisor(directory string, process *stateProcess) *Supervi
 		},
 		Jellyfin: config.JellyfinConfig{DataDir: filepath.Join(directory, "jellyfin")},
 	}
-	return New(cfg, process, stateStorage{}, jellyfin.New("http://127.0.0.1:1", time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := New(cfg, process, stateStorage{}, jellyfin.New("http://127.0.0.1:1", time.Millisecond), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.localStatePath = filepath.Join(directory, "local-state", contract.StateFileName)
+	s.stateRestorePending = false
+	return s
 }

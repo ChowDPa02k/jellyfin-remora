@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -105,11 +106,13 @@ type Supervisor struct {
 	events               []model.Event
 	eventSequence        uint64
 	writeStateFile       func(string, []byte, os.FileMode) error
+	localStatePath       string
+	stateRestorePending  bool
 }
 
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
 	now := time.Now()
-	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32), writeStateFile: atomicWrite}
+	s := &Supervisor{cfg: cfg, process: pm, storage: sc, client: jc, configuration: jellyfinconfig.New(cfg), log: log, actions: make(chan Request, 32), writeStateFile: atomicWrite, localStatePath: localPersistentStatePath(cfg)}
 	if b, err := os.ReadFile(filepath.Join(cfg.Remora.DataDir, contract.APIKeyFileName)); err == nil {
 		s.apiKey = strings.TrimSpace(string(b))
 	}
@@ -117,12 +120,14 @@ func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.
 	s.status = model.Status{State: model.StateInit, DesiredState: model.DesiredRunning, UID: uid, Username: username, Executable: pm.Executable(), Arguments: pm.Arguments(), LastTransition: now}
 	s.recordEventLocked(model.Event{Timestamp: now, Type: "state_transition", State: model.StateInit})
 	runtimeState := readPersistedState(filepath.Join(runtimeStateDir(cfg), contract.StateFileName))
-	durableState := readPersistedState(filepath.Join(cfg.Remora.DataDir, contract.StateFileName))
-	if runtimeState.ManualStop || durableState.ManualStop {
+	localState, _, localErr := readPersistedStateResult(s.localStatePath)
+	durableState, _, durableErr := readPersistedStateResult(filepath.Join(cfg.Remora.DataDir, contract.StateFileName))
+	s.stateRestorePending = localErr != nil || durableErr != nil
+	if runtimeState.ManualStop || localState.ManualStop || durableState.ManualStop {
 		s.status.ManualStop = true
 		s.status.DesiredState = model.DesiredStopped
 	}
-	if runtimeState.DatabaseDamaged || durableState.DatabaseDamaged {
+	if runtimeState.DatabaseDamaged || localState.DatabaseDamaged || durableState.DatabaseDamaged {
 		s.databaseDamaged = true
 		s.status.Database.Damaged = true
 	}
@@ -338,6 +343,24 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.status.ProcessState = pi.State
 		s.status.Ports = append(s.status.Ports[:0], pi.Ports...)
 		s.mu.Unlock()
+	}
+	if s.stateRestorePending {
+		if degraded {
+			s.storageFenced = true
+			if !s.stopWhileStateUnavailable(ctx, running, "persistent safety state is unavailable until storage recovery") {
+				return
+			}
+			s.transition(model.StateStorageFenced, "persistent safety state is unavailable until storage recovery")
+			return
+		}
+		if err := s.reloadPersistentSafetyState(); err != nil {
+			s.storageFenced = true
+			if !s.stopWhileStateUnavailable(ctx, running, "cannot restore persistent safety state: "+err.Error()) {
+				return
+			}
+			s.transition(model.StateStorageFenced, "cannot restore persistent safety state: "+err.Error())
+			return
+		}
 	}
 	if s.wasRunning && !running && !manual && desired != model.DesiredStopped {
 		s.recordCrash()
@@ -720,6 +743,24 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	}
 	s.clearOneShots()
 	s.persistBestEffort()
+}
+
+func (s *Supervisor) stopWhileStateUnavailable(ctx context.Context, running bool, reason string) bool {
+	if !running {
+		return true
+	}
+	if time.Now().Before(s.nextStopRetry) {
+		s.transition(model.StateStorageFenced, reason+"; stop retry is in bounded backoff")
+		return false
+	}
+	if err := s.stop(ctx, false); err != nil {
+		s.recordStopFailure("persistent-state fence stop", err)
+		s.transition(model.StateStorageFenced, reason+"; Jellyfin could not be stopped: "+err.Error())
+		return false
+	}
+	s.stopFailures = 0
+	s.nextStopRetry = time.Time{}
+	return true
 }
 
 func (s *Supervisor) recordStopFailure(operation string, err error) {
@@ -1210,10 +1251,36 @@ func (s *Supervisor) persist() error {
 	if err := writer(filepath.Join(runtimeStateDir(s.cfg), contract.StateFileName), data, 0640); err != nil {
 		return err
 	}
+	if err := writer(s.localStatePath, data, 0640); err != nil {
+		return err
+	}
 	if damage == 1 && !durableStatePathSafe(s.cfg.Remora.DataDir, st.Storage) {
 		return nil
 	}
 	return writer(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName), data, 0640)
+}
+
+func (s *Supervisor) reloadPersistentSafetyState() error {
+	localState, _, localErr := readPersistedStateResult(s.localStatePath)
+	durableState, _, durableErr := readPersistedStateResult(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName))
+	if localErr != nil && !errors.Is(localErr, os.ErrNotExist) {
+		return fmt.Errorf("read local state mirror: %w", localErr)
+	}
+	if durableErr != nil && !errors.Is(durableErr, os.ErrNotExist) {
+		return fmt.Errorf("read durable state: %w", durableErr)
+	}
+	s.mu.Lock()
+	if localState.ManualStop || durableState.ManualStop {
+		s.status.ManualStop = true
+		s.status.DesiredState = model.DesiredStopped
+	}
+	if localState.DatabaseDamaged || durableState.DatabaseDamaged {
+		s.databaseDamaged = true
+		s.status.Database.Damaged = true
+	}
+	s.stateRestorePending = false
+	s.mu.Unlock()
+	return nil
 }
 
 func durableStatePathSafe(dataDir string, storage []model.StorageResult) bool {
@@ -1280,30 +1347,73 @@ func runtimeStateDir(cfg *config.Config) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("jellyfin-remora-%d", os.Geteuid()), id)
 }
 
+func localPersistentStatePath(cfg *config.Config) string {
+	id := fmt.Sprintf("%x", sha256.Sum256([]byte(filepath.Clean(cfg.Remora.DataDir))))[:12]
+	if os.Geteuid() == 0 {
+		switch runtime.GOOS {
+		case "darwin":
+			return filepath.Join("/Library/Application Support/Jellyfin Remora/state", id, contract.StateFileName)
+		case "windows":
+			base := os.Getenv("ProgramData")
+			if base == "" {
+				base = `C:\\ProgramData`
+			}
+			return filepath.Join(base, "Jellyfin Remora", "state", id, contract.StateFileName)
+		default:
+			return filepath.Join("/var/lib/jellyfin-remora/instances", id, contract.StateFileName)
+		}
+	}
+	base, err := os.UserConfigDir()
+	if err != nil || base == "" {
+		base = filepath.Join(os.TempDir(), fmt.Sprintf("jellyfin-remora-%d", os.Geteuid()))
+	}
+	return filepath.Join(base, "jellyfin-remora", "state", id, contract.StateFileName)
+}
+
 type persistedState struct {
 	ManualStop      bool
 	DatabaseDamaged bool
 }
 
 func readPersistedState(path string) persistedState {
+	state, _, _ := readPersistedStateResult(path)
+	return state
+}
+
+func readPersistedStateResult(path string) (persistedState, bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return persistedState{}
+		return persistedState{}, false, err
 	}
-	return parsePersistedState(b)
+	state, err := parsePersistedStateResult(b)
+	if err != nil {
+		return persistedState{}, true, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return state, true, nil
 }
 
 func parsePersistedState(b []byte) persistedState {
+	state, _ := parsePersistedStateResult(b)
+	return state
+}
+
+func parsePersistedStateResult(b []byte) (persistedState, error) {
 	lines := strings.Fields(string(b))
 	if len(lines) < 3 {
-		return persistedState{}
+		return persistedState{}, errors.New("state is truncated")
 	}
-	manual, _ := strconv.Atoi(lines[2])
-	database := 0
-	if len(lines) >= 4 {
-		database, _ = strconv.Atoi(lines[3])
+	values := make([]int, 4)
+	for index := 0; index < min(len(lines), len(values)); index++ {
+		value, err := strconv.Atoi(lines[index])
+		if err != nil {
+			return persistedState{}, fmt.Errorf("field %d is not an integer", index+1)
+		}
+		values[index] = value
 	}
-	return persistedState{ManualStop: manual == 1, DatabaseDamaged: database == 1}
+	if values[0] < 0 || values[0] > 1 || values[1] < 0 || values[1] > 2 || values[2] < 0 || values[2] > 1 || values[3] < 0 || values[3] > 1 {
+		return persistedState{}, errors.New("state field is out of range")
+	}
+	return persistedState{ManualStop: values[2] == 1, DatabaseDamaged: values[3] == 1}, nil
 }
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {

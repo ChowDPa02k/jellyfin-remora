@@ -49,6 +49,11 @@ mode; Remora state and secrets use daemon-selected restrictive ownership and mus
 inherit metadata from an untrusted destination. Shared atomic-write code must retain
 that distinction if these implementations are consolidated later.
 
+Manual-stop and database-damage latches are also mirrored to platform-local persistent
+storage. The monitored data share remains a compatibility copy, but an unavailable
+share cannot erase a safety latch during host reboot; startup remains fenced until the
+copies can be reconciled after storage recovery.
+
 ## Child-process privilege and environment
 
 Jellyfin always runs as a separate operating-system process. Remora inherits the
