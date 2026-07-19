@@ -254,8 +254,6 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 	if c.probeOverride != nil {
 		return c.probeOverride(ctx, path, permission)
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.Remora.IOTimeout.Duration)
-	defer cancel()
 	cmd := exec.Command(c.executable, "internal-probe", "--path", path, "--permission", permission)
 	if c.probeUsername != "" {
 		if err := c.backend.ConfigureProcess(cmd, c.probeUsername, c.probeGroup); err != nil {
@@ -276,9 +274,25 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 			return errors.New("previous storage I/O probe remains blocked")
 		}
 	}
+	checkLeftovers := len(c.pendingProbes) == 0
+	c.probeMu.Unlock()
 	probeArgs := []string{"internal-probe", "--path", path, "--permission", permission}
-	if c.backend != nil {
-		if processes, err := c.backend.FindProcesses(probeCtx, c.executable, probeArgs); err == nil && len(processes) > 0 {
+	if checkLeftovers && c.backend != nil {
+		findCtx, findCancel := context.WithTimeout(ctx, c.cfg.Remora.IOTimeout.Duration)
+		processes, err := c.backend.FindProcesses(findCtx, c.executable, probeArgs)
+		findCancel()
+		if err == nil && len(processes) > 0 {
+			return errors.New("previous storage I/O probe remains blocked")
+		}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.Remora.IOTimeout.Duration)
+	defer cancel()
+	c.probeMu.Lock()
+	if previous := c.pendingProbes[key]; previous != nil {
+		select {
+		case <-previous.done:
+			delete(c.pendingProbes, key)
+		default:
 			c.probeMu.Unlock()
 			return errors.New("previous storage I/O probe remains blocked")
 		}

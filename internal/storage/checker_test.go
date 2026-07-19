@@ -252,12 +252,33 @@ func TestProbeTimeoutReturnsWithoutStackingBlockedProcess(t *testing.T) {
 	}
 }
 
+func TestLeftoverDiscoveryDoesNotConsumeIOProbeDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a POSIX shell")
+	}
+	directory := t.TempDir()
+	helper := filepath.Join(directory, "probe")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nsleep 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	checker := &Checker{
+		cfg:           &config.Config{Remora: config.RemoraConfig{IOTimeout: config.Duration{Duration: 2 * time.Second}}},
+		backend:       &mismatchBackend{findDelay: 1500 * time.Millisecond},
+		executable:    helper,
+		pendingProbes: make(map[string]*pendingProbe),
+	}
+	if err := checker.probePath(context.Background(), directory, "r"); err != nil {
+		t.Fatalf("probe inherited leftover-discovery latency: %v", err)
+	}
+}
+
 type mismatchBackend struct {
 	mounts               []platform.MountInfo
 	mountSource          string
 	mountCalls           int
 	leaveSignaledProcess bool
 	signaledPID          int
+	findDelay            time.Duration
 }
 
 func (b *mismatchBackend) Mounts(context.Context) ([]platform.MountInfo, error) {
@@ -289,6 +310,7 @@ func (b *mismatchBackend) SignalGroup(pid int, _ bool) error {
 func (*mismatchBackend) ProcessInfo(context.Context, int) (platform.ProcessInfo, error) {
 	return platform.ProcessInfo{}, nil
 }
-func (*mismatchBackend) FindProcesses(context.Context, string, []string) ([]platform.ProcessInfo, error) {
+func (b *mismatchBackend) FindProcesses(context.Context, string, []string) ([]platform.ProcessInfo, error) {
+	time.Sleep(b.findDelay)
 	return nil, nil
 }
