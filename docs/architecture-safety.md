@@ -98,8 +98,11 @@ The Remora-owned Jellyfin API key is written atomically with owner-only permissi
 Passwords and API keys must never be logged. Mount errors redact the configured SMB
 password, and control endpoints return status rather than credentials.
 
-The REST listener is restricted to syntactic loopback addresses. Darwin uses a local
-Unix socket; Windows uses an ACL-protected named pipe whose DACL is limited to SYSTEM,
+The REST listener is restricted to syntactic loopback addresses. Unix clients prefer a
+private runtime directory; legacy `/tmp` discovery accepts only root/current-user-owned
+sockets and verifies root/current-user peer credentials after connecting. A privileged
+daemon keeps the socket node root-owned and grants the managed group access. Windows
+uses an ACL-protected named pipe whose DACL is limited to SYSTEM,
 Administrators, and the actual service identity. Remote control is out of scope for v1;
 adding it requires TLS, scoped authentication, authorization tests, and a separate
 threat-model review. Jellyfin

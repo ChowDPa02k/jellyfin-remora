@@ -57,7 +57,6 @@ func setSocketOwner(path, username, groupname string) error {
 	if err != nil {
 		return err
 	}
-	uid, _ := strconv.Atoi(u.Uid)
 	gidText := u.Gid
 	if groupname != "" {
 		g, err := user.LookupGroup(groupname)
@@ -67,5 +66,8 @@ func setSocketOwner(path, username, groupname string) error {
 		gidText = g.Gid
 	}
 	gid, _ := strconv.Atoi(gidText)
-	return os.Chown(path, uid, gid)
+	// Keep the node owned by the privileged daemon so a less-privileged user
+	// cannot replace the trusted discovery endpoint. The managed user's group
+	// retains access through the socket's 0660 mode.
+	return os.Chown(path, 0, gid)
 }

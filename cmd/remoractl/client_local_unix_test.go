@@ -3,7 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -14,9 +17,9 @@ import (
 
 func TestNewLocalClientDiscoversAndUsesSocketFromRuntimeDirectory(t *testing.T) {
 	directory := unixSocketTestDir(t)
-	oldDirectory := localControlDiscoveryDirectory
-	localControlDiscoveryDirectory = directory
-	t.Cleanup(func() { localControlDiscoveryDirectory = oldDirectory })
+	oldDirectories := localControlDiscoveryDirectories
+	localControlDiscoveryDirectories = []string{directory}
+	t.Cleanup(func() { localControlDiscoveryDirectories = oldDirectories })
 
 	path := filepath.Join(directory, ".s.remora.18095")
 	listener, err := net.Listen("unix", path)
@@ -49,6 +52,98 @@ func TestNewLocalClientDiscoversAndUsesSocketFromRuntimeDirectory(t *testing.T) 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status code = %d", resp.StatusCode)
+	}
+}
+
+func TestDiscoveryPrefersPrivateRuntimeDirectory(t *testing.T) {
+	privateDirectory := unixSocketTestDir(t)
+	fallbackDirectory := unixSocketTestDir(t)
+	want := listenUnixSocket(t, filepath.Join(privateDirectory, "remora.sock"))
+	listenUnixSocket(t, filepath.Join(fallbackDirectory, ".s.remora.8095"))
+
+	got, err := discoverLocalControlEndpointFromDirectories([]string{privateDirectory, fallbackDirectory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("endpoint = %q, want private %q", got, want)
+	}
+}
+
+func TestDiscoveryRejectsUntrustedSocketOwner(t *testing.T) {
+	directory := unixSocketTestDir(t)
+	path := listenUnixSocket(t, filepath.Join(directory, ".s.remora.8095"))
+	oldOwner := unixSocketOwnerUID
+	unixSocketOwnerUID = func(candidate string) (uint32, error) {
+		if candidate == path {
+			return uint32(os.Geteuid()) + 1, nil
+		}
+		return oldOwner(candidate)
+	}
+	t.Cleanup(func() { unixSocketOwnerUID = oldOwner })
+
+	if _, err := discoverLocalControlEndpoint(directory); !errors.Is(err, errNoLocalControlSocket) {
+		t.Fatalf("untrusted socket discovery error = %v", err)
+	}
+}
+
+func TestLocalClientRejectsUntrustedPeerUID(t *testing.T) {
+	directory := unixSocketTestDir(t)
+	path := filepath.Join(directory, ".s.remora.8095")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(path)
+	})
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			defer connection.Close()
+			_, _ = io.Copy(io.Discard, connection)
+		}
+	}()
+
+	oldPeerUID := unixConnectionPeerUID
+	unixConnectionPeerUID = func(net.Conn) (uint32, error) {
+		return uint32(os.Geteuid()) + 1, nil
+	}
+	t.Cleanup(func() { unixConnectionPeerUID = oldPeerUID })
+	client, base, err := newLocalClient(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(base + "/v1/status")
+	if err == nil || !strings.Contains(err.Error(), "refusing Remora Unix socket peer uid") {
+		t.Fatalf("request error = %v", err)
+	}
+}
+
+func TestTmpFallbackEmitsWarning(t *testing.T) {
+	directory := unixSocketTestDir(t)
+	path := listenUnixSocket(t, filepath.Join(directory, ".s.remora.8095"))
+	oldDirectories := localControlDiscoveryDirectories
+	oldWriter := localControlWarningWriter
+	oldLegacyDirectory := legacyLocalControlDirectory
+	localControlDiscoveryDirectories = []string{directory}
+	legacyLocalControlDirectory = directory
+	var warning bytes.Buffer
+	localControlWarningWriter = &warning
+	t.Cleanup(func() {
+		localControlDiscoveryDirectories = oldDirectories
+		localControlWarningWriter = oldWriter
+		legacyLocalControlDirectory = oldLegacyDirectory
+	})
+
+	client, _, err := newLocalClient("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.CloseIdleConnections()
+	if filepath.Dir(path) == directory && !strings.Contains(warning.String(), "legacy /tmp") {
+		t.Fatalf("warning = %q", warning.String())
 	}
 }
 
