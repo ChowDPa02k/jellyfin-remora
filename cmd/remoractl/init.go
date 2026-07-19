@@ -405,6 +405,10 @@ func openConfigEditor(editor, path string) error {
 }
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	return atomicWriteFilePrepared(path, data, mode, nil)
+}
+
+func atomicWriteFilePrepared(path string, data []byte, mode os.FileMode, prepare func(*os.File) error) error {
 	if st, err := os.Lstat(path); err == nil && st.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to replace symlink: %s", path)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -420,6 +424,12 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	if err := temporary.Chmod(mode); err != nil {
 		temporary.Close()
 		return err
+	}
+	if prepare != nil {
+		if err := prepare(temporary); err != nil {
+			temporary.Close()
+			return err
+		}
 	}
 	if _, err := temporary.Write(data); err != nil {
 		temporary.Close()

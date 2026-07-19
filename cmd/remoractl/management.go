@@ -176,7 +176,7 @@ func editExistingConfig(location control.ConfigResponse, configuredEditor string
 	if err != nil {
 		return err
 	}
-	if err := atomicWriteFile(location.Path, edited, 0o600); err != nil {
+	if err := replaceConfigurationFile(location.Path, edited, 0o600, info); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "configuration updated: %s\nrestart jellyfin-remora to load it\n", location.Path)
