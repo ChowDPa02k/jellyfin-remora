@@ -119,11 +119,6 @@ func systemdQuote(value string) string {
 	return strconv.Quote(strings.ReplaceAll(value, "%", "%%"))
 }
 
-func systemdPathValue(value string) string {
-	replacer := strings.NewReplacer(`\`, `\x5c`, " ", `\x20`, "\t", `\x09`, "%", "%%")
-	return replacer.Replace(value)
-}
-
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
