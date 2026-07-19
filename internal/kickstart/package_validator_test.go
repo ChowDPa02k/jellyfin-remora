@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,63 @@ import (
 	"testing"
 	"time"
 )
+
+func TestPackageValidatorPreservesRepositoryFailures(t *testing.T) {
+	path := writeValidatorPackage(t, "jellyfin_10.11.11-arm64.tar.xz", []byte("package"))
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+			}))
+			defer server.Close()
+			_, err := testPackageValidator(server).Validate(context.Background(), path, nil)
+			var repositoryErr *PackageRepositoryError
+			if !errors.As(err, &repositoryErr) || repositoryErr.StatusCode != status || errors.Is(err, ErrPackageNotFound) {
+				t.Fatalf("error=%v repositoryError=%+v", err, repositoryErr)
+			}
+		})
+	}
+}
+
+func TestPackageValidatorPreservesTimeoutWhenOtherCandidatesAreAbsent(t *testing.T) {
+	path := writeValidatorPackage(t, "jellyfin_10.11.11-arm64.tar.xz", []byte("package"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/macos/stable/") && r.URL.RawQuery == "mirrorlist" {
+			<-r.Context().Done()
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	validator := testPackageValidator(server)
+	validator.RequestTimeout = 20 * time.Millisecond
+	_, err := validator.Validate(context.Background(), path, nil)
+	var repositoryErr *PackageRepositoryError
+	if !errors.As(err, &repositoryErr) || !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPackageNotFound) {
+		t.Fatalf("error=%v repositoryError=%+v", err, repositoryErr)
+	}
+}
+
+func TestPackageValidatorPreservesArchiveDownloadFailure(t *testing.T) {
+	content := []byte("package-with-matching-size")
+	path := writeValidatorPackage(t, "jellyfin_10.9.11-amd64.tar.xz", content)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/archive/server/linux/stable/") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		if r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer server.Close()
+	_, err := testPackageValidator(server).Validate(context.Background(), path, nil)
+	var repositoryErr *PackageRepositoryError
+	if !errors.As(err, &repositoryErr) || repositoryErr.StatusCode != http.StatusServiceUnavailable || errors.Is(err, ErrPackageNotFound) {
+		t.Fatalf("error=%v repositoryError=%+v", err, repositoryErr)
+	}
+}
 
 func TestPackageValidatorMatchesPublishedMirrorlistHash(t *testing.T) {
 	content := []byte("official-jellyfin-package")

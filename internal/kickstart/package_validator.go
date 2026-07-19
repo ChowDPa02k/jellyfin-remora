@@ -40,6 +40,24 @@ var (
 	portablePackagePattern     = regexp.MustCompile(`^jellyfin_(?P<version>` + packageVersionPattern + `)-(?P<arch>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.(?P<extension>tar\.gz|tar\.xz|zip)$`)
 )
 
+// PackageRepositoryError reports a repository failure that must not be
+// mistaken for an absent package. StatusCode is zero for transport failures.
+type PackageRepositoryError struct {
+	Operation  string
+	URL        string
+	StatusCode int
+	Err        error
+}
+
+func (e *PackageRepositoryError) Error() string {
+	if e.StatusCode != 0 {
+		return fmt.Sprintf("%s Jellyfin repository: HTTP %d", e.Operation, e.StatusCode)
+	}
+	return fmt.Sprintf("%s Jellyfin repository: %v", e.Operation, e.Err)
+}
+
+func (e *PackageRepositoryError) Unwrap() error { return e.Err }
+
 type PackageValidation struct {
 	Filename       string
 	Version        string
@@ -122,15 +140,13 @@ func (v *PackageValidator) Validate(ctx context.Context, archivePath string, pro
 	}
 
 	var candidates []packageCandidate
-	repositoryReached := false
 	var lastNetworkError error
 	var lastDownloadError error
 	downloadProgressShown := false
 	for _, platform := range components.platforms {
 		for _, category := range components.categories() {
 			url := packageURL(filesBase, platform, category, packageVersionDirectory(components.version, category), components.directoryArchitecture, components.filename) + "?mirrorlist"
-			hash, reached, fetchErr := fetchPackageMirrorlist(ctx, client, requestTimeout, url)
-			repositoryReached = repositoryReached || reached
+			hash, _, fetchErr := fetchPackageMirrorlist(ctx, client, requestTimeout, url)
 			if fetchErr != nil {
 				lastNetworkError = fetchErr
 				continue
@@ -147,8 +163,7 @@ func (v *PackageValidator) Validate(ctx context.Context, archivePath string, pro
 	for _, platform := range components.platforms {
 		for _, category := range []string{"stable", "preview"} {
 			url := packageURL(archiveBase, platform, category, packageVersionDirectory(components.version, category), components.directoryArchitecture, components.filename)
-			size, exists, reached, headErr := fetchPackageSize(ctx, client, requestTimeout, url)
-			repositoryReached = repositoryReached || reached
+			size, exists, _, headErr := fetchPackageSize(ctx, client, requestTimeout, url)
 			if headErr != nil {
 				lastNetworkError = headErr
 				continue
@@ -186,7 +201,7 @@ func (v *PackageValidator) Validate(ctx context.Context, archivePath string, pro
 	if err := ctx.Err(); err != nil {
 		return PackageValidation{}, fmt.Errorf("connect Jellyfin repository: %w", err)
 	}
-	if !repositoryReached && lastNetworkError != nil {
+	if lastNetworkError != nil {
 		return PackageValidation{}, fmt.Errorf("connect Jellyfin repository: %w", lastNetworkError)
 	}
 	return PackageValidation{}, fmt.Errorf("%w: %s", ErrPackageNotFound, components.filename)
@@ -252,9 +267,12 @@ func packageURL(base, platform, category, version, architecture, filename string
 func fetchPackageMirrorlist(ctx context.Context, client *http.Client, timeout time.Duration, url string) (string, bool, error) {
 	response, err := packageRequest(ctx, client, timeout, http.MethodGet, url)
 	if err != nil {
-		return "", false, err
+		return "", false, &PackageRepositoryError{Operation: "fetch package metadata from", URL: url, Err: err}
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+		return "", true, &PackageRepositoryError{Operation: "fetch package metadata from", URL: url, StatusCode: response.StatusCode}
+	}
 	if response.StatusCode >= 400 {
 		return "", true, nil
 	}
@@ -276,9 +294,12 @@ func fetchPackageSize(ctx context.Context, client *http.Client, timeout time.Dur
 	for _, method := range []string{http.MethodHead, http.MethodGet} {
 		response, err := packageRequest(ctx, client, timeout, method, url)
 		if err != nil {
-			return 0, false, false, err
+			return 0, false, false, &PackageRepositoryError{Operation: "inspect package at", URL: url, Err: err}
 		}
 		response.Body.Close()
+		if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+			return 0, false, true, &PackageRepositoryError{Operation: "inspect package at", URL: url, StatusCode: response.StatusCode}
+		}
 		if response.StatusCode >= 400 {
 			if method == http.MethodHead && (response.StatusCode == http.StatusMethodNotAllowed || response.StatusCode == http.StatusNotImplemented) {
 				continue
@@ -298,9 +319,12 @@ func fetchPackageSize(ctx context.Context, client *http.Client, timeout time.Dur
 func downloadPackageHash(ctx context.Context, client *http.Client, timeout time.Duration, url string, expectedSize int64) (string, error) {
 	response, err := packageRequest(ctx, client, timeout, http.MethodGet, url)
 	if err != nil {
-		return "", err
+		return "", &PackageRepositoryError{Operation: "download package from", URL: url, Err: err}
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+		return "", &PackageRepositoryError{Operation: "download package from", URL: url, StatusCode: response.StatusCode}
+	}
 	if response.StatusCode >= 400 {
 		return "", fmt.Errorf("download official package: HTTP %d", response.StatusCode)
 	}

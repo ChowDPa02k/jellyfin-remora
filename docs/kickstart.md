@@ -101,6 +101,8 @@ verification never appears to hang silently.
 
 Repository access uses bounded DNS/TCP and TLS connection timeouts, bounded
 response-header/request timeouts, and a bounded whole-package download timeout.
+Rate limits, server failures, and timeouts are reported as repository errors;
+they are never presented as evidence that the selected package does not exist.
 The legacy download path also limits the response to the selected package's
 known size. After a successful online comparison, Kickstart hashes the selected
 file again immediately before extraction and rejects it if its size or content
