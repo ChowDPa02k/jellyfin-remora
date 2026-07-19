@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 )
@@ -217,6 +218,43 @@ func TestSuccessfulResponseBodyIsLimited(t *testing.T) {
 	_, err := New(srv.URL, time.Second).PublicInfo(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestAPIErrorMessageIsSafeForControlPlaneDisplay(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		want        string
+		reject      string
+	}{
+		{name: "html", contentType: "text/html", body: "<html><body>proxy secret</body></html>", want: "Bad Gateway", reject: "secret"},
+		{name: "multiline log", contentType: "text/plain", body: "first log line\npassword=secret\n", want: "Bad Gateway", reject: "password"},
+		{name: "json control characters", contentType: "application/json", body: `{"Message":"failed\u0000\u001b[31m safely"}`, want: "failed[31m safely"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+			_, err := New(srv.URL, time.Second).PublicInfo(context.Background())
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("error = %v", err)
+			}
+			if apiErr.Message != tc.want || (tc.reject != "" && strings.Contains(apiErr.Message, tc.reject)) {
+				t.Fatalf("message = %q", apiErr.Message)
+			}
+		})
+	}
+
+	long := strings.Repeat("界", maxAPIErrorMessageRunes+100)
+	if got := safeAPIErrorMessage([]byte(long), "text/plain", http.StatusBadRequest); utf8.RuneCountInString(got) != maxAPIErrorMessageRunes+1 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("long message rune count = %d", utf8.RuneCountInString(got))
 	}
 }
 

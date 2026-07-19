@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
 	"github.com/ChowDPa02K/jellyfin-remora/internal/model"
@@ -22,6 +23,7 @@ const (
 	adminDeviceID           = "jellyfin-remora-admin"
 	watchdogDeviceID        = "jellyfin-remora-watchdog"
 	maxSuccessResponseBytes = 8 << 20
+	maxAPIErrorMessageRunes = 512
 )
 
 type Client struct {
@@ -469,7 +471,7 @@ func (c *Client) doWithDeviceIDAndErrorPath(ctx context.Context, method, path, e
 	}
 	if !accepted {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &APIError{StatusCode: resp.StatusCode, Method: method, Path: errorPath, Message: strings.TrimSpace(string(data))}
+		return &APIError{StatusCode: resp.StatusCode, Method: method, Path: errorPath, Message: safeAPIErrorMessage(data, resp.Header.Get("Content-Type"), resp.StatusCode)}
 	}
 	if out != nil {
 		data, err := io.ReadAll(io.LimitReader(resp.Body, maxSuccessResponseBytes+1))
@@ -483,6 +485,54 @@ func (c *Client) doWithDeviceIDAndErrorPath(ctx context.Context, method, path, e
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil
+}
+
+func safeAPIErrorMessage(data []byte, contentType string, statusCode int) string {
+	fallback := http.StatusText(statusCode)
+	if fallback == "" {
+		fallback = fmt.Sprintf("HTTP %d", statusCode)
+	}
+	raw := strings.TrimSpace(string(data))
+	lower := strings.ToLower(raw)
+	if raw == "" || strings.Contains(strings.ToLower(contentType), "text/html") || strings.HasPrefix(lower, "<") {
+		return fallback
+	}
+	var document map[string]any
+	if json.Unmarshal(data, &document) == nil {
+		for _, key := range []string{"Message", "message", "Error", "error", "Detail", "detail"} {
+			if value, ok := document[key].(string); ok && strings.TrimSpace(value) != "" {
+				return cleanAPIErrorText(value, fallback)
+			}
+		}
+		return fallback
+	}
+	// Multiline plaintext is commonly a proxy error page or server log. Do not
+	// replay it through the control API or CLI.
+	if strings.ContainsAny(raw, "\r\n") {
+		return fallback
+	}
+	return cleanAPIErrorText(raw, fallback)
+}
+
+func cleanAPIErrorText(value, fallback string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		return r
+	}, value)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if cleaned == "" {
+		return fallback
+	}
+	runes := []rune(cleaned)
+	if len(runes) > maxAPIErrorMessageRunes {
+		cleaned = string(runes[:maxAPIErrorMessageRunes]) + "…"
+	}
+	return cleaned
 }
 
 func (c *Client) Health(ctx context.Context) model.HealthResult {
