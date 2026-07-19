@@ -263,12 +263,13 @@ func (m *Manager) Adopt(ctx context.Context) (bool, error) {
 func (m *Manager) Info(ctx context.Context) (platform.ProcessInfo, bool) {
 	m.mu.Lock()
 	pid := m.pid
+	startedAt := m.startedAt
 	m.mu.Unlock()
 	if pid <= 0 {
 		return platform.ProcessInfo{}, false
 	}
 	pi, err := m.backend.ProcessInfo(ctx, pid)
-	if err != nil || strings.Contains(pi.State, "Z") {
+	if err != nil || strings.Contains(pi.State, "Z") || !sameProcessGeneration(startedAt, pi.StartedAt) {
 		m.mu.Lock()
 		if m.pid == pid {
 			m.pid = 0
@@ -279,11 +280,28 @@ func (m *Manager) Info(ctx context.Context) (platform.ProcessInfo, bool) {
 	return pi, true
 }
 
+// Backends that derive process start time from whole-second kernel values can
+// differ slightly between the initial observation and a later lookup. A
+// difference beyond that precision window means the PID has been reused.
+func sameProcessGeneration(expected, actual time.Time) bool {
+	if expected.IsZero() || actual.IsZero() {
+		return false
+	}
+	delta := actual.Sub(expected)
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= 3*time.Second
+}
+
 func (m *Manager) Stop(ctx context.Context, force bool, timeout time.Duration) error {
 	m.mu.Lock()
 	pid := m.pid
 	m.mu.Unlock()
 	if pid <= 0 {
+		return nil
+	}
+	if _, running := m.Info(ctx); !running {
 		return nil
 	}
 	if err := m.backend.SignalGroup(pid, force); err != nil && !errors.Is(err, os.ErrProcessDone) {

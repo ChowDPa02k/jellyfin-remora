@@ -20,6 +20,45 @@ type stopFallbackBackend struct {
 
 type alreadyExitedBackend struct{ platform.Backend }
 
+type reusedPIDBackend struct {
+	platform.Backend
+	info     platform.ProcessInfo
+	signaled bool
+}
+
+func (b *reusedPIDBackend) ProcessInfo(context.Context, int) (platform.ProcessInfo, error) {
+	return b.info, nil
+}
+
+func (b *reusedPIDBackend) SignalGroup(int, bool) error {
+	b.signaled = true
+	return nil
+}
+
+func TestInfoRejectsReusedPIDGeneration(t *testing.T) {
+	started := time.Now().Add(-time.Hour)
+	backend := &reusedPIDBackend{info: platform.ProcessInfo{PID: 42, State: "R", StartedAt: started.Add(time.Minute)}}
+	manager := &Manager{backend: backend, pid: 42, startedAt: started}
+	if _, running := manager.Info(context.Background()); running {
+		t.Fatal("reused PID was reported as the managed process")
+	}
+	if manager.PID() != 0 {
+		t.Fatal("reused PID was not cleared")
+	}
+}
+
+func TestStopDoesNotSignalReusedPIDGeneration(t *testing.T) {
+	started := time.Now().Add(-time.Hour)
+	backend := &reusedPIDBackend{info: platform.ProcessInfo{PID: 42, State: "R", StartedAt: started.Add(time.Minute)}}
+	manager := &Manager{backend: backend, pid: 42, startedAt: started}
+	if err := manager.Stop(context.Background(), true, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if backend.signaled {
+		t.Fatal("Stop signaled a process from a different PID generation")
+	}
+}
+
 func (alreadyExitedBackend) SignalGroup(int, bool) error {
 	return errors.New("no such process")
 }
@@ -29,7 +68,7 @@ func (alreadyExitedBackend) ProcessInfo(context.Context, int) (platform.ProcessI
 }
 
 func TestStopAcceptsProcessThatExitedBeforeSignal(t *testing.T) {
-	manager := &Manager{backend: alreadyExitedBackend{}, pid: 42}
+	manager := &Manager{backend: alreadyExitedBackend{}, pid: 42, startedAt: time.Now()}
 	if err := manager.Stop(context.Background(), false, time.Second); err != nil {
 		t.Fatalf("already-exited process reported as stop failure: %v", err)
 	}
@@ -48,12 +87,12 @@ func (b *stopFallbackBackend) ProcessInfo(_ context.Context, pid int) (platform.
 	if !b.running {
 		return platform.ProcessInfo{}, errors.New("process exited")
 	}
-	return platform.ProcessInfo{PID: pid, State: "R"}, nil
+	return platform.ProcessInfo{PID: pid, State: "R", StartedAt: time.Unix(100, 0)}, nil
 }
 
 func TestStopForcesProcessWhenGracefulSignalIsUnavailable(t *testing.T) {
 	backend := &stopFallbackBackend{running: true}
-	manager := &Manager{backend: backend, pid: 42}
+	manager := &Manager{backend: backend, pid: 42, startedAt: time.Unix(100, 0)}
 	if err := manager.Stop(context.Background(), false, time.Second); err != nil {
 		t.Fatal(err)
 	}
