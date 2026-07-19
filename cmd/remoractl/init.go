@@ -79,12 +79,12 @@ func runInit(args []string) error {
 	if *noEdit && hasUnresolvedInitPlaceholder(template) {
 		return errors.New("--no-edit requires a fully prepared sample without REPLACE-WITH placeholders")
 	}
-	temporary, err := os.CreateTemp("", "jellyfin-remora-config-*.yaml")
+	temporary, cleanupTemporary, err := createSensitiveTemp("jellyfin-remora-config-*.yaml")
 	if err != nil {
 		return fmt.Errorf("create temporary configuration: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer cleanupTemporary()
 	if err := temporary.Chmod(0o600); err != nil {
 		temporary.Close()
 		return err

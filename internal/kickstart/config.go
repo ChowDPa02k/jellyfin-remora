@@ -284,55 +284,9 @@ func platformControlValue() string {
 }
 
 func ValidateGeneratedConfiguration(data []byte) error {
-	temporary, err := createTemporaryConfiguration(data)
-	if err != nil {
-		return err
-	}
-	defer temporary.cleanup()
-	_, err = config.Load(temporary.path)
+	_, err := config.Parse(data)
 	if err != nil {
 		return fmt.Errorf("generated configuration is invalid: %w", err)
 	}
 	return nil
 }
-
-type temporaryConfiguration struct{ path string }
-
-func createTemporaryConfiguration(data []byte) (temporaryConfiguration, error) {
-	file, err := createTempFile(data)
-	if err != nil {
-		return temporaryConfiguration{}, err
-	}
-	return temporaryConfiguration{path: file}, nil
-}
-
-func (t temporaryConfiguration) cleanup() { _ = removeFile(t.path) }
-
-var createTempFile = func(data []byte) (string, error) {
-	file, err := osCreateTemp("jellyfin-remora-kickstart-*.yaml")
-	if err != nil {
-		return "", err
-	}
-	path := file.Name()
-	if err := file.Chmod(0o600); err != nil {
-		file.Close()
-		removeFile(path)
-		return "", err
-	}
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		removeFile(path)
-		return "", err
-	}
-	if err := file.Close(); err != nil {
-		removeFile(path)
-		return "", err
-	}
-	return path, nil
-}
-
-// These wrappers keep filesystem side effects replaceable in focused tests.
-var (
-	osCreateTemp = func(pattern string) (*os.File, error) { return os.CreateTemp("", pattern) }
-	removeFile   = os.Remove
-)

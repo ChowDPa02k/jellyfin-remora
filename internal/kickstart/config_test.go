@@ -2,6 +2,7 @@ package kickstart
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -37,6 +38,9 @@ func TestInferStorageUsesLongestMountAndDeduplicates(t *testing.T) {
 }
 
 func TestBuildConfigurationOmitsAdvancedSections(t *testing.T) {
+	// Generated credentials are validated in memory and must never require a
+	// second plaintext copy in the system temporary directory.
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "unavailable"))
 	data, err := BuildConfiguration(Answers{
 		Installation: Installation{Executable: "/opt/jellyfin/jellyfin", WebDir: "/opt/jellyfin/jellyfin-web"},
 		Home:         "/srv/jellyfin", ServerName: "Kickstart Test", DisplayLanguage: "Deutsch",

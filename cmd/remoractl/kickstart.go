@@ -134,12 +134,12 @@ func deployKickstart(answers kickstart.Answers, remoraExecutable string, start b
 	if err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp("", "jellyfin-remora-kickstart-*.yaml")
+	temporary, cleanupTemporary, err := createSensitiveTemp("jellyfin-remora-kickstart-*.yaml")
 	if err != nil {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer cleanupTemporary()
 	if err := temporary.Chmod(0o600); err != nil {
 		temporary.Close()
 		return err

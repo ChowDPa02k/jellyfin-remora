@@ -105,6 +105,11 @@ authentication, authorization tests, and a separate threat-model review. Jellyfi
 administrator or watchdog credentials must not be reused as Remora control-plane
 credentials.
 
+Temporary configuration files created by `init`, `edit-config`, and `kickstart`
+are owner-only and are removed before `remoractl` terminates in response to
+SIGINT or SIGTERM. This includes kickstart files that temporarily contain the
+administrator and watchdog credentials.
+
 ## Platform isolation
 
 Supported-platform behavior is selected by build-tagged files, not by accumulating

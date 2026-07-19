@@ -138,12 +138,12 @@ func editExistingConfig(location control.ConfigResponse, configuredEditor string
 	if digest(original) != location.SHA256 {
 		return errors.New("configuration changed after daemon inspection; retry edit-config")
 	}
-	temporary, err := os.CreateTemp("", "jellyfin-remora-edit-*.yaml")
+	temporary, cleanupTemporary, err := createSensitiveTemp("jellyfin-remora-edit-*.yaml")
 	if err != nil {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer cleanupTemporary()
 	if err := temporary.Chmod(0o600); err != nil {
 		temporary.Close()
 		return err
