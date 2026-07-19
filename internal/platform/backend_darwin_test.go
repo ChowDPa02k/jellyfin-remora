@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -81,6 +82,25 @@ func TestParseElapsedProcessAge(t *testing.T) {
 	}
 	if _, err := parseElapsed("1:99"); err == nil {
 		t.Fatal("invalid elapsed time succeeded")
+	}
+}
+
+func TestDarwinProcessInfoHasStableKernelIdentityAndExactArguments(t *testing.T) {
+	backend := &darwinBackend{}
+	first, err := backend.ProcessInfo(context.Background(), os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	second, err := backend.ProcessInfo(context.Background(), os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.StartedAt.Equal(second.StartedAt) {
+		t.Fatalf("StartedAt drifted: %s != %s", first.StartedAt, second.StartedAt)
+	}
+	if !reflect.DeepEqual(first.Arguments, os.Args) {
+		t.Fatalf("arguments = %#v, want %#v", first.Arguments, os.Args)
 	}
 }
 

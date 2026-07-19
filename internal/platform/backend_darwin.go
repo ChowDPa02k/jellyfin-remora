@@ -378,24 +378,34 @@ func descendantPIDTree(parents map[int]int, root int) []int {
 }
 
 func (d *darwinBackend) ProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {
-	b, err := run(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-ww", "-o", "pid=,pgid=,state=,%cpu=,rss=,etime=,command=")
+	kinfo, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil {
+		return ProcessInfo{}, err
+	}
+	b, err := run(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "state=,%cpu=,rss=")
 	if err != nil {
 		return ProcessInfo{}, err
 	}
 	fields := strings.Fields(string(b))
-	if len(fields) < 7 {
+	if len(fields) != 3 {
 		return ProcessInfo{}, errors.New("unexpected ps output")
 	}
-	parsedPID, _ := strconv.Atoi(fields[0])
-	pgid, _ := strconv.Atoi(fields[1])
-	cpu, _ := strconv.ParseFloat(fields[3], 64)
-	rss, _ := strconv.ParseUint(fields[4], 10, 64)
-	command := strings.Join(fields[6:], " ")
-	startedAt := time.Time{}
-	if elapsed, parseErr := parseElapsed(fields[5]); parseErr == nil {
-		startedAt = time.Now().Add(-elapsed)
+	cpu, cpuErr := strconv.ParseFloat(fields[1], 64)
+	rss, rssErr := strconv.ParseUint(fields[2], 10, 64)
+	if cpuErr != nil || rssErr != nil {
+		return ProcessInfo{}, errors.New("invalid ps process metrics")
 	}
-	return ProcessInfo{PID: parsedPID, PGID: pgid, State: fields[2], CPUPercent: cpu, MemoryBytes: rss * 1024, FFmpegProcesses: d.ffmpegProcesses(ctx, parsedPID), Command: command, Arguments: splitCommand(command), Ports: d.ports(ctx, parsedPID), StartedAt: startedAt}, nil
+	arguments, err := processArguments(pid)
+	if err != nil {
+		return ProcessInfo{}, err
+	}
+	command := ""
+	if len(arguments) > 0 {
+		command = arguments[0]
+	}
+	started := kinfo.Proc.P_starttime
+	startedAt := time.Unix(started.Sec, int64(started.Usec)*int64(time.Microsecond))
+	return ProcessInfo{PID: int(kinfo.Proc.P_pid), PGID: int(kinfo.Eproc.Pgid), State: fields[0], CPUPercent: cpu, MemoryBytes: rss * 1024, FFmpegProcesses: d.ffmpegProcesses(ctx, pid), Command: command, Arguments: arguments, Ports: d.ports(ctx, pid), StartedAt: startedAt}, nil
 }
 
 func (d *darwinBackend) FindProcesses(ctx context.Context, executable string, requiredArgs []string) ([]ProcessInfo, error) {

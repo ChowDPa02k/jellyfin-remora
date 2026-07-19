@@ -53,6 +53,16 @@ func TestInfoRejectsReusedPIDGeneration(t *testing.T) {
 	}
 }
 
+func TestProcessGenerationRequiresExactKernelStartTime(t *testing.T) {
+	started := time.Unix(100, 123000)
+	if !sameProcessGeneration(started, started) {
+		t.Fatal("identical process generation was rejected")
+	}
+	if sameProcessGeneration(started, started.Add(time.Microsecond)) {
+		t.Fatal("different process generation was accepted")
+	}
+}
+
 func TestStopDoesNotSignalReusedPIDGeneration(t *testing.T) {
 	started := time.Now().Add(-time.Hour)
 	backend := &reusedPIDBackend{info: platform.ProcessInfo{PID: 42, State: "R", StartedAt: started.Add(time.Minute)}}

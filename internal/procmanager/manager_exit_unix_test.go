@@ -4,6 +4,7 @@ package procmanager
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -22,6 +23,9 @@ type exitNotificationBackend struct {
 
 func (*exitNotificationBackend) ConfigureProcess(*exec.Cmd, string, string) error { return nil }
 func (b *exitNotificationBackend) ProcessExited(pid int)                          { b.exited <- pid }
+func (*exitNotificationBackend) ProcessInfo(context.Context, int) (platform.ProcessInfo, error) {
+	return platform.ProcessInfo{}, errors.New("process exited before identity inspection")
+}
 
 func TestStartedProcessExitNotifiesPlatformBackend(t *testing.T) {
 	executable := filepath.Join(t.TempDir(), "exit-success")

@@ -160,9 +160,13 @@ func (m *Manager) Start(ctx context.Context) error {
 			return fmt.Errorf("attach Jellyfin process: %w", err)
 		}
 	}
+	info, err := m.backend.ProcessInfo(ctx, cmd.Process.Pid)
 	m.cmd = cmd
 	m.pid = cmd.Process.Pid
 	m.startedAt = time.Now()
+	if err == nil && !info.StartedAt.IsZero() {
+		m.startedAt = info.StartedAt
+	}
 	m.waitDone = make(chan error, 1)
 	pid := m.pid
 	done := m.waitDone
@@ -295,18 +299,8 @@ func (m *Manager) Info(ctx context.Context) (platform.ProcessInfo, bool) {
 	return pi, true
 }
 
-// Backends that derive process start time from whole-second kernel values can
-// differ slightly between the initial observation and a later lookup. A
-// difference beyond that precision window means the PID has been reused.
 func sameProcessGeneration(expected, actual time.Time) bool {
-	if expected.IsZero() || actual.IsZero() {
-		return false
-	}
-	delta := actual.Sub(expected)
-	if delta < 0 {
-		delta = -delta
-	}
-	return delta <= 3*time.Second
+	return !expected.IsZero() && expected.Equal(actual)
 }
 
 func (m *Manager) Stop(ctx context.Context, force bool, timeout time.Duration) error {

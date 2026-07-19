@@ -123,6 +123,8 @@ migration, credential storage, or control endpoints must answer:
 
 1. Can storage loss create a false local data tree or allow Jellyfin to keep writing?
 2. Can PID reuse, duplicate discovery, or a stale state file signal the wrong process? Process lifecycle checks bind the PID to its observed start time and revalidate that generation before reporting or signaling it.
+   Darwin obtains the exact kernel process start time and argv through sysctl;
+   it does not reconstruct identity from elapsed-time or formatted `ps` output.
 3. Forced shutdown snapshots the managed descendant tree, revalidates each
    Linux PID's kernel start tick after opening its pidfd, and attempts every
    escaped descendant even when another signal fails.
