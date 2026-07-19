@@ -25,7 +25,8 @@ Kickstart performs these steps:
    official Jellyfin repository. It prefers the repository's published SHA-256;
    for legacy archive-only releases without checksum metadata, it downloads the
    equally sized official package and compares hashes. A package that cannot be
-   verified is not installed.
+   verified is not installed. The archive fallback covers stable, preview, and
+   date-versioned unstable packages.
 3. It asks for Jellyfin home. Deployment creates `data`, `config`, `cache`,
    `logs`, and `transcode` below that directory and adds the containing
    filesystem to the storage watchdog with read/write probes.

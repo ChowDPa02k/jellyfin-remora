@@ -124,6 +124,29 @@ func TestPackageValidatorDownloadsArchiveOnlyPackage(t *testing.T) {
 	}
 }
 
+func TestPackageValidatorDownloadsArchiveOnlyUnstablePackage(t *testing.T) {
+	content := bytes.Repeat([]byte("unstable-archive-jellyfin"), 64)
+	path := writeValidatorPackage(t, "jellyfin_20260719-arm64.tar.xz", content)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/archive/server/macos/unstable/20260719/arm64/") {
+			w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(content)
+			}
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	result, err := testPackageValidator(server).Validate(context.Background(), path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.OfficialSHA256 == "" || !strings.Contains(result.SourceURL, "/unstable/20260719/") {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
 func TestPackageValidatorRejectsChecksumMismatch(t *testing.T) {
 	path := writeValidatorPackage(t, "jellyfin_10.11.11-arm64.tar.xz", []byte("tampered"))
 	official := strings.Repeat("a", 64)

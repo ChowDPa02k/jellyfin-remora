@@ -161,7 +161,7 @@ func (v *PackageValidator) Validate(ctx context.Context, archivePath string, pro
 	}
 
 	for _, platform := range components.platforms {
-		for _, category := range []string{"stable", "preview"} {
+		for _, category := range components.categories() {
 			url := packageURL(archiveBase, platform, category, packageVersionDirectory(components.version, category), components.directoryArchitecture, components.filename)
 			size, exists, _, headErr := fetchPackageSize(ctx, client, requestTimeout, url)
 			if headErr != nil {
