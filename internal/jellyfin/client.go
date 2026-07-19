@@ -300,7 +300,8 @@ func (c *Client) CreateAPIKey(ctx context.Context, token, name string) error {
 }
 
 func (c *Client) RevokeAPIKey(ctx context.Context, token, key string) error {
-	return c.do(ctx, http.MethodDelete, "/Auth/Keys/"+url.PathEscape(key), token, nil, nil, http.StatusNoContent)
+	const errorPath = "/Auth/Keys/{key}"
+	return c.doWithDeviceIDAndErrorPath(ctx, http.MethodDelete, "/Auth/Keys/"+url.PathEscape(key), errorPath, token, nil, nil, defaultDeviceID, http.StatusNoContent)
 }
 
 func (c *Client) ValidateAPIKey(ctx context.Context, token string) error {
@@ -412,6 +413,10 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 }
 
 func (c *Client) doWithDeviceID(ctx context.Context, method, path, token string, body, out any, deviceID string, expected ...int) error {
+	return c.doWithDeviceIDAndErrorPath(ctx, method, path, path, token, body, out, deviceID, expected...)
+}
+
+func (c *Client) doWithDeviceIDAndErrorPath(ctx context.Context, method, path, errorPath, token string, body, out any, deviceID string, expected ...int) error {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -446,7 +451,7 @@ func (c *Client) doWithDeviceID(ctx context.Context, method, path, token string,
 	}
 	if !accepted {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &APIError{StatusCode: resp.StatusCode, Method: method, Path: path, Message: strings.TrimSpace(string(data))}
+		return &APIError{StatusCode: resp.StatusCode, Method: method, Path: errorPath, Message: strings.TrimSpace(string(data))}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)

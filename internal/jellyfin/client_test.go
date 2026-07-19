@@ -141,6 +141,26 @@ func TestAPIKeyManagementAndSessionStopRequests(t *testing.T) {
 	}
 }
 
+func TestRevokeAPIKeyErrorDoesNotExposeAccessToken(t *testing.T) {
+	const accessToken = "secret-key-material"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "revoke failed", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	err := New(srv.URL, time.Second).RevokeAPIKey(context.Background(), "admin-token", accessToken)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %v, want *APIError", err)
+	}
+	if strings.Contains(apiErr.Path, accessToken) || strings.Contains(err.Error(), accessToken) {
+		t.Fatalf("revoke error exposed access token: %v", err)
+	}
+	if apiErr.Path != "/Auth/Keys/{key}" {
+		t.Fatalf("path = %q", apiErr.Path)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {
