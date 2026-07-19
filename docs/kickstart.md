@@ -41,6 +41,11 @@ Kickstart performs these steps:
    a selected Generic package, writes the configuration atomically, and
    installs and starts launchd or systemd when privileges permit.
 
+Deployment is transactional. If a later step fails, Kickstart reverses completed
+filesystem and service-installation steps. Existing files are restored. If any
+rollback action fails, the error prints an exact `cleanup required` manifest;
+each listed path or service is the remaining operator action.
+
 Without administrator privileges, Kickstart still writes the configuration
 and service artifact in the current directory, then prints exact manual install
 instructions. It does not silently elevate privileges.

@@ -116,7 +116,16 @@ func loadKickstartAnswers(path string, detected kickstart.Installation, found bo
 	}, nil
 }
 
-func deployKickstart(answers kickstart.Answers, remoraExecutable string, start bool) error {
+func deployKickstart(answers kickstart.Answers, remoraExecutable string, start bool) (err error) {
+	transaction := &kickstartTransaction{}
+	defer func() {
+		if err != nil {
+			err = transaction.fail(err)
+		}
+	}()
+	if err := captureMissingKickstartDirectories(transaction, []string{answers.Home}); err != nil {
+		return err
+	}
 	if err := prepareKickstartHome(answers); err != nil {
 		return err
 	}
@@ -159,11 +168,22 @@ func deployKickstart(answers kickstart.Answers, remoraExecutable string, start b
 	if err != nil {
 		return err
 	}
+	directories := []string{cfg.Jellyfin.DataDir, cfg.Jellyfin.ConfigDir, cfg.Jellyfin.CacheDir, cfg.Jellyfin.LogDir}
+	if transcode := cfg.Jellyfin.Playback.Transcoding.TranscodePath; transcode.Set && !transcode.Null && transcode.Value != "" {
+		directories = append(directories, transcode.Value)
+	}
+	if err := captureMissingKickstartDirectories(transaction, directories); err != nil {
+		return err
+	}
 	if err := preparePlatformInitDirectories(cfg, accepted); err != nil {
 		return fmt.Errorf("prepare Jellyfin home: %w", err)
 	}
 	if answers.Installation.Archive != nil {
-		installed, err := kickstart.ExtractArchive(*answers.Installation.Archive, filepath.Join(answers.Home, "server"))
+		serverPath := filepath.Join(answers.Home, "server")
+		if err := transaction.capturePath(serverPath); err != nil {
+			return err
+		}
+		installed, err := kickstart.ExtractArchive(*answers.Installation.Archive, serverPath)
 		if err != nil {
 			return err
 		}
@@ -179,12 +199,26 @@ func deployKickstart(answers kickstart.Answers, remoraExecutable string, start b
 		return err
 	}
 	destination := filepath.Join(workingDir, "remora-config.yaml")
+	if err := transaction.capturePath(destination); err != nil {
+		return err
+	}
 	if err := atomicWriteFile(destination, configuration, 0o600); err != nil {
 		return fmt.Errorf("write configuration: %w", err)
+	}
+	for _, path := range kickstartServiceExecutablePaths(remoraExecutable) {
+		if err := transaction.capturePath(path); err != nil {
+			return err
+		}
 	}
 	serviceExecutable, err := prepareKickstartServiceExecutable(remoraExecutable)
 	if err != nil {
 		return err
+	}
+	artifactPath := kickstartServiceArtifactPath(destination)
+	if artifactPath != "" {
+		if err := transaction.capturePath(artifactPath); err != nil {
+			return err
+		}
 	}
 	artifact, err := generatePlatformService(cfg, serviceExecutable, destination)
 	if err != nil {
@@ -200,6 +234,21 @@ func deployKickstart(answers kickstart.Answers, remoraExecutable string, start b
 		fmt.Fprintln(os.Stderr, platformServiceInstallInstructions(artifact))
 		return nil
 	}
+	installedPath := kickstartInstalledServicePath()
+	installedExisted := false
+	if installedPath != "" {
+		_, statErr := os.Lstat(installedPath)
+		installedExisted = statErr == nil
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect installed %s: %w", artifact.Kind, statErr)
+		}
+		if err := transaction.capturePathThen(installedPath, reloadKickstartServiceManager); err != nil {
+			return err
+		}
+	}
+	transaction.record("installed "+artifact.Kind, func() error {
+		return rollbackKickstartServiceInstallation(artifact, installedExisted)
+	})
 	if err := installInitService(artifact); err != nil {
 		return fmt.Errorf("install %s: %w", artifact.Kind, err)
 	}
