@@ -15,6 +15,8 @@ var broadWindowsConfigReaders = map[string]string{
 	"S-1-5-32-545": "Builtin Users",
 }
 
+func validateConfigFileSecurity(string) error { return nil }
+
 func configFileWarnings(path string) []string {
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {

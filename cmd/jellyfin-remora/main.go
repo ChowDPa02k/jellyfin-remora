@@ -68,6 +68,9 @@ func run() error {
 }
 
 func runDaemon(ctx context.Context, activeConfigPath string) error {
+	if err := validateConfigFileSecurity(activeConfigPath); err != nil {
+		return fmt.Errorf("configuration security check failed: %w", err)
+	}
 	cfg, err := config.Load(activeConfigPath)
 	if err != nil {
 		return err
