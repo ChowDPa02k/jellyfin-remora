@@ -24,7 +24,10 @@ type reusedPIDBackend struct {
 	platform.Backend
 	info     platform.ProcessInfo
 	signaled bool
+	exited   int
 }
+
+func (b *reusedPIDBackend) ProcessExited(pid int) { b.exited = pid }
 
 func (b *reusedPIDBackend) ProcessInfo(context.Context, int) (platform.ProcessInfo, error) {
 	return b.info, nil
@@ -44,6 +47,9 @@ func TestInfoRejectsReusedPIDGeneration(t *testing.T) {
 	}
 	if manager.PID() != 0 {
 		t.Fatal("reused PID was not cleared")
+	}
+	if backend.exited != 42 {
+		t.Fatalf("backend cleanup PID = %d, want 42", backend.exited)
 	}
 }
 
@@ -104,6 +110,29 @@ func TestStopForcesProcessWhenGracefulSignalIsUnavailable(t *testing.T) {
 type adoptionBackend struct {
 	platform.Backend
 	processes []platform.ProcessInfo
+}
+
+type adoptedAttacherBackend struct {
+	adoptionBackend
+	attached int
+}
+
+func (b *adoptedAttacherBackend) AttachAdoptedProcess(pid int) error {
+	b.attached = pid
+	return nil
+}
+
+func TestAdoptionUsesAdoptedProcessAttachment(t *testing.T) {
+	want := time.Now().Add(-time.Hour)
+	backend := &adoptedAttacherBackend{adoptionBackend: adoptionBackend{processes: []platform.ProcessInfo{{PID: 42, StartedAt: want}}}}
+	m := &Manager{backend: backend, executable: "/jellyfin"}
+	adopted, err := m.Adopt(context.Background())
+	if err != nil || !adopted {
+		t.Fatalf("Adopt() = %t, %v", adopted, err)
+	}
+	if backend.attached != 42 {
+		t.Fatalf("AttachAdoptedProcess PID = %d, want 42", backend.attached)
+	}
 }
 
 func (b adoptionBackend) FindProcesses(context.Context, string, []string) ([]platform.ProcessInfo, error) {

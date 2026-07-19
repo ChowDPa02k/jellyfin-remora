@@ -253,7 +253,11 @@ func (m *Manager) Adopt(ctx context.Context) (bool, error) {
 	if len(processes) > 1 {
 		return false, fmt.Errorf("multiple matching Jellyfin processes found")
 	}
-	if attacher, ok := m.backend.(interface{ AttachProcess(int) error }); ok {
+	if attacher, ok := m.backend.(interface{ AttachAdoptedProcess(int) error }); ok {
+		if err := attacher.AttachAdoptedProcess(processes[0].PID); err != nil {
+			return false, fmt.Errorf("attach adopted Jellyfin process: %w", err)
+		}
+	} else if attacher, ok := m.backend.(interface{ AttachProcess(int) error }); ok {
 		if err := attacher.AttachProcess(processes[0].PID); err != nil {
 			return false, fmt.Errorf("attach adopted Jellyfin process: %w", err)
 		}
@@ -278,6 +282,9 @@ func (m *Manager) Info(ctx context.Context) (platform.ProcessInfo, bool) {
 	}
 	pi, err := m.backend.ProcessInfo(ctx, pid)
 	if err != nil || strings.Contains(pi.State, "Z") || !sameProcessGeneration(startedAt, pi.StartedAt) {
+		if cleaner, ok := m.backend.(interface{ ProcessExited(int) }); ok {
+			cleaner.ProcessExited(pid)
+		}
 		m.mu.Lock()
 		if m.pid == pid {
 			m.pid = 0

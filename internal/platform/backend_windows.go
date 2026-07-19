@@ -65,9 +65,10 @@ var (
 )
 
 type windowsBackend struct {
-	mu      sync.Mutex
-	job     windows.Handle
-	samples map[int]processCPUSample
+	mu           sync.Mutex
+	job          windows.Handle
+	samples      map[int]processCPUSample
+	adoptedRoots map[int]bool
 }
 
 type processCPUSample struct {
@@ -118,7 +119,9 @@ type windowsProcess struct {
 	CommandLine    string `json:"CommandLine"`
 }
 
-func newBackend() Backend { return &windowsBackend{samples: make(map[int]processCPUSample)} }
+func newBackend() Backend {
+	return &windowsBackend{samples: make(map[int]processCPUSample), adoptedRoots: make(map[int]bool)}
+}
 
 func (w *windowsBackend) Mounts(ctx context.Context) ([]MountInfo, error) {
 	drives, err := logicalDrives()
@@ -364,6 +367,41 @@ func (*windowsBackend) ConfigureProcess(cmd *exec.Cmd, username, groupname strin
 func (w *windowsBackend) AttachProcess(pid int) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	delete(w.adoptedRoots, pid)
+	return w.attachProcessesLocked([]int{pid})
+}
+
+func (w *windowsBackend) AttachAdoptedProcess(pid int) error {
+	entries, err := windowsProcesses()
+	if err != nil {
+		return fmt.Errorf("enumerate adopted process tree: %w", err)
+	}
+	pids := windowsDescendantPIDs(entries, pid)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.ensureJobLocked(); err != nil {
+		return err
+	}
+	if err := attachAdoptedProcessTree(pids, w.attachProcessLocked, w.resetJobLocked); err != nil {
+		return err
+	}
+	w.adoptedRoots[pid] = true
+	return nil
+}
+
+func (w *windowsBackend) attachProcessesLocked(pids []int) error {
+	if err := w.ensureJobLocked(); err != nil {
+		return err
+	}
+	for _, pid := range pids {
+		if err := w.attachProcessLocked(pid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *windowsBackend) ensureJobLocked() error {
 	if w.job == 0 {
 		job, err := windows.CreateJobObject(nil, nil)
 		if err != nil {
@@ -378,6 +416,10 @@ func (w *windowsBackend) AttachProcess(pid int) error {
 		}
 		w.job = job
 	}
+	return nil
+}
+
+func (w *windowsBackend) attachProcessLocked(pid int) error {
 	process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return fmt.Errorf("open process %d for Job Object: %w", pid, err)
@@ -387,6 +429,32 @@ func (w *windowsBackend) AttachProcess(pid int) error {
 		return fmt.Errorf("assign process %d to Windows Job Object: %w", pid, err)
 	}
 	return nil
+}
+
+func attachAdoptedProcessTree(pids []int, attach func(int) error, rollback func() error) error {
+	for _, pid := range pids {
+		if err := attach(pid); err != nil {
+			return errors.Join(err, rollback())
+		}
+	}
+	return nil
+}
+
+func (w *windowsBackend) resetJobLocked() error {
+	if w.job == 0 {
+		return nil
+	}
+	err := windows.TerminateJobObject(w.job, 1)
+	closeErr := windows.CloseHandle(w.job)
+	w.job = 0
+	clear(w.adoptedRoots)
+	return errors.Join(err, closeErr)
+}
+
+func (w *windowsBackend) ProcessExited(pid int) {
+	w.mu.Lock()
+	delete(w.adoptedRoots, pid)
+	w.mu.Unlock()
 }
 
 func (w *windowsBackend) SignalGroup(pid int, force bool) error {
@@ -405,6 +473,12 @@ func (w *windowsBackend) SignalGroup(pid int, force bool) error {
 			return err
 		}
 		return process.Kill()
+	}
+	w.mu.Lock()
+	adopted := w.adoptedRoots[pid]
+	w.mu.Unlock()
+	if adopted {
+		return errors.New("adopted Windows process groups do not support CTRL_BREAK_EVENT")
 	}
 	r1, _, err := procGenerateConsoleCtrlEvent.Call(ctrlBreakEvent, uintptr(uint32(pid)))
 	if r1 == 0 {
@@ -815,6 +889,27 @@ func countWindowsFFmpeg(rootPID int) int {
 		}
 	}
 	return count
+}
+
+func windowsDescendantPIDs(entries []processEntry32, rootPID int) []int {
+	descendants := map[uint32]bool{uint32(rootPID): true}
+	for changed := true; changed; {
+		changed = false
+		for _, entry := range entries {
+			if descendants[entry.ParentProcessID] && !descendants[entry.ProcessID] {
+				descendants[entry.ProcessID] = true
+				changed = true
+			}
+		}
+	}
+	result := make([]int, 0, len(descendants))
+	for pid := range descendants {
+		if int(pid) != rootPID {
+			result = append(result, int(pid))
+		}
+	}
+	sort.Ints(result)
+	return append([]int{rootPID}, result...)
 }
 
 func windowsProcesses() ([]processEntry32, error) {

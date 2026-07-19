@@ -53,6 +53,12 @@ Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='JellyfinRem
 The status `username` must be the configured service account, and every required
 SMB entry must be mounted, reachable, and healthy before Jellyfin starts.
 
+Remora places Jellyfin in a kill-on-close Job Object. When it adopts an
+existing Jellyfin process, it also assigns the process's pre-existing
+descendants to that job. Adopted processes skip console process-group signaling
+because an adopted PID is not guaranteed to identify a console group; the
+manager falls back to bounded Job Object termination.
+
 To remove the service and its Event Log source:
 
 ```powershell

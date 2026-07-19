@@ -5,10 +5,12 @@ package platform
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +105,52 @@ func TestWindowsJobObjectTerminatesAttachedProcess(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("attached process survived Job Object termination")
+	}
+}
+
+func TestWindowsDescendantPIDsIncludesPreexistingTree(t *testing.T) {
+	entries := []processEntry32{
+		{ProcessID: 100, ParentProcessID: 1},
+		{ProcessID: 101, ParentProcessID: 100},
+		{ProcessID: 102, ParentProcessID: 101},
+		{ProcessID: 200, ParentProcessID: 1},
+	}
+	if got := windowsDescendantPIDs(entries, 100); !reflect.DeepEqual(got, []int{100, 101, 102}) {
+		t.Fatalf("windowsDescendantPIDs() = %v", got)
+	}
+}
+
+func TestAttachAdoptedProcessTreeRollsBackPartialAssignment(t *testing.T) {
+	var attached []int
+	rolledBack := false
+	injected := errors.New("injected assignment failure")
+	err := attachAdoptedProcessTree(
+		[]int{100, 101, 102},
+		func(pid int) error {
+			attached = append(attached, pid)
+			if pid == 101 {
+				return injected
+			}
+			return nil
+		},
+		func() error {
+			rolledBack = true
+			return nil
+		},
+	)
+	if !errors.Is(err, injected) || !rolledBack {
+		t.Fatalf("error=%v rolledBack=%t", err, rolledBack)
+	}
+	if !reflect.DeepEqual(attached, []int{100, 101}) {
+		t.Fatalf("attached=%v", attached)
+	}
+}
+
+func TestAttachProcessClearsStaleAdoptedPIDClassification(t *testing.T) {
+	backend := &windowsBackend{adoptedRoots: map[int]bool{42: true}}
+	backend.ProcessExited(42)
+	if backend.adoptedRoots[42] {
+		t.Fatal("exited adopted PID remained classified as adopted")
 	}
 }
 
