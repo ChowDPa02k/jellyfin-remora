@@ -25,6 +25,10 @@ func TestInspectAndExtractTarGZ(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	info.VerifiedSHA256, info.VerifiedSize, err = hashPackageFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
 	destination := filepath.Join(t.TempDir(), "server")
 	installation, err := ExtractArchive(info, destination)
 	if err != nil {
@@ -73,6 +77,10 @@ func TestInspectAndExtractZIP(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := InspectArchive(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info.VerifiedSHA256, info.VerifiedSize, err = hashPackageFile(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +142,49 @@ func TestExtractArchiveRejectsPackageChangedAfterVerification(t *testing.T) {
 	}
 	if _, err := ExtractArchive(info, filepath.Join(t.TempDir(), "server")); err == nil || !strings.Contains(err.Error(), "changed after repository verification") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestExtractArchiveRequiresVerifiedDigest(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "jellyfin.tar.gz")
+	writeTarGZ(t, archive, map[string][]byte{"jellyfin/jellyfin": []byte("unverified")})
+	destination := filepath.Join(t.TempDir(), "server")
+	_, err := ExtractArchive(ArchiveInfo{Path: archive, ExecutableEntry: "jellyfin/jellyfin"}, destination)
+	if err == nil || !strings.Contains(err.Error(), "verified SHA-256") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("unverified archive created destination: %v", err)
+	}
+}
+
+func TestExtractArchiveUsesVerifiedOpenFile(t *testing.T) {
+	binary, err := os.ReadFile(matchingExecutable(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	archive := filepath.Join(directory, "jellyfin.tar.gz")
+	replacement := filepath.Join(directory, "replacement.tar.gz")
+	writeTarGZ(t, archive, map[string][]byte{"jellyfin/jellyfin": binary})
+	writeTarGZ(t, replacement, map[string][]byte{"replacement": []byte("not Jellyfin")})
+	info, err := InspectArchive(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info.VerifiedSHA256, info.VerifiedSize, err = hashPackageFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(directory, "server")
+	installation, err := extractArchive(info, destination, func() error {
+		return os.Rename(replacement, archive)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBinary(installation.Executable, runtime.GOOS, runtime.GOARCH); err != nil {
+		t.Fatal(err)
 	}
 }
 

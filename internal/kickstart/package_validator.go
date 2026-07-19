@@ -373,8 +373,12 @@ func hashPackageFile(path string) (string, int64, error) {
 		return "", 0, err
 	}
 	defer file.Close()
+	return hashPackageReader(file)
+}
+
+func hashPackageReader(reader io.Reader) (string, int64, error) {
 	hash := sha256.New()
-	size, err := io.Copy(hash, file)
+	size, err := io.Copy(hash, reader)
 	if err != nil {
 		return "", 0, err
 	}

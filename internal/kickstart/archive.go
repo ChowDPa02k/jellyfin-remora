@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -183,10 +184,27 @@ func readExecutable(reader io.Reader, size int64) ([]byte, error) {
 }
 
 func ExtractArchive(info ArchiveInfo, destination string) (Installation, error) {
-	if err := verifySelectedArchive(info); err != nil {
+	return extractArchive(info, destination, nil)
+}
+
+func extractArchive(info ArchiveInfo, destination string, afterVerification func() error) (Installation, error) {
+	archive, err := os.Open(info.Path)
+	if err != nil {
+		return Installation{}, fmt.Errorf("open selected Jellyfin package: %w", err)
+	}
+	defer archive.Close()
+	if err := verifySelectedArchive(info, archive); err != nil {
 		return Installation{}, err
 	}
-	destination, err := filepath.Abs(destination)
+	if afterVerification != nil {
+		if err := afterVerification(); err != nil {
+			return Installation{}, err
+		}
+	}
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		return Installation{}, fmt.Errorf("rewind selected Jellyfin package: %w", err)
+	}
+	destination, err = filepath.Abs(destination)
 	if err != nil {
 		return Installation{}, err
 	}
@@ -203,9 +221,9 @@ func ExtractArchive(info ArchiveInfo, destination string) (Installation, error) 
 	}
 	defer os.RemoveAll(stage)
 	if strings.EqualFold(filepath.Ext(info.Path), ".zip") {
-		err = extractZip(info.Path, stage)
+		err = extractZip(archive, info.VerifiedSize, stage)
 	} else {
-		err = extractTar(info.Path, stage)
+		err = extractTar(archive, info.Path, stage)
 	}
 	if err != nil {
 		return Installation{}, err
@@ -232,15 +250,16 @@ func ExtractArchive(info ArchiveInfo, destination string) (Installation, error) 
 	return Installation{Executable: executable, WebDir: web}, nil
 }
 
-func verifySelectedArchive(info ArchiveInfo) error {
-	if info.VerifiedSHA256 == "" {
-		return nil
+func verifySelectedArchive(info ArchiveInfo, archive io.Reader) error {
+	digest, err := hex.DecodeString(info.VerifiedSHA256)
+	if err != nil || len(digest) != 32 || info.VerifiedSize <= 0 {
+		return errors.New("selected Jellyfin package does not have a valid verified SHA-256 digest and size")
 	}
-	hash, size, err := hashPackageFile(info.Path)
+	hash, size, err := hashPackageReader(archive)
 	if err != nil {
 		return fmt.Errorf("recheck selected Jellyfin package: %w", err)
 	}
-	if hash != info.VerifiedSHA256 || size != info.VerifiedSize {
+	if !strings.EqualFold(hash, info.VerifiedSHA256) || size != info.VerifiedSize {
 		return errors.New("selected Jellyfin package changed after repository verification")
 	}
 	return nil
@@ -260,12 +279,11 @@ func requireEmptyDestination(path string) error {
 	return nil
 }
 
-func extractZip(path, root string) error {
-	reader, err := zip.OpenReader(path)
+func extractZip(archive io.ReaderAt, size int64, root string) error {
+	reader, err := zip.NewReader(archive, size)
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
 	var budget archiveBudget
 	for _, entry := range reader.File {
 		name, err := safeArchiveName(entry.Name)
@@ -311,12 +329,14 @@ func extractZip(path, root string) error {
 	return nil
 }
 
-func extractTar(path, root string) error {
-	stream, reader, err := openTar(path)
+func extractTar(archive io.Reader, path, root string) error {
+	reader, decoder, err := openTarReader(archive, path)
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	if decoder != nil {
+		defer decoder.Close()
+	}
 	var budget archiveBudget
 	for {
 		header, err := reader.Next()
@@ -421,26 +441,34 @@ func openTar(path string) (*os.File, *tar.Reader, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	var source io.Reader = file
+	reader, _, err := openTarReader(file, path)
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	return file, reader, nil
+}
+
+func openTarReader(archive io.Reader, path string) (*tar.Reader, io.Closer, error) {
+	var source io.Reader = archive
+	var closer io.Closer
 	lower := strings.ToLower(path)
 	switch {
 	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
-		gzipReader, err := gzip.NewReader(file)
+		gzipReader, err := gzip.NewReader(archive)
 		if err != nil {
-			file.Close()
 			return nil, nil, err
 		}
 		source = gzipReader
+		closer = gzipReader
 	case strings.HasSuffix(lower, ".tar.xz"), strings.HasSuffix(lower, ".txz"):
-		xzReader, err := xz.NewReader(file)
+		xzReader, err := xz.NewReader(archive)
 		if err != nil {
-			file.Close()
 			return nil, nil, err
 		}
 		source = xzReader
 	default:
-		file.Close()
 		return nil, nil, errors.New("Jellyfin Generic package must use .tar.gz, .tar.xz, or .zip")
 	}
-	return file, tar.NewReader(source), nil
+	return tar.NewReader(source), closer, nil
 }
