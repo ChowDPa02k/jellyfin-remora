@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -299,14 +300,81 @@ func (d *darwinBackend) SignalGroup(pid int, force bool) error {
 	if force {
 		sig = syscall.SIGKILL
 	}
-	pgid, err := syscall.Getpgid(pid)
+	descendants, snapshotErr := d.descendantPIDs(pid)
+	return signalDarwinProcessTree(pid, descendants, sig, snapshotErr, syscall.Getpgid, syscall.Kill)
+}
+
+func signalDarwinProcessTree(pid int, descendants []int, sig syscall.Signal, snapshotErr error, getpgid func(int) (int, error), kill func(int, syscall.Signal) error) error {
+	var signalErrors []error
+	if snapshotErr != nil {
+		signalErrors = append(signalErrors, snapshotErr)
+	}
+	pgid, groupErr := getpgid(pid)
+	groupKnown := groupErr == nil
+	if groupErr != nil && !errors.Is(groupErr, syscall.ESRCH) {
+		signalErrors = append(signalErrors, groupErr)
+	}
+	if groupKnown && pgid == pid {
+		if err := kill(-pgid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			signalErrors = append(signalErrors, err)
+		}
+	} else if groupKnown {
+		if err := kill(pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			signalErrors = append(signalErrors, err)
+		}
+	}
+	for _, child := range descendants {
+		childGroup, childGroupErr := getpgid(child)
+		if groupKnown && childGroupErr == nil && childGroup == pgid {
+			continue
+		}
+		if err := kill(child, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			signalErrors = append(signalErrors, fmt.Errorf("signal descendant %d: %w", child, err))
+		}
+	}
+	return errors.Join(signalErrors...)
+}
+
+func (d *darwinBackend) descendantPIDs(root int) ([]int, error) {
+	b, err := run(context.Background(), "/bin/ps", "-ax", "-o", "pid=,ppid=")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if pgid == pid {
-		return syscall.Kill(-pgid, sig)
+	parents := make(map[int]int)
+	for _, line := range strings.Split(string(b), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[0])
+		parent, parentErr := strconv.Atoi(fields[1])
+		if pidErr == nil && parentErr == nil {
+			parents[pid] = parent
+		}
 	}
-	return syscall.Kill(pid, sig)
+	return descendantPIDTree(parents, root), nil
+}
+
+func descendantPIDTree(parents map[int]int, root int) []int {
+	descendants := map[int]bool{root: true}
+	changed := true
+	for changed {
+		changed = false
+		for pid, parent := range parents {
+			if descendants[parent] && !descendants[pid] {
+				descendants[pid] = true
+				changed = true
+			}
+		}
+	}
+	result := make([]int, 0, len(descendants)-1)
+	for pid := range descendants {
+		if pid != root {
+			result = append(result, pid)
+		}
+	}
+	sort.Ints(result)
+	return result
 }
 
 func (d *darwinBackend) ProcessInfo(ctx context.Context, pid int) (ProcessInfo, error) {

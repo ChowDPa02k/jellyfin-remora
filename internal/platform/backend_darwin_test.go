@@ -5,7 +5,9 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -92,6 +94,38 @@ func TestCountDescendantFFmpegOnlyCountsManagedTree(t *testing.T) {
 `
 	if got := countDescendantFFmpeg(processes, 100); got != 2 {
 		t.Fatalf("ffmpeg descendants=%d, want 2", got)
+	}
+}
+
+func TestDescendantPIDTreeIncludesEscapedNestedChildren(t *testing.T) {
+	parents := map[int]int{101: 100, 102: 101, 103: 1, 104: 102}
+	got := descendantPIDTree(parents, 100)
+	want := []int{101, 102, 104}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("descendantPIDTree() = %v, want %v", got, want)
+	}
+}
+
+func TestDarwinProcessTreeSignalsSnapshotWhenRootExited(t *testing.T) {
+	var signaled []int
+	err := signalDarwinProcessTree(
+		100, []int{101, 102}, syscall.SIGKILL, nil,
+		func(pid int) (int, error) {
+			if pid == 100 {
+				return 0, syscall.ESRCH
+			}
+			return 100, nil
+		},
+		func(pid int, _ syscall.Signal) error {
+			signaled = append(signaled, pid)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(signaled, []int{101, 102}) {
+		t.Fatalf("signaled = %v, want snapshotted descendants", signaled)
 	}
 }
 

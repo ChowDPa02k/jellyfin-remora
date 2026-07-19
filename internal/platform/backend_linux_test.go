@@ -4,11 +4,13 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -293,6 +295,46 @@ func TestLinuxSignalGroupCleansDescendants(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("descendant %d survived process-group cleanup", child)
+}
+
+func TestSignalEscapedLinuxDescendantsContinuesAfterError(t *testing.T) {
+	var signaled []int
+	injected := errors.New("permission denied")
+	errs := signalEscapedLinuxDescendants(
+		[]int{41, 42}, 40, 1, 40, unix.SIGKILL,
+		func(int) (int, error) { return 99, nil },
+		func(pid int, _ unix.Signal) error {
+			signaled = append(signaled, pid)
+			if pid == 41 {
+				return injected
+			}
+			return nil
+		},
+	)
+	if !reflect.DeepEqual(signaled, []int{41, 42}) {
+		t.Fatalf("signaled descendants = %v, want both descendants", signaled)
+	}
+	if len(errs) != 1 || !errors.Is(errs[0], injected) {
+		t.Fatalf("errors = %v, want injected error", errs)
+	}
+}
+
+func TestSignalEscapedLinuxDescendantsDoesNotSkipAfterRootExit(t *testing.T) {
+	var signaled []int
+	errs := signalEscapedLinuxDescendants(
+		[]int{41, 42}, 40, 1, -1, unix.SIGKILL,
+		func(int) (int, error) { return 40, nil },
+		func(pid int, _ unix.Signal) error {
+			signaled = append(signaled, pid)
+			return nil
+		},
+	)
+	if len(errs) != 0 {
+		t.Fatalf("errors = %v", errs)
+	}
+	if !reflect.DeepEqual(signaled, []int{41, 42}) {
+		t.Fatalf("signaled descendants = %v, want both snapshotted descendants", signaled)
+	}
 }
 
 func TestLinuxCgroupV2AddsEscapedFFmpegToAccounting(t *testing.T) {

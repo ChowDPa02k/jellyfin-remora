@@ -487,31 +487,43 @@ func (l *linuxBackend) SignalGroup(pid int, force bool) error {
 	}
 	processes, _ := l.processSnapshot()
 	descendants := l.managedProcessPIDs(processes, pid)
-	pgid, err := unix.Getpgid(pid)
-	if err != nil {
-		return err
-	}
-	if pgid == pid {
+	pgid, groupErr := unix.Getpgid(pid)
+	groupKnown := groupErr == nil
+	var err error
+	if groupErr != nil {
+		err = groupErr
+		pgid = -1
+	} else if pgid == pid {
 		err = unix.Kill(-pgid, signal)
 	} else {
 		err = signalPIDFD(pid, signal)
 	}
+	var signalErrors []error
 	if err != nil && !errors.Is(err, unix.ESRCH) {
-		return err
+		signalErrors = append(signalErrors, err)
 	}
+	if !groupKnown {
+		pgid = -1
+	}
+	signalErrors = append(signalErrors, signalEscapedLinuxDescendants(descendants, pid, os.Getpid(), pgid, signal, unix.Getpgid, signalPIDFD)...)
+	return errors.Join(signalErrors...)
+}
+
+func signalEscapedLinuxDescendants(descendants []int, root, supervisor, pgid int, signal unix.Signal, getpgid func(int) (int, error), signalPID func(int, unix.Signal) error) []error {
+	var signalErrors []error
 	for _, child := range descendants {
-		if child == pid || child == os.Getpid() {
+		if child == root || child == supervisor {
 			continue
 		}
-		childGroup, groupErr := unix.Getpgid(child)
-		if groupErr == nil && childGroup == pgid {
+		childGroup, groupErr := getpgid(child)
+		if pgid > 0 && groupErr == nil && childGroup == pgid {
 			continue
 		}
-		if childErr := signalPIDFD(child, signal); childErr != nil && !errors.Is(childErr, unix.ESRCH) {
-			return fmt.Errorf("signal descendant %d: %w", child, childErr)
+		if childErr := signalPID(child, signal); childErr != nil && !errors.Is(childErr, unix.ESRCH) {
+			signalErrors = append(signalErrors, fmt.Errorf("signal descendant %d: %w", child, childErr))
 		}
 	}
-	return nil
+	return signalErrors
 }
 
 func signalPIDFD(pid int, signal unix.Signal) error {
