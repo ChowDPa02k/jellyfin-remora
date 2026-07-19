@@ -27,6 +27,9 @@ func TestWindowsNamedPipeACLIncludesCurrentIdentity(t *testing.T) {
 	if !strings.Contains(sddl, "(A;;GA;;;S-1-") || !strings.Contains(sddl, "(A;;GA;;;SY)") || !strings.Contains(sddl, "(A;;GA;;;BA)") {
 		t.Fatalf("named-pipe SDDL = %q", sddl)
 	}
+	if strings.Contains(sddl, ";;;IU)") {
+		t.Fatalf("named-pipe SDDL grants Interactive Users access: %q", sddl)
+	}
 }
 
 func TestWindowsNamedPipeRoundTripAndRestart(t *testing.T) {

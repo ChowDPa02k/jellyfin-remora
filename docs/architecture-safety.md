@@ -99,9 +99,10 @@ Passwords and API keys must never be logged. Mount errors redact the configured 
 password, and control endpoints return status rather than credentials.
 
 The REST listener is restricted to syntactic loopback addresses. Darwin uses a local
-Unix socket; Windows uses an ACL-protected named pipe whose DACL includes the actual
-service identity. Remote control is out of scope for v1; adding it requires TLS, scoped
-authentication, authorization tests, and a separate threat-model review. Jellyfin
+Unix socket; Windows uses an ACL-protected named pipe whose DACL is limited to SYSTEM,
+Administrators, and the actual service identity. Remote control is out of scope for v1;
+adding it requires TLS, scoped authentication, authorization tests, and a separate
+threat-model review. Jellyfin
 administrator or watchdog credentials must not be reused as Remora control-plane
 credentials.
 

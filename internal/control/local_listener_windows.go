@@ -36,7 +36,7 @@ func localPipeSecurityDescriptor() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;%s)(A;;GRGW;;;IU)", user.User.Sid.String()), nil
+	return fmt.Sprintf("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;%s)", user.User.Sid.String()), nil
 }
 
 func cleanupLocalControl(*config.Config) {}
