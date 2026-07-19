@@ -93,7 +93,12 @@ func (e *APIError) Error() string {
 }
 
 func New(baseURL string, timeout time.Duration) *Client {
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{Timeout: timeout}}
+	return &Client{baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}}
 }
 
 func (c *Client) PublicInfo(ctx context.Context) (PublicInfo, error) {

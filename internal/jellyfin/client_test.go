@@ -183,6 +183,27 @@ func TestHealthFailure(t *testing.T) {
 	}
 }
 
+func TestClientDoesNotFollowRedirects(t *testing.T) {
+	redirected := false
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirected = true
+	}))
+	defer destination.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	err := New(source.URL, time.Second).ValidateAPIKey(context.Background(), "secret")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("error = %v, want redirect APIError", err)
+	}
+	if redirected {
+		t.Fatal("Jellyfin client followed redirect")
+	}
+}
+
 func TestProbeDatabaseUsesAuthenticatedReadOnlyUsersRequest(t *testing.T) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
