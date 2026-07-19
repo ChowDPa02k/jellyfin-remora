@@ -60,6 +60,28 @@ func TestParseLinuxProcStatHandlesParentheses(t *testing.T) {
 	}
 }
 
+func TestLinuxTicksDurationDoesNotOverflowLongUptime(t *testing.T) {
+	const fourYears = 4 * 365 * 24 * time.Hour
+	ticks := uint64(fourYears/time.Second) * 100
+	if got := linuxTicksDuration(ticks, 100); got != fourYears {
+		t.Fatalf("linuxTicksDuration() = %s, want %s", got, fourYears)
+	}
+	if got := linuxTicksDuration(ticks+25, 100); got != fourYears+250*time.Millisecond {
+		t.Fatalf("linuxTicksDuration() with remainder = %s", got)
+	}
+}
+
+func TestLinuxTicksDurationSaturatesQuotientRemainderBoundary(t *testing.T) {
+	const maxDuration = time.Duration(1<<63 - 1)
+	maxSeconds := uint64(maxDuration / time.Second)
+	if got := linuxTicksDuration(maxSeconds*10+8, 10); got != time.Duration(maxSeconds)*time.Second+800*time.Millisecond {
+		t.Fatalf("representable boundary duration = %s", got)
+	}
+	if got := linuxTicksDuration(maxSeconds*10+9, 10); got != maxDuration {
+		t.Fatalf("overflowing boundary duration = %s, want saturation", got)
+	}
+}
+
 func TestLinuxResolvePhysicalRejectsCharacterDevice(t *testing.T) {
 	backend := newBackend().(*linuxBackend)
 	_, err := backend.ResolvePhysical(context.Background(), config.DiskConfig{Device: "/dev/null"})

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/bits"
 	"os"
 	"os/exec"
 	"os/user"
@@ -548,7 +549,7 @@ func (l *linuxBackend) ProcessInfo(_ context.Context, pid int) (ProcessInfo, err
 	if err != nil {
 		return ProcessInfo{}, err
 	}
-	startedAt := boot.Add(time.Duration(process.startTick) * time.Second / time.Duration(l.clockHz))
+	startedAt := boot.Add(linuxTicksDuration(process.startTick, l.clockHz))
 	elapsed := time.Since(startedAt).Seconds()
 	cpu := 0.0
 	if elapsed > 0 {
@@ -571,6 +572,27 @@ func (l *linuxBackend) ProcessInfo(_ context.Context, pid int) (ProcessInfo, err
 		CPUPercent: cpu, MemoryBytes: uint64(max(int64(0), process.rssPages)) * uint64(os.Getpagesize()),
 		FFmpegProcesses: l.countFFmpeg(snapshot, pid), Ports: l.listeningPorts(pid), StartedAt: startedAt,
 	}, nil
+}
+
+func linuxTicksDuration(ticks uint64, clockHz int64) time.Duration {
+	if clockHz <= 0 {
+		return 0
+	}
+	hz := uint64(clockHz)
+	seconds := ticks / hz
+	remainder := ticks % hz
+	const maxDuration = uint64(1<<63 - 1)
+	maxSeconds := maxDuration / uint64(time.Second)
+	if seconds > maxSeconds {
+		return time.Duration(maxDuration)
+	}
+	high, low := bits.Mul64(remainder, uint64(time.Second))
+	fraction, _ := bits.Div64(high, low, hz)
+	whole := seconds * uint64(time.Second)
+	if fraction > maxDuration-whole {
+		return time.Duration(maxDuration)
+	}
+	return time.Duration(whole + fraction)
 }
 
 // ProcessExited is called by procmanager after wait4 has reaped a Jellyfin
