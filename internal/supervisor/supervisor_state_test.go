@@ -150,6 +150,22 @@ func TestManualAndStorageStopFailuresAreVisibleAndBackedOff(t *testing.T) {
 	}
 }
 
+func TestManualStopExitDoesNotPolluteCrashCircuit(t *testing.T) {
+	process := &stateProcess{running: false}
+	s := stateSupervisor(t, process)
+	s.wasRunning = true
+	s.status.ManualStop = true
+	s.status.DesiredState = model.DesiredStopped
+	s.crashes = []time.Time{time.Now(), time.Now(), time.Now(), time.Now()}
+	s.reconcile(context.Background())
+	if got := len(s.crashes); got != 4 {
+		t.Fatalf("manual stop recorded a crash: got %d crashes, want 4", got)
+	}
+	if s.processFailed {
+		t.Fatal("manual stop opened the restart circuit")
+	}
+}
+
 func TestFrozenStateFormatAndForwardCompatibleManualStop(t *testing.T) {
 	data, damage := encodeState(model.Status{
 		ManualStop: true,

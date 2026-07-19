@@ -339,7 +339,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		s.status.Ports = append(s.status.Ports[:0], pi.Ports...)
 		s.mu.Unlock()
 	}
-	if s.wasRunning && !running {
+	if s.wasRunning && !running && !manual && desired != model.DesiredStopped {
 		s.recordCrash()
 		s.scheduleRestart()
 	}
