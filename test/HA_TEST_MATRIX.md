@@ -417,3 +417,28 @@ disabled locking remains explicitly unsuitable for production Jellyfin data.
 - A forced SMB unmount and abrupt NAS power/network loss were not used. The normal live unmount covers mount disappearance, fencing, old-process termination, and recovery; unreachable-server timeout behavior remains covered deterministically.
 - The Mac was not forced to sleep or reboot. Remora crash/restart, stale socket replacement, process adoption, and storage disappearance/recovery cover the component invariants; actual sleep/wake and reboot remain Phase 1 system tests.
 - A real uninterruptible kernel `D`/`U` process was not manufactured. Both timeout branches are covered through an injected process backend, including force-kill success and failure.
+
+## 2026-07-19 external-review Round 1 gate (`v0.9.0-beta.6`)
+
+The 26 HA, state, and process-safety findings in Round 1 were kept as 26
+independent commits. `go test -race ./...`, `go vet ./...`, `govulncheck ./...`,
+the five-target cross-build, and Linux/Windows arm64/amd64 cross-test compilation
+passed before live testing.
+
+| Live gate | Result |
+|---|---|
+| Rocky and Debian legacy three-line state upgrade | Pass; the fourth database flag was added without fencing either healthy legacy instance |
+| Rocky and Debian Remora-only `SIGKILL` | Pass; systemd replacements adopted the unchanged exact Jellyfin PID and rejected duplicates |
+| Rocky and Debian normal managed-tree restart | Pass; the old PID exited and exactly one replacement reached `RUNNING` |
+| Rocky and Debian manual stop across Remora restart | Pass; both remained `STOPPED` with no PID until explicit `start` |
+| Debian NFS loss and recovery (`192.168.1.109:/data`) | Pass; the old PID was fenced and one replacement started after remount |
+| Debian SMB loss and recovery (`//192.168.1.106/data`) | Remora pass; fencing, old-PID exit, remount, and single-PID recovery completed. The generic harness must unmount CIFS before installing its drop rule because blocked-server `umount -l` can remain in kernel `D` state until connectivity returns. |
+| NFS-hosted live `jellyfin.db` page destruction | Pass; external server-side corruption produced log evidence, process-generation exit confirmed `DATABASE_DAMAGED`, daemon restart preserved the latch, and an explicit repaired start recovered |
+| macOS arm64 Remora-only `SIGKILL` | Pass; the replacement adopted the exact Jellyfin PID |
+| macOS arm64 required-path disappearance and recovery | Pass; `STORAGE_FENCED` stopped the old PID and recovery started exactly one replacement |
+| macOS arm64 manual stop across Remora restart | Pass; no process was revived before explicit `start` |
+
+Live tests used only `remora-review-20260719-round1` directories on NFS and
+SMB. Those directories, temporary binaries, transient units, test scripts,
+credentials transport, and added test-only packages were removed after the
+gate. Both Linux services were returned to one healthy `RUNNING` Jellyfin.
