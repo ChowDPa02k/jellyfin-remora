@@ -169,6 +169,30 @@ func TestLocalhostClientPinsValidatedLoopbackAddress(t *testing.T) {
 	}
 }
 
+func TestLoopbackLiteralClientRejectsRedirect(t *testing.T) {
+	redirected := false
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirected = true
+	}))
+	defer destination.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL+"/v1/status", http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+	client, base, err := newClient(source.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = request(client, http.MethodGet, base+"/v1/status")
+	if err == nil {
+		t.Fatal("redirect response was accepted")
+	}
+	if redirected {
+		t.Fatal("loopback IP literal client followed redirect")
+	}
+}
+
 func TestRequestReturnsMalformedURLError(t *testing.T) {
 	if _, err := request(http.DefaultClient, http.MethodGet, "://bad-url"); err == nil {
 		t.Fatal("malformed URL succeeded")

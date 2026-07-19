@@ -177,13 +177,17 @@ func newClient(host, socket string) (*http.Client, string, error) {
 				}
 				return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(pinned.String(), port))
 			}
-			return &http.Client{Transport: transport, Timeout: 10 * time.Second}, strings.TrimRight(host, "/"), nil
+			return &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: rejectControlRedirect}, strings.TrimRight(host, "/"), nil
 		}
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.Proxy = nil
-		return &http.Client{Transport: transport, Timeout: 10 * time.Second}, strings.TrimRight(host, "/"), nil
+		return &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: rejectControlRedirect}, strings.TrimRight(host, "/"), nil
 	}
 	return newLocalClient(socket)
+}
+
+func rejectControlRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 func request(c *http.Client, method, url string) (model.Status, error) {
 	var status model.Status
