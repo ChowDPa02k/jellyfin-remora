@@ -134,3 +134,7 @@ migration, credential storage, or control endpoints must answer:
 7. Does the change alter Jellyfin's inherited runtime or hardware access?
 8. Is the failure path covered by a deterministic test and, where safe, a real fault
    test?
+
+Linux HA tests use a descendant that escapes the Jellyfin process group and
+only accept `ESRCH` as proof that it exited; permission failures are test
+failures, not successful cleanup.

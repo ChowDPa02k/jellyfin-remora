@@ -4,6 +4,7 @@ package procmanager
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -99,8 +100,12 @@ func TestLinuxForcedStopReapsManagedDescendant(t *testing.T) {
 	}
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(childPID, 0); err != nil {
+		err := syscall.Kill(childPID, 0)
+		if errors.Is(err, syscall.ESRCH) {
 			return
+		}
+		if err != nil {
+			t.Fatalf("inspect managed descendant %d: %v", childPID, err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
