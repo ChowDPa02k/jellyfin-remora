@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ChowDPa02K/jellyfin-remora/internal/config"
@@ -124,6 +125,7 @@ type Supervisor struct {
 	localStatePath       string
 	stateRestorePending  bool
 	rollbackState        *persistedState
+	healthcheckRunning   atomic.Bool
 }
 
 func New(cfg *config.Config, pm ProcessManager, sc StorageChecker, jc *jellyfin.Client, log *slog.Logger) *Supervisor {
@@ -300,7 +302,7 @@ func (s *Supervisor) handle(req Request) {
 	}
 	s.mu.Unlock()
 	if req.Action == ActionHealthcheck {
-		s.immediateHealthcheck()
+		s.scheduleImmediateHealthcheck()
 	}
 	if err == nil && lifecycle {
 		writer := s.writeStateFile
@@ -339,6 +341,16 @@ func (s *Supervisor) handle(req Request) {
 		s.databaseSource.ResetBefore(actionStarted)
 	}
 	req.Reply <- err
+}
+
+func (s *Supervisor) scheduleImmediateHealthcheck() {
+	if !s.healthcheckRunning.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer s.healthcheckRunning.Store(false)
+		s.immediateHealthcheck()
+	}()
 }
 
 func (s *Supervisor) immediateHealthcheck() {
