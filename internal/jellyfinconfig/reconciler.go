@@ -47,7 +47,10 @@ type filePlan struct {
 	existed  bool
 }
 
-var replaceConfigFile = atomicWrite
+var (
+	replaceConfigFile   = atomicWrite
+	syncConfigDirectory = syncParentDirectory
+)
 
 func (r *Reconciler) Reconcile() (Result, error) {
 	var result Result
@@ -130,7 +133,11 @@ func (r *Reconciler) Reconcile() (Result, error) {
 	var written []filePlan
 	for _, plan := range plans {
 		if err := replaceConfigFile(plan.path, plan.updated, plan.mode); err != nil {
-			rollbackErr := rollback(written)
+			// atomicWrite may fail after rename when the parent directory cannot
+			// be synced. Include the current plan because its destination may
+			// already have changed even though the write returned an error.
+			rollbackPlans := append(append([]filePlan(nil), written...), plan)
+			rollbackErr := rollback(rollbackPlans)
 			if rollbackErr != nil {
 				return result, fmt.Errorf("write Jellyfin configuration %s: %w; rollback failed: %v", filepath.Base(plan.path), err, rollbackErr)
 			}
@@ -410,11 +417,22 @@ func atomicWrite(path string, data []byte, mode os.FileMode) (err error) {
 	if err = os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-	if parent, openErr := os.Open(filepath.Dir(path)); openErr == nil {
-		_ = parent.Sync()
-		_ = parent.Close()
+	if err = syncConfigDirectory(filepath.Dir(path)); err != nil {
+		return err
 	}
 	return nil
+}
+
+func syncParentDirectory(path string) error {
+	parent, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := parent.Sync(); err != nil {
+		_ = parent.Close()
+		return err
+	}
+	return parent.Close()
 }
 
 type elementSpan struct{ start, end int64 }

@@ -254,6 +254,53 @@ func TestReconcileRollsBackEarlierFileWhenLaterWriteFails(t *testing.T) {
 	}
 }
 
+func TestAtomicWritePropagatesParentDirectorySyncFailure(t *testing.T) {
+	oldSync := syncConfigDirectory
+	syncConfigDirectory = func(string) error { return errors.New("injected parent sync failure") }
+	t.Cleanup(func() { syncConfigDirectory = oldSync })
+
+	path := filepath.Join(t.TempDir(), "system.xml")
+	err := atomicWrite(path, []byte("<ServerConfiguration/>"), 0o600)
+	if err == nil || !strings.Contains(err.Error(), "injected parent sync failure") {
+		t.Fatalf("atomicWrite error = %v", err)
+	}
+}
+
+func TestReconcileRollsBackCurrentFileAfterDirectorySyncFailure(t *testing.T) {
+	cfg := fixtureConfig(t)
+	encodingPath := filepath.Join(cfg.Jellyfin.ConfigDir, "encoding.xml")
+	originalEncoding, err := os.ReadFile(encodingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSync := syncConfigDirectory
+	syncCalls := 0
+	syncConfigDirectory = func(string) error {
+		syncCalls++
+		// Three existing-file backups and the new branding file are synced
+		// before encoding.xml is replaced.
+		if syncCalls == 5 {
+			return errors.New("injected parent sync failure")
+		}
+		return nil
+	}
+	t.Cleanup(func() { syncConfigDirectory = oldSync })
+
+	if _, err := New(cfg).Reconcile(); err == nil || !strings.Contains(err.Error(), "injected parent sync failure") {
+		t.Fatalf("Reconcile error = %v", err)
+	}
+	gotEncoding, err := os.ReadFile(encodingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotEncoding) != string(originalEncoding) {
+		t.Fatal("encoding.xml was not restored after its directory sync failed")
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Jellyfin.ConfigDir, "branding.xml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("new branding.xml was not removed during rollback: %v", err)
+	}
+}
+
 func assertScalar(t *testing.T, path, root, name, want string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
