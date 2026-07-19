@@ -50,14 +50,18 @@ func runInit(args []string) error {
 	volume := fs.String("volume", "", "Windows physical-volume mount point, such as D:\\")
 	dataRoot := fs.String("data-root", "", "Windows data root beneath the selected volume; defaults to <volume>\\jellyfin")
 	noEdit := fs.Bool("no-edit", false, "use a fully prepared sample without opening an editor")
+	force := fs.Bool("force", false, "allow --no-edit to replace an existing remora-config.yaml")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: remoractl init [--sample-dir DIR] [--editor EDITOR | --no-edit] [--volume D:\\] [--data-root PATH]")
+		return errors.New("usage: remoractl init [--sample-dir DIR] [--editor EDITOR | --no-edit [--force]] [--volume D:\\] [--data-root PATH]")
 	}
 	if *noEdit && *editor != "" {
 		return errors.New("--editor and --no-edit are mutually exclusive")
+	}
+	if *force && !*noEdit {
+		return errors.New("--force is only valid with --no-edit")
 	}
 	remoraExecutable, err := locateRemoraExecutable()
 	if err != nil {
@@ -67,14 +71,25 @@ func runInit(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve working directory: %w", err)
 	}
-
-	template, err := loadPlatformSample(*sampleDir)
+	destination := filepath.Join(workingDir, "remora-config.yaml")
+	existing, destinationExists, err := existingInitConfiguration(destination)
 	if err != nil {
 		return err
 	}
-	template, err = preparePlatformTemplate(template, *volume, *dataRoot)
-	if err != nil {
-		return err
+	if destinationExists && *noEdit && !*force {
+		return errors.New("remora-config.yaml already exists; use interactive init to edit it, or pass --no-edit --force to replace it")
+	}
+
+	template := existing
+	if !destinationExists || *noEdit {
+		template, err = loadPlatformSample(*sampleDir)
+		if err != nil {
+			return err
+		}
+		template, err = preparePlatformTemplate(template, *volume, *dataRoot)
+		if err != nil {
+			return err
+		}
 	}
 	if *noEdit && hasUnresolvedInitPlaceholder(template) {
 		return errors.New("--no-edit requires a fully prepared sample without REPLACE-WITH placeholders")
@@ -124,7 +139,13 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	destination := filepath.Join(workingDir, "remora-config.yaml")
+	if destinationExists {
+		backup, err := backupInitConfiguration(destination, existing)
+		if err != nil {
+			return fmt.Errorf("back up existing configuration: %w", err)
+		}
+		fmt.Printf("configuration backup written: %s\n", backup)
+	}
 	if err := atomicWriteFile(destination, edited, 0o600); err != nil {
 		return fmt.Errorf("write configuration: %w", err)
 	}
@@ -157,6 +178,35 @@ func runInit(args []string) error {
 		}
 	}
 	return nil
+}
+
+var initBackupNow = time.Now
+
+func existingInitConfiguration(path string) ([]byte, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect existing configuration: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, false, errors.New("existing remora-config.yaml must be a regular non-symlink file")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, fmt.Errorf("read existing configuration: %w", err)
+	}
+	return contents, true, nil
+}
+
+func backupInitConfiguration(path string, contents []byte) (string, error) {
+	timestamp := initBackupNow().UTC().Format("20060102T150405.000000000Z")
+	backup := path + ".bak-" + timestamp
+	if err := atomicWriteFile(backup, contents, 0o600); err != nil {
+		return "", err
+	}
+	return backup, nil
 }
 
 func validateInitStorage(cfg *config.Config, remoraExecutable string) (map[int]bool, error) {

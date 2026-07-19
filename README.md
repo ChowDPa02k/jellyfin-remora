@@ -144,6 +144,10 @@ strictly validates a `0600` temporary YAML copy, verifies every configured disk,
 creates the four Jellyfin directories only beneath verified configured storage,
 checks that each new directory is writable, and atomically writes
 `remora-config.yaml` in the directory from which the command was invoked.
+When that file already exists, interactive init edits the existing configuration
+instead of starting over from the sample and writes a timestamped owner-only
+backup before replacing it. Non-interactive `--no-edit` refuses to replace an
+existing configuration unless `--force` is also supplied.
 
 For each configured disk, init leaves an existing mount in place and performs
 the requested real read or write/fsync/delete probe. A missing mount is mounted

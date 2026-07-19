@@ -156,6 +156,138 @@ func TestRunInitNoEditUsesPreparedSample(t *testing.T) {
 	}
 }
 
+func TestRunInitRerunEditsExistingConfigurationAndCreatesBackup(t *testing.T) {
+	root := t.TempDir()
+	useInitWorkingDirectory(t, root)
+	stubInitLifecycle(t, filepath.Join(root, "jellyfin-remora"))
+	configDir := filepath.Join(root, "jellyfin-config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := minimalInitConfig(configDir) + "# existing operator configuration\n"
+	destination := filepath.Join(root, "remora-config.yaml")
+	if err := os.WriteFile(destination, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldEdit := editConfigFile
+	oldNow := initBackupNow
+	editConfigFile = func(_, path string) error {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if string(contents) != existing {
+			return fmt.Errorf("editor received sample instead of existing config: %q", contents)
+		}
+		return os.WriteFile(path, append(contents, []byte("# edited on rerun\n")...), 0o600)
+	}
+	initBackupNow = func() time.Time { return time.Date(2026, 7, 19, 12, 34, 56, 789, time.UTC) }
+	t.Cleanup(func() {
+		editConfigFile = oldEdit
+		initBackupNow = oldNow
+	})
+
+	editor, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runInit([]string{"--sample-dir", filepath.Join(root, "sample-does-not-exist"), "--editor", editor}); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(written) != existing+"# edited on rerun\n" {
+		t.Fatalf("rerun result = %q", written)
+	}
+	backup := destination + ".bak-20260719T123456.000000789Z"
+	backedUp, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backedUp) != existing {
+		t.Fatalf("backup = %q, want original %q", backedUp, existing)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(backup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("backup mode = %o, want 600", info.Mode().Perm())
+		}
+	}
+}
+
+func TestRunInitNoEditRequiresForceToReplaceExistingConfiguration(t *testing.T) {
+	root := t.TempDir()
+	useInitWorkingDirectory(t, root)
+	stubInitLifecycle(t, filepath.Join(root, "jellyfin-remora"))
+	sampleDir := filepath.Join(root, "sample")
+	configDir := filepath.Join(root, "jellyfin-config")
+	if err := os.MkdirAll(sampleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sampleName, err := platformSampleName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := minimalInitConfig(configDir) + "# replacement sample\n"
+	if err := os.WriteFile(filepath.Join(sampleDir, sampleName), []byte(replacement), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(root, "remora-config.yaml")
+	original := minimalInitConfig(configDir) + "# keep without force\n"
+	if err := os.WriteFile(destination, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = runInit([]string{"--sample-dir", sampleDir, "--no-edit"})
+	if err == nil || !strings.Contains(err.Error(), "--no-edit --force") {
+		t.Fatalf("runInit error = %v, want explicit force requirement", err)
+	}
+	unchanged, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(unchanged) != original {
+		t.Fatalf("configuration changed without --force: %q", unchanged)
+	}
+	backups, err := filepath.Glob(destination + ".bak-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("refused overwrite created backups: %v", backups)
+	}
+
+	oldNow := initBackupNow
+	initBackupNow = func() time.Time { return time.Date(2026, 7, 19, 13, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { initBackupNow = oldNow })
+	if err := runInit([]string{"--sample-dir", sampleDir, "--no-edit", "--force"}); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(written) != replacement {
+		t.Fatalf("forced replacement = %q, want sample %q", written, replacement)
+	}
+	backedUp, err := os.ReadFile(destination + ".bak-20260719T130000.000000000Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backedUp) != original {
+		t.Fatalf("forced replacement backup = %q, want %q", backedUp, original)
+	}
+}
+
 func TestRunInitNoEditRejectsPlaceholders(t *testing.T) {
 	root := t.TempDir()
 	useInitWorkingDirectory(t, root)
