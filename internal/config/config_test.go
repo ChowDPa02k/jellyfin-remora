@@ -152,6 +152,24 @@ func TestRejectsNonPositiveRuntimeIntervalsThresholdsAndRotation(t *testing.T) {
 	}
 }
 
+func TestRejectsRelativeRemoraDataAndResolvedLogPaths(t *testing.T) {
+	base := Config{ConfigVersion: CurrentVersion, RESTAPI: RESTAPIConfig{Listen: "127.0.0.1", Port: 8095}, Jellyfin: JellyfinConfig{Path: "/x", DataDir: "/d", ConfigDir: "/c", CacheDir: "/k", LogDir: "/l", RunAsUser: "nobody"}}
+	base.defaults()
+
+	for name, mutate := range map[string]func(*Config){
+		"data directory": func(c *Config) { c.Remora.DataDir = "relative/state" },
+		"log path":       func(c *Config) { c.Remora.Logs.Path = "relative/log" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			mutate(&candidate)
+			if err := candidate.Validate(); err == nil || !strings.Contains(err.Error(), "absolute path") {
+				t.Fatalf("validation error = %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadManagedJellyfinSettingsTracksNullAndConfiguredValues(t *testing.T) {
 	root := filepath.ToSlash(t.TempDir())
 	body := fmt.Sprintf(`config-version: 1

@@ -523,6 +523,12 @@ func (c *Config) Validate() error {
 	if c.Remora.Logs.RotationTime.Duration <= 0 || c.Remora.Logs.RotationSizeMB <= 0 || c.Remora.Logs.PreserveTime.Duration <= 0 {
 		return errors.New("remora.logs rotation-time, rotation-size-mb, and preserve-time must be positive")
 	}
+	if !filepath.IsAbs(c.Remora.DataDir) {
+		return errors.New("remora.data-dir must resolve to an absolute path")
+	}
+	if !filepath.IsAbs(c.Remora.Logs.Path) {
+		return errors.New("remora.logs.path must resolve to an absolute path")
+	}
 	if c.Jellyfin.Path == "" {
 		return errors.New("jellyfin.path is required")
 	}
