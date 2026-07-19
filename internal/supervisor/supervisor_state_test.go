@@ -250,6 +250,57 @@ func TestDatabaseCorruptionEvidenceAndFailedHealthLatchesFence(t *testing.T) {
 	}
 }
 
+func TestExitedGenerationCorruptionEvidenceFencesBeforeRestart(t *testing.T) {
+	directory := t.TempDir()
+	process := &stateProcess{running: false, started: time.Now().Add(-time.Minute)}
+	s := persistentStateSupervisor(directory, process)
+	s.wasRunning = true
+	s.cfg.Remora.Monitoring.Database.ConfirmationWindow = config.Duration{Duration: time.Minute}
+	s.cfg.Remora.Monitoring.Database.FailureThreshold = 3
+	detector := &databasemonitor.Detector{}
+	_, _ = detector.Write([]byte("SQLite Error 11: database disk image is malformed\n"))
+	s.SetDatabaseDamageSource(detector)
+	s.reconcile(context.Background())
+	status := s.Status()
+	if process.startCalls != 0 || !s.databaseDamaged || status.State != model.StateDatabaseDamaged || !status.Database.Damaged {
+		t.Fatalf("corrupt exited generation restarted: starts=%d damaged=%t status=%+v", process.startCalls, s.databaseDamaged, status)
+	}
+	durable := readPersistedState(filepath.Join(s.cfg.Remora.DataDir, contract.StateFileName))
+	if !durable.DatabaseDamaged {
+		t.Fatal("database damage latch was not persisted before replacement start")
+	}
+}
+
+func TestManualStopDoesNotPromoteExitedGenerationEvidence(t *testing.T) {
+	process := &stateProcess{running: false, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	s.wasRunning = true
+	s.status.ManualStop = true
+	s.status.DesiredState = model.DesiredStopped
+	s.cfg.Remora.Monitoring.Database.ConfirmationWindow = config.Duration{Duration: time.Minute}
+	s.cfg.Remora.Monitoring.Database.FailureThreshold = 1
+	detector := &databasemonitor.Detector{}
+	_, _ = detector.Write([]byte("SQLite Error 11: database disk image is malformed\n"))
+	s.SetDatabaseDamageSource(detector)
+	s.reconcile(context.Background())
+	if s.databaseDamaged || s.Status().State != model.StateStopped {
+		t.Fatalf("manual stop promoted stale evidence: damaged=%t status=%+v", s.databaseDamaged, s.Status())
+	}
+}
+
+func TestOrdinaryExitedGenerationKeepsCrashRestartBehavior(t *testing.T) {
+	process := &stateProcess{running: false, started: time.Now().Add(-time.Minute)}
+	s := stateSupervisor(t, process)
+	s.wasRunning = true
+	s.cfg.Remora.Monitoring.Database.ConfirmationWindow = config.Duration{Duration: time.Minute}
+	s.cfg.Remora.Monitoring.Database.FailureThreshold = 1
+	s.SetDatabaseDamageSource(&databasemonitor.Detector{})
+	s.reconcile(context.Background())
+	if s.databaseDamaged || len(s.crashes) != 1 || s.nextStart.IsZero() || s.Status().State != model.StateRestartBackoff {
+		t.Fatalf("ordinary crash behavior changed: damaged=%t crashes=%d next=%s status=%+v", s.databaseDamaged, len(s.crashes), s.nextStart, s.Status())
+	}
+}
+
 func TestDatabaseCorruptionLogWithoutAPIFailureRemainsSuspected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -143,7 +144,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.backend.ConfigureProcess(cmd, m.cfg.Jellyfin.RunAsUser, m.cfg.Jellyfin.RunAsGroup); err != nil {
 		return err
 	}
-	console, err := configureChildConsole(cmd, m.stdout, m.stderr)
+	stdout, stderr := beginConsoleGeneration(m.stdout, m.stderr)
+	console, err := configureChildConsole(cmd, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("configure Jellyfin console capture: %w", err)
 	}
@@ -176,8 +178,8 @@ func (m *Manager) Start(ctx context.Context) error {
 			cleaner.ProcessExited(pid)
 		}
 		err = errors.Join(err, console.finish())
-		flushConsoleWriter(m.stdout)
-		flushConsoleWriter(m.stderr)
+		flushConsoleWriter(stdout)
+		flushConsoleWriter(stderr)
 		done <- err
 		close(done)
 		m.mu.Lock()
@@ -194,6 +196,29 @@ func flushConsoleWriter(writer io.Writer) {
 	if flusher, ok := writer.(interface{ Flush() }); ok {
 		flusher.Flush()
 	}
+}
+
+func beginConsoleGeneration(stdout, stderr io.Writer) (io.Writer, io.Writer) {
+	type factory interface{ NewGenerationWriter() io.Writer }
+	stdoutFactory, stdoutScoped := stdout.(factory)
+	if !stdoutScoped {
+		return stdout, stderr
+	}
+	generatedStdout := stdoutFactory.NewGenerationWriter()
+	if sameWriter(stdout, stderr) {
+		return generatedStdout, generatedStdout
+	}
+	if stderrFactory, ok := stderr.(factory); ok {
+		return generatedStdout, stderrFactory.NewGenerationWriter()
+	}
+	return generatedStdout, stderr
+}
+
+func sameWriter(left, right io.Writer) bool {
+	if left == nil || right == nil || reflect.TypeOf(left) != reflect.TypeOf(right) || !reflect.TypeOf(left).Comparable() {
+		return false
+	}
+	return left == right
 }
 
 func mergeEnvironment(inherited []string, overrides map[string]string) []string {

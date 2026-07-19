@@ -414,7 +414,8 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			return
 		}
 	}
-	if s.wasRunning && !running && !manual && desired != model.DesiredStopped {
+	exitedGeneration := s.wasRunning && !running
+	if exitedGeneration && !manual && desired != model.DesiredStopped {
 		s.recordCrash()
 		s.scheduleRestart()
 	}
@@ -498,6 +499,12 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		}
 		s.storageFenced = false
 		s.healthyStorageRuns = 0
+	}
+	if exitedGeneration && s.evaluateExitedGenerationDatabaseDamage(ctx) {
+		s.transition(model.StateDatabaseDamaged, "confirmed Jellyfin database damage after process exit; automatic restart is fenced until remoractl start")
+		s.clearOneShots()
+		s.persistBestEffort()
+		return
 	}
 	if s.processFailed {
 		if s.Status().State == model.StateProcessFailed {
@@ -795,6 +802,20 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 	}
 	s.clearOneShots()
 	s.persistBestEffort()
+}
+
+func (s *Supervisor) evaluateExitedGenerationDatabaseDamage(ctx context.Context) bool {
+	if !s.cfg.Remora.Monitoring.Database.IsEnabled() || s.databaseSource == nil {
+		return false
+	}
+	if _, suspected := s.databaseSource.Candidate(s.cfg.Remora.Monitoring.Database.ConfirmationWindow.Duration); !suspected {
+		return false
+	}
+	// A valid console signature plus the emitting process becoming unavailable
+	// are the two independent signals. Do not start another generation merely
+	// to accumulate ordinary heartbeat failures against the same evidence.
+	s.databaseFailures = max(s.databaseFailures, s.cfg.Remora.Monitoring.Database.FailureThreshold-1)
+	return s.evaluateDatabaseDamage(ctx, model.HealthResult{Healthy: false, Error: "managed Jellyfin process exited"})
 }
 
 func (s *Supervisor) stopWhileStateUnavailable(ctx context.Context, running bool, reason string) bool {

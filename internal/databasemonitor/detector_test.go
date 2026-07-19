@@ -1,6 +1,7 @@
 package databasemonitor
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -78,5 +79,21 @@ func TestResetBeforeRetainsNewEvidenceAndPartialLine(t *testing.T) {
 	_, _ = d.Write([]byte("database disk image is malformed\n"))
 	if _, ok := d.Candidate(time.Minute); !ok {
 		t.Fatal("partial console line was cleared")
+	}
+}
+
+func TestOldConsoleGenerationCannotRefenceAfterReset(t *testing.T) {
+	d := &Detector{}
+	factory := NewConsoleWriter(io.Discard, d)
+	oldGeneration := factory.NewGenerationWriter()
+	d.ResetBefore(time.Now())
+	currentGeneration := factory.NewGenerationWriter()
+	_, _ = oldGeneration.Write([]byte("SQLite Error 11: database disk image is malformed\n"))
+	if _, ok := d.Candidate(time.Minute); ok {
+		t.Fatal("late drain from old process generation created fresh evidence")
+	}
+	_, _ = currentGeneration.Write([]byte("SQLite Error 11: database disk image is malformed\n"))
+	if _, ok := d.Candidate(time.Minute); !ok {
+		t.Fatal("current process generation did not create evidence")
 	}
 }

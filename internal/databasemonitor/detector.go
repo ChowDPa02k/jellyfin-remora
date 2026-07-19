@@ -20,9 +20,12 @@ type Evidence struct {
 }
 
 type Detector struct {
-	mu       sync.Mutex
-	partial  []byte
-	evidence Evidence
+	mu                 sync.Mutex
+	partial            []byte
+	evidence           Evidence
+	activeGeneration   uint64
+	evidenceGeneration uint64
+	carriedEvidence    bool
 }
 
 type ConsoleWriter struct {
@@ -40,9 +43,51 @@ func (w *ConsoleWriter) Write(p []byte) (int, error) {
 
 func (w *ConsoleWriter) Flush() { w.detector.Flush() }
 
+// NewGenerationWriter returns a console sink scoped to one Jellyfin process
+// generation. Late drain data from an older sink is still copied to the raw
+// log, but cannot create fresh database-damage evidence.
+func (w *ConsoleWriter) NewGenerationWriter() io.Writer {
+	w.detector.mu.Lock()
+	w.detector.activeGeneration++
+	w.detector.partial = nil
+	generation := w.detector.activeGeneration
+	w.detector.mu.Unlock()
+	return &generationWriter{output: w.output, detector: w.detector, generation: generation}
+}
+
+type generationWriter struct {
+	output     io.Writer
+	detector   *Detector
+	generation uint64
+}
+
+func (w *generationWriter) Write(p []byte) (int, error) {
+	n, err := w.output.Write(p)
+	if n > 0 {
+		w.detector.writeGeneration(w.generation, p[:n])
+	}
+	return n, err
+}
+
+func (w *generationWriter) Flush() { w.detector.flushGeneration(w.generation) }
+
 func (d *Detector) Write(p []byte) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.writeLocked(d.activeGeneration, p)
+	return len(p), nil
+}
+
+func (d *Detector) writeGeneration(generation uint64, p []byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.writeLocked(generation, p)
+}
+
+func (d *Detector) writeLocked(generation uint64, p []byte) {
+	if generation != d.activeGeneration {
+		return
+	}
 	d.partial = append(d.partial, p...)
 	for {
 		newline := bytes.IndexByte(d.partial, '\n')
@@ -57,7 +102,6 @@ func (d *Detector) Write(p []byte) (int, error) {
 		d.observeLine(d.partial[:newline])
 		d.partial = append(d.partial[:0], d.partial[newline+1:]...)
 	}
-	return len(p), nil
 }
 
 // Flush observes the final unterminated console line. Process capture calls it
@@ -66,6 +110,19 @@ func (d *Detector) Write(p []byte) (int, error) {
 func (d *Detector) Flush() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.flushLocked(d.activeGeneration)
+}
+
+func (d *Detector) flushGeneration(generation uint64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.flushLocked(generation)
+}
+
+func (d *Detector) flushLocked(generation uint64) {
+	if generation != d.activeGeneration {
+		return
+	}
 	if len(d.partial) == 0 {
 		return
 	}
@@ -83,6 +140,8 @@ func (d *Detector) observeLine(raw []byte) {
 		line = line[:2048]
 	}
 	d.evidence = Evidence{DetectedAt: time.Now(), Message: line}
+	d.evidenceGeneration = d.activeGeneration
+	d.carriedEvidence = false
 }
 
 func stripTerminalEscapes(value string) string {
@@ -139,7 +198,8 @@ func isCorruptionSignature(line string) bool {
 func (d *Detector) Candidate(window time.Duration) (Evidence, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.evidence.DetectedAt.IsZero() || window <= 0 || time.Since(d.evidence.DetectedAt) > window {
+	if d.evidence.DetectedAt.IsZero() || window <= 0 || time.Since(d.evidence.DetectedAt) > window ||
+		!d.carriedEvidence && d.evidenceGeneration != d.activeGeneration {
 		return Evidence{}, false
 	}
 	return d.evidence, true
@@ -147,8 +207,10 @@ func (d *Detector) Candidate(window time.Duration) (Evidence, bool) {
 
 func (d *Detector) Reset() {
 	d.mu.Lock()
+	d.activeGeneration++
 	d.partial = nil
 	d.evidence = Evidence{}
+	d.carriedEvidence = false
 	d.mu.Unlock()
 }
 
@@ -157,8 +219,12 @@ func (d *Detector) Reset() {
 // while the action is being persisted.
 func (d *Detector) ResetBefore(cutoff time.Time) {
 	d.mu.Lock()
+	d.activeGeneration++
 	if !d.evidence.DetectedAt.After(cutoff) {
 		d.evidence = Evidence{}
+		d.carriedEvidence = false
+	} else {
+		d.carriedEvidence = true
 	}
 	d.mu.Unlock()
 }
