@@ -204,6 +204,20 @@ jellyfin:
 	}
 }
 
+func TestEnableHTTPSNullIsNotAManagedSetting(t *testing.T) {
+	var networking NetworkingConfig
+	if err := yaml.Unmarshal([]byte("server-address-settings:\n  enable-https: null\n"), &networking); err != nil {
+		t.Fatal(err)
+	}
+	address := networking.ServerAddressSettings
+	if !address.EnableHTTPSConfigured || !address.EnableHTTPSNull {
+		t.Fatalf("enable-https null state = %#v", address)
+	}
+	if (JellyfinConfig{Networking: networking}).HasManagedSettings() {
+		t.Fatal("enable-https: null unexpectedly enables XML management")
+	}
+}
+
 func TestTCPControlCompatibilityDefaultAndExplicitDisable(t *testing.T) {
 	if !(RESTAPIConfig{}).TCPControlEnabled() {
 		t.Fatal("version 2 configuration without tcp-enabled lost its compatibility listener")

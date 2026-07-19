@@ -221,7 +221,7 @@ func (r *Reconciler) changes() (map[string]map[string]elementChange, error) {
 	if address.LocalHTTPSPortConfigured {
 		network["InternalHttpsPort"] = elementChange{scalar: strconv.Itoa(address.LocalHTTPSPort)}
 	}
-	if address.EnableHTTPSConfigured {
+	if address.EnableHTTPSConfigured && !address.EnableHTTPSNull {
 		network["EnableHttps"] = elementChange{scalar: strconv.FormatBool(address.EnableHTTPS)}
 	}
 	if address.BaseURLConfigured {

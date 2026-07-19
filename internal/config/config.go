@@ -320,6 +320,7 @@ type ServerAddressSettings struct {
 	LocalHTTPPortConfigured   bool            `yaml:"-"`
 	LocalHTTPSPortConfigured  bool            `yaml:"-"`
 	EnableHTTPSConfigured     bool            `yaml:"-"`
+	EnableHTTPSNull           bool            `yaml:"-"`
 	BaseURLConfigured         bool            `yaml:"-"`
 	BaseURLNull               bool            `yaml:"-"`
 	BindToLocalNetworkAddress OptionalStrings `yaml:"bind-to-local-network-address,omitempty"`
@@ -336,8 +337,12 @@ func (s *ServerAddressSettings) UnmarshalYAML(n *yaml.Node) error {
 			return v.Decode(&s.LocalHTTPSPort)
 		},
 		"enable-https": func(v *yaml.Node) error {
-			s.EnableHTTPSConfigured = true
-			return v.Decode(&s.EnableHTTPS)
+			var value Optional[bool]
+			if err := decodeOptional(v, &value); err != nil {
+				return err
+			}
+			s.EnableHTTPS, s.EnableHTTPSConfigured, s.EnableHTTPSNull = value.Value, true, value.Null
+			return nil
 		},
 		"base-url": func(v *yaml.Node) error {
 			var value Optional[string]
@@ -642,6 +647,6 @@ func (c JellyfinConfig) HasManagedSettings() bool {
 		g.Performance.ParallelLibraryScanTasksLimit.Set || g.Performance.ParallelImageEncodingLimit.Set ||
 		b.EnableSplashScreen.Set || b.SplashScreenImage.Set || b.LoginDisclaimer.Set || b.CustomCSSCode.Set ||
 		t.TranscodePath.Set || t.EnableFallbackFonts.Set || t.FallbackFontFolderPath.Set ||
-		s.LocalHTTPPortConfigured || s.LocalHTTPSPortConfigured || s.EnableHTTPSConfigured || s.BaseURLConfigured ||
+		s.LocalHTTPPortConfigured || s.LocalHTTPSPortConfigured || (s.EnableHTTPSConfigured && !s.EnableHTTPSNull) || s.BaseURLConfigured ||
 		s.BindToLocalNetworkAddress.Set || n.IPProtocols.EnableIPv4.Set || n.IPProtocols.EnableIPv6.Set
 }
