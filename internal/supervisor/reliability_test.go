@@ -91,6 +91,45 @@ func TestLifecycleIntentIsNotVisibleBeforePersistenceCommits(t *testing.T) {
 	}
 }
 
+func TestStartAndRestartPersistenceFailureRetainsLifecycleFields(t *testing.T) {
+	for _, action := range []Action{ActionStart, ActionRestart} {
+		t.Run(string(action), func(t *testing.T) {
+			s := persistentStateSupervisor(t.TempDir(), &stateProcess{running: true, started: time.Now()})
+			s.status.ManualStop = true
+			s.status.DesiredState = model.DesiredStopped
+			s.status.Database = model.DatabaseResult{Damaged: true, Suspected: true, Message: "latched"}
+			s.databaseDamaged = true
+			s.databaseFailures = 4
+			s.processFailed = true
+			s.stopFailures = 2
+			s.nextStopRetry = time.Now().Add(30 * time.Second)
+			s.crashes = []time.Time{time.Now().Add(-time.Minute)}
+			s.nextStart = time.Now().Add(time.Minute)
+			s.initializationFails = 3
+			s.nextInitialization = time.Now().Add(2 * time.Minute)
+			writes := 0
+			s.writeStateFile = func(path string, data []byte, mode os.FileMode) error {
+				writes++
+				if writes == 2 {
+					return errors.New("injected proposed-state failure")
+				}
+				return atomicWrite(path, data, mode)
+			}
+			reply := make(chan error, 1)
+			s.handle(Request{Action: action, Force: true, Reply: reply})
+			if err := <-reply; err == nil {
+				t.Fatal("operation unexpectedly succeeded")
+			}
+			status := s.Status()
+			if !status.ManualStop || status.DesiredState != model.DesiredStopped || status.Database.Message != "latched" ||
+				!s.databaseDamaged || s.databaseFailures != 4 || !s.processFailed || s.stopFailures != 2 || len(s.crashes) != 1 ||
+				s.nextStart.IsZero() || s.nextStopRetry.IsZero() || s.initializationFails != 3 || s.nextInitialization.IsZero() || s.forceStop || s.restartRequested {
+				t.Fatalf("%s persistence failure changed lifecycle state: status=%+v supervisor=%+v", action, status, s)
+			}
+		})
+	}
+}
+
 func TestSecondStateWriteFailureRestoresPreviousDurableIntent(t *testing.T) {
 	directory := t.TempDir()
 	process := &stateProcess{running: true, started: time.Now()}
