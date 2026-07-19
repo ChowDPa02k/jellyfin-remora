@@ -372,6 +372,21 @@ func TestSignalEscapedLinuxDescendantsDoesNotSkipAfterRootExit(t *testing.T) {
 	}
 }
 
+func TestSignalPIDFDVerifiedRejectsStaleSnapshot(t *testing.T) {
+	backend := newBackend().(*linuxBackend)
+	process, err := backend.readProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = backend.signalPIDFDVerified(os.Getpid(), unix.Signal(0), process.startTick+1)
+	if !errors.Is(err, unix.ESRCH) {
+		t.Fatalf("signalPIDFDVerified() error = %v, want ESRCH", err)
+	}
+	if err := unix.Kill(os.Getpid(), 0); err != nil {
+		t.Fatalf("test process was affected by stale snapshot: %v", err)
+	}
+}
+
 func TestLinuxCgroupV2AddsEscapedFFmpegToAccounting(t *testing.T) {
 	root := t.TempDir()
 	procRoot := filepath.Join(root, "proc")

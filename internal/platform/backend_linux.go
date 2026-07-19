@@ -486,7 +486,10 @@ func (l *linuxBackend) SignalGroup(pid int, force bool) error {
 	if force {
 		signal = unix.SIGKILL
 	}
-	processes, _ := l.processSnapshot()
+	processes, snapshotErr := l.processSnapshot()
+	if snapshotErr != nil {
+		return fmt.Errorf("snapshot managed process tree: %w", snapshotErr)
+	}
 	descendants := l.managedProcessPIDs(processes, pid)
 	pgid, groupErr := unix.Getpgid(pid)
 	groupKnown := groupErr == nil
@@ -495,19 +498,59 @@ func (l *linuxBackend) SignalGroup(pid int, force bool) error {
 		err = groupErr
 		pgid = -1
 	} else if pgid == pid {
-		err = unix.Kill(-pgid, signal)
+		current, currentErr := l.readProcess(pid)
+		if currentErr != nil || current.startTick != processes[pid].startTick {
+			err = os.ErrProcessDone
+			groupKnown = false
+			pgid = -1
+		} else {
+			err = unix.Kill(-pgid, signal)
+		}
 	} else {
-		err = signalPIDFD(pid, signal)
+		err = l.signalPIDFDVerified(pid, signal, processes[pid].startTick)
 	}
 	var signalErrors []error
-	if err != nil && !errors.Is(err, unix.ESRCH) {
+	if err != nil && !errors.Is(err, unix.ESRCH) && !errors.Is(err, os.ErrProcessDone) {
 		signalErrors = append(signalErrors, err)
+	}
+	verifiedSignal := func(child int, childSignal unix.Signal) error {
+		process, exists := processes[child]
+		if !exists {
+			return unix.ESRCH
+		}
+		return l.signalPIDFDVerified(child, childSignal, process.startTick)
 	}
 	if !groupKnown {
 		pgid = -1
 	}
-	signalErrors = append(signalErrors, signalEscapedLinuxDescendants(descendants, pid, os.Getpid(), pgid, signal, unix.Getpgid, signalPIDFD)...)
+	signalErrors = append(signalErrors, signalEscapedLinuxDescendants(descendants, pid, os.Getpid(), pgid, signal, unix.Getpgid, verifiedSignal)...)
 	return errors.Join(signalErrors...)
+}
+
+func (l *linuxBackend) signalPIDFDVerified(pid int, signal unix.Signal, expectedStartTick uint64) error {
+	fd, err := unix.PidfdOpen(pid, 0)
+	if err == nil {
+		defer unix.Close(fd)
+		process, readErr := l.readProcess(pid)
+		if readErr != nil {
+			return readErr
+		}
+		if process.startTick != expectedStartTick {
+			return unix.ESRCH
+		}
+		return unix.PidfdSendSignal(fd, signal, nil, 0)
+	}
+	if errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EINVAL) || errors.Is(err, unix.EPERM) {
+		process, readErr := l.readProcess(pid)
+		if readErr != nil {
+			return readErr
+		}
+		if process.startTick != expectedStartTick {
+			return unix.ESRCH
+		}
+		return unix.Kill(pid, signal)
+	}
+	return err
 }
 
 func signalEscapedLinuxDescendants(descendants []int, root, supervisor, pgid int, signal unix.Signal, getpgid func(int) (int, error), signalPID func(int, unix.Signal) error) []error {

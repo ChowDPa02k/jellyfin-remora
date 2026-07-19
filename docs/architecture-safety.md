@@ -123,7 +123,9 @@ migration, credential storage, or control endpoints must answer:
 
 1. Can storage loss create a false local data tree or allow Jellyfin to keep writing?
 2. Can PID reuse, duplicate discovery, or a stale state file signal the wrong process? Process lifecycle checks bind the PID to its observed start time and revalidate that generation before reporting or signaling it.
-3. Forced shutdown snapshots the managed descendant tree and attempts every escaped descendant even when another signal fails.
+3. Forced shutdown snapshots the managed descendant tree, revalidates each
+   Linux PID's kernel start tick after opening its pidfd, and attempts every
+   escaped descendant even when another signal fails.
 4. Can a manual stop be overridden by an automatic recovery path?
 5. Can an I/O, API, or child-process operation block without a deadline?
 6. Can a secret reach logs, command output, process arguments, or remote responses?
