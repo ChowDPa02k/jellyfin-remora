@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -33,6 +34,12 @@ type fakeController struct {
 }
 
 type cancellationController struct{ *fakeController }
+
+type persistenceFailureController struct{ *fakeController }
+
+func (c *persistenceFailureController) Submit(context.Context, supervisor.Action, bool) error {
+	return &supervisor.PersistError{Action: supervisor.ActionStop, Err: syscall.ENOSPC}
+}
 
 func (c *cancellationController) Submit(ctx context.Context, _ supervisor.Action, _ bool) error {
 	<-ctx.Done()
@@ -419,6 +426,16 @@ func TestCanceledMutationDoesNotOutliveRequest(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/restart", nil).WithContext(ctx))
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "operation_rejected") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPersistenceFailureIsServiceUnavailable(t *testing.T) {
+	controller := &persistenceFailureController{fakeController: &fakeController{}}
+	s := New(&config.Config{}, controller, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w := httptest.NewRecorder()
+	s.handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/stop", nil))
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "persistence_unavailable") {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
 }

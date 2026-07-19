@@ -34,6 +34,20 @@ const (
 	ActionHealthcheck Action = "healthcheck"
 )
 
+// PersistError identifies a lifecycle operation that could not be committed to
+// durable state. Callers may safely distinguish it from an invalid operation
+// and report it as a retryable service failure.
+type PersistError struct {
+	Action Action
+	Err    error
+}
+
+func (e *PersistError) Error() string {
+	return fmt.Sprintf("persist %s operation: %v", e.Action, e.Err)
+}
+
+func (e *PersistError) Unwrap() error { return e.Err }
+
 type Request struct {
 	Action Action
 	Force  bool
@@ -294,7 +308,7 @@ func (s *Supervisor) handle(req Request) {
 			writer = atomicWrite
 		}
 		if journalErr := writer(s.rollbackJournalPath(), beforeData, 0640); journalErr != nil {
-			err = fmt.Errorf("create %s rollback journal: %w", req.Action, journalErr)
+			err = &PersistError{Action: req.Action, Err: fmt.Errorf("create rollback journal: %w", journalErr)}
 		}
 	}
 	if err == nil {
@@ -305,14 +319,14 @@ func (s *Supervisor) handle(req Request) {
 			persistErr = s.persist()
 		}
 		if persistErr != nil {
-			err = fmt.Errorf("persist %s operation: %w", req.Action, persistErr)
+			err = &PersistError{Action: req.Action, Err: persistErr}
 		} else if lifecycle {
 			remover := s.removeStateFile
 			if remover == nil {
 				remover = os.Remove
 			}
 			if removeErr := remover(s.rollbackJournalPath()); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-				err = fmt.Errorf("commit %s operation: remove rollback journal: %w", req.Action, removeErr)
+				err = &PersistError{Action: req.Action, Err: fmt.Errorf("remove rollback journal: %w", removeErr)}
 			}
 		}
 	}

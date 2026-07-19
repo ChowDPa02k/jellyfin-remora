@@ -215,6 +215,18 @@ func TestRequestDecodesStructuredAPIErrorAndExitCode(t *testing.T) {
 	}
 }
 
+func TestPersistenceUnavailableUsesRetryableExitCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"code":"persistence_unavailable","message":"state disk is full"}}`)
+	}))
+	defer server.Close()
+	_, err := request(server.Client(), http.MethodPost, server.URL+"/v1/stop")
+	if code := exitCode(err); code != 3 {
+		t.Fatalf("exit code=%d, want 3 (error=%v)", code, err)
+	}
+}
+
 func TestExitCodesAreDeterministic(t *testing.T) {
 	for _, test := range []struct {
 		err  error

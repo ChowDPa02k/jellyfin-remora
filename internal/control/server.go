@@ -577,6 +577,11 @@ func (s *Server) action(action supervisor.Action) http.HandlerFunc {
 		}
 		force := rawForce == "true"
 		if err := s.supervisor.Submit(r.Context(), action, force); err != nil {
+			var persistErr *supervisor.PersistError
+			if errors.As(err, &persistErr) {
+				writeAPIError(w, http.StatusServiceUnavailable, "persistence_unavailable", err.Error(), operationID(r))
+				return
+			}
 			writeAPIError(w, http.StatusBadRequest, "operation_rejected", err.Error(), operationID(r))
 			return
 		}
