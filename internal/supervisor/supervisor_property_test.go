@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -24,7 +25,7 @@ func TestSupervisorStateMachineProperties(t *testing.T) {
 		unexpectedExits := 0
 
 		for step := 0; step < 128; step++ {
-			switch random.Intn(10) {
+			switch random.Intn(11) {
 			case 0: // ordinary reconciliation
 			case 1:
 				submitPropertyAction(supervisor, ActionStart)
@@ -51,6 +52,12 @@ func TestSupervisorStateMachineProperties(t *testing.T) {
 				supervisor.nextStart = time.Time{}
 			case 9: // advance a pending bounded retry
 				supervisor.nextStart = time.Time{}
+			case 10: // reject a random lifecycle action before persistence commits
+				supervisor.writeStateFile = func(string, []byte, os.FileMode) error {
+					return errors.New("injected property persistence failure")
+				}
+				submitPropertyAction(supervisor, []Action{ActionStart, ActionStop, ActionRestart}[random.Intn(3)])
+				supervisor.writeStateFile = func(string, []byte, os.FileMode) error { return nil }
 			}
 
 			supervisor.reconcile(context.Background())
@@ -80,8 +87,8 @@ func stateMachineInvariant(s *Supervisor, process *stateProcess, unexpectedExits
 	if process.startCalls > process.stopCalls+unexpectedExits+1 {
 		return fmt.Errorf("more live generations started than terminated")
 	}
-	if status.State == model.StateRunning && !process.running {
-		return fmt.Errorf("RUNNING without a live Jellyfin process")
+	if status.PID != 0 && (!process.running || status.PID != process.PID()) {
+		return fmt.Errorf("published PID does not identify the live Jellyfin process")
 	}
 	if status.ManualStop || status.DesiredState == model.DesiredStopped {
 		if process.running || (status.State != model.StateStopped && status.State != model.StateStopping) {
@@ -96,10 +103,13 @@ func stateMachineInvariant(s *Supervisor, process *stateProcess, unexpectedExits
 	if s.databaseDamaged && process.running {
 		return fmt.Errorf("database damage did not fence: running=%t state=%s", process.running, status.State)
 	}
-	events := s.Events(256)
-	if len(events) > 256 {
+	s.mu.RLock()
+	eventCount := len(s.events)
+	s.mu.RUnlock()
+	if eventCount > 256 {
 		return fmt.Errorf("event history exceeded bound")
 	}
+	events := s.Events(256)
 	for i := 1; i < len(events); i++ {
 		if events[i].Sequence <= events[i-1].Sequence {
 			return fmt.Errorf("event sequence is not strictly increasing")
