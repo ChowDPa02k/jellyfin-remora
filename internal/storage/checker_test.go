@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -378,6 +380,55 @@ func TestKilledConcurrentWriteProbesCleanOnlyOwnedFiles(t *testing.T) {
 			t.Fatalf("owned cleanup affected the wrong files: %v", matches)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestCheckPathsThresholdsInfrastructureFailures(t *testing.T) {
+	directory := t.TempDir()
+	calls := 0
+	checker := &Checker{
+		cfg: &config.Config{
+			Jellyfin: config.JellyfinConfig{DataDir: directory, ConfigDir: directory, CacheDir: directory, LogDir: directory},
+			Disks:    []config.DiskConfig{{Target: filepath.Dir(directory), FailureThreshold: 2}},
+		},
+		probeOverride: func(context.Context, string, string) error {
+			calls++
+			if calls <= 2 {
+				return infrastructureProbeError(errors.New("fork temporarily unavailable"))
+			}
+			return nil
+		},
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		result := checker.CheckPaths(context.Background())[0]
+		if result.Fatal || !strings.Contains(result.Message, fmt.Sprintf("%d/3", attempt)) {
+			t.Fatalf("transient attempt %d = %+v", attempt, result)
+		}
+	}
+	if result := checker.CheckPaths(context.Background())[0]; !result.Healthy {
+		t.Fatalf("recovered path = %+v", result)
+	}
+	checker.probeOverride = func(context.Context, string, string) error {
+		return infrastructureProbeError(errors.New("fork temporarily unavailable"))
+	}
+	for attempt := 1; attempt <= 3; attempt++ {
+		result := checker.CheckPaths(context.Background())[0]
+		if result.Fatal != (attempt == 3) {
+			t.Fatalf("post-recovery attempt %d = %+v", attempt, result)
+		}
+	}
+}
+
+func TestCheckPathsFencesTargetFilesystemErrorsImmediately(t *testing.T) {
+	directory := t.TempDir()
+	checker := &Checker{
+		cfg: &config.Config{Jellyfin: config.JellyfinConfig{DataDir: directory, ConfigDir: directory, CacheDir: directory, LogDir: directory}},
+		probeOverride: func(context.Context, string, string) error {
+			return errors.New("sync probe: input/output error")
+		},
+	}
+	if result := checker.CheckPaths(context.Background())[0]; !result.Fatal {
+		t.Fatalf("target filesystem error was delayed: %+v", result)
 	}
 }
 

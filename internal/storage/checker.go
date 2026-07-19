@@ -31,6 +31,7 @@ type Checker struct {
 	failureMu        sync.Mutex
 	failureCounts    []int
 	confirmedHealthy []bool
+	pathFailureCount map[string]int
 	mountMu          sync.RWMutex
 	recoveryMounts   bool
 	probeMu          sync.Mutex
@@ -42,6 +43,15 @@ type pendingProbe struct {
 	done   chan struct{}
 	err    error
 	output []byte
+}
+
+type probeInfrastructureError struct{ err error }
+
+func (e probeInfrastructureError) Error() string { return e.err.Error() }
+func (e probeInfrastructureError) Unwrap() error { return e.err }
+
+func infrastructureProbeError(err error) error {
+	return probeInfrastructureError{err: err}
 }
 
 func New(cfg *config.Config, backend platform.Backend) (*Checker, error) {
@@ -61,7 +71,7 @@ func NewWithExecutable(cfg *config.Config, backend platform.Backend, executable 
 	if executable == "" {
 		return nil, errors.New("storage probe executable is required")
 	}
-	return &Checker{cfg: cfg, backend: backend, executable: executable, failureCounts: make([]int, len(cfg.Disks)), confirmedHealthy: make([]bool, len(cfg.Disks)), recoveryMounts: true, pendingProbes: make(map[string]*pendingProbe)}, nil
+	return &Checker{cfg: cfg, backend: backend, executable: executable, failureCounts: make([]int, len(cfg.Disks)), confirmedHealthy: make([]bool, len(cfg.Disks)), pathFailureCount: make(map[string]int), recoveryMounts: true, pendingProbes: make(map[string]*pendingProbe)}, nil
 }
 
 // NewForInit validates storage using the configured Jellyfin identity. Mount
@@ -147,15 +157,57 @@ func (c *Checker) CheckPaths(ctx context.Context) []model.StorageResult {
 		seen[path] = true
 		r := model.StorageResult{Index: len(c.cfg.Disks) + len(results), Type: "path", Target: path, Mounted: true, Reachable: true, CheckedAt: time.Now()}
 		if err := c.probePath(ctx, path, "rw"); err != nil {
-			r.Fatal = true
 			r.Message = err.Error()
+			var infrastructure probeInfrastructureError
+			if errors.As(err, &infrastructure) {
+				r = c.applyPathFailureThreshold(path, r)
+			} else {
+				r.Fatal = true
+				c.resetPathFailure(path)
+			}
 		} else {
 			r.Healthy = true
 			r.Writable = true
+			c.resetPathFailure(path)
 		}
 		results = append(results, r)
 	}
 	return results
+}
+
+func (c *Checker) applyPathFailureThreshold(path string, result model.StorageResult) model.StorageResult {
+	threshold := 3
+	for _, disk := range c.cfg.Disks {
+		if pathWithin(path, disk.Target) {
+			threshold = max(threshold, max(1, disk.FailureThreshold))
+		}
+	}
+	c.failureMu.Lock()
+	defer c.failureMu.Unlock()
+	if c.pathFailureCount == nil {
+		c.pathFailureCount = make(map[string]int)
+	}
+	c.pathFailureCount[path]++
+	count := c.pathFailureCount[path]
+	result.Fatal = count >= threshold
+	if !result.Fatal {
+		result.Message = fmt.Sprintf("%s (transient probe failure %d/%d)", result.Message, count, threshold)
+	}
+	return result
+}
+
+func (c *Checker) resetPathFailure(path string) {
+	c.failureMu.Lock()
+	delete(c.pathFailureCount, path)
+	c.failureMu.Unlock()
+}
+
+func pathWithin(path, target string) bool {
+	if target == "" {
+		return false
+	}
+	relative, err := filepath.Rel(target, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))
 }
 
 func (c *Checker) checkRaw(ctx context.Context, index int, disk config.DiskConfig, allowMount, allowSourceMismatch bool) (r model.StorageResult, bypassThreshold bool) {
@@ -276,7 +328,7 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 	cmd := exec.Command(c.executable, commandArgs...)
 	if c.probeUsername != "" {
 		if err := c.backend.ConfigureProcess(cmd, c.probeUsername, c.probeGroup); err != nil {
-			return fmt.Errorf("configure storage probe identity: %w", err)
+			return infrastructureProbeError(fmt.Errorf("configure storage probe identity: %w", err))
 		}
 	}
 	key := c.probeUsername + "\x00" + c.probeGroup + "\x00" + permission + "\x00" + path
@@ -290,7 +342,7 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 			delete(c.pendingProbes, key)
 		default:
 			c.probeMu.Unlock()
-			return errors.New("previous storage I/O probe remains blocked")
+			return infrastructureProbeError(errors.New("previous storage I/O probe remains blocked"))
 		}
 	}
 	checkLeftovers := len(c.pendingProbes) == 0
@@ -301,7 +353,7 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 		processes, err := c.backend.FindProcesses(findCtx, c.executable, probeArgs)
 		findCancel()
 		if err == nil && len(processes) > 0 {
-			return errors.New("previous storage I/O probe remains blocked")
+			return infrastructureProbeError(errors.New("previous storage I/O probe remains blocked"))
 		}
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.Remora.IOTimeout.Duration)
@@ -313,7 +365,7 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 			delete(c.pendingProbes, key)
 		default:
 			c.probeMu.Unlock()
-			return errors.New("previous storage I/O probe remains blocked")
+			return infrastructureProbeError(errors.New("previous storage I/O probe remains blocked"))
 		}
 	}
 	var output bytes.Buffer
@@ -321,7 +373,7 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 	cmd.Stderr = &output
 	if err := cmd.Start(); err != nil {
 		c.probeMu.Unlock()
-		return err
+		return infrastructureProbeError(err)
 	}
 	pending := &pendingProbe{done: make(chan struct{})}
 	c.pendingProbes[key] = pending
@@ -348,14 +400,14 @@ func (c *Checker) probePath(ctx context.Context, path, permission string) error 
 		if message := strings.TrimSpace(string(pending.output)); message != "" {
 			return errors.New(strings.TrimPrefix(message, "jellyfin-remora: "))
 		}
-		return pending.err
+		return infrastructureProbeError(pending.err)
 	case <-probeCtx.Done():
 		if c.backend == nil {
 			_ = cmd.Process.Kill()
 		} else if err := c.backend.SignalGroup(cmd.Process.Pid, true); err != nil {
 			_ = cmd.Process.Kill()
 		}
-		return errors.New("storage I/O probe timed out")
+		return infrastructureProbeError(errors.New("storage I/O probe timed out"))
 	}
 }
 
