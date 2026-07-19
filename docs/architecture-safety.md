@@ -60,8 +60,10 @@ Jellyfin always runs as a separate operating-system process. Remora inherits the
 current environment and does not replace hardware-runtime, CPU, GPU, NPU, library, or
 threading variables.
 
-Optional `jellyfin.env` entries replace matching inherited names
-case-insensitively and append new names; all unlisted variables remain unchanged.
+Optional `jellyfin.env` entries replace matching inherited names using the host
+platform's rules: names are case-sensitive on POSIX and case-insensitive on Windows.
+Windows rejects configured names that differ only by case. New names are appended;
+all unlisted variables remain unchanged.
 An explicitly empty value is passed as `NAME=` rather than removing the variable.
 Names containing `=` or NUL bytes and values containing NUL bytes are rejected.
 Environment values are not included in status output, but may still be visible to

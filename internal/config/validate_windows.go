@@ -17,6 +17,14 @@ func validatePlatformConfig(c *Config) error {
 	if !strings.HasPrefix(strings.ToLower(c.RESTAPI.NamedPipe), `\\.\pipe\`) {
 		return fmt.Errorf("restapi.named-pipe must use \\\\.\\pipe\\name form")
 	}
+	seenEnvironmentNames := make(map[string]string, len(c.Jellyfin.Env))
+	for name := range c.Jellyfin.Env {
+		folded := strings.ToLower(name)
+		if previous, exists := seenEnvironmentNames[folded]; exists {
+			return fmt.Errorf("jellyfin.env contains case-colliding Windows variable names %q and %q", previous, name)
+		}
+		seenEnvironmentNames[folded] = name
+	}
 	return nil
 }
 

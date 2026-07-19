@@ -79,6 +79,13 @@ disk:
 	}
 }
 
+func TestWindowsRejectsCaseCollidingEnvironmentNames(t *testing.T) {
+	cfg := Config{Jellyfin: JellyfinConfig{Env: map[string]string{"PATH": `C:\\Windows`, "Path": `C:\\Tools`}}, RESTAPI: RESTAPIConfig{NamedPipe: `\\.\pipe\jellyfin-remora`}}
+	if err := validatePlatformConfig(&cfg); err == nil || !strings.Contains(err.Error(), "case-colliding") {
+		t.Fatalf("validation error = %v", err)
+	}
+}
+
 func TestWindowsRejectsUnixPhysicalIdentity(t *testing.T) {
 	cfg := Config{
 		ConfigVersion: CurrentVersion,

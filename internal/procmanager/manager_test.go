@@ -218,14 +218,26 @@ func TestMergeEnvironmentInheritsAndOverridesWithoutDuplicates(t *testing.T) {
 		"NO_PROXY":    "localhost,127.0.0.1",
 	}
 	got := mergeEnvironment(inherited, overrides)
-	want := []string{
-		"PATH=/usr/bin",
-		"HTTPS_PROXY=http://127.0.0.1:7890",
-		"KEEP=value",
-		"NO_PROXY=localhost,127.0.0.1",
+	want := []string{"PATH=/usr/bin"}
+	if !environmentNameEqual("https_proxy", "HTTPS_PROXY") {
+		want = append(want, "https_proxy=http://old:8080")
 	}
+	want = append(want, "KEEP=value", "HTTPS_PROXY=http://127.0.0.1:7890", "NO_PROXY=localhost,127.0.0.1")
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("environment=%v, want %v", got, want)
+	}
+}
+
+func TestEnvironmentNameCaseSemantics(t *testing.T) {
+	got := mergeEnvironment([]string{"PATH=/usr/bin", "Path=/custom"}, map[string]string{"path": "/override"})
+	if environmentNameEqual("PATH", "path") {
+		if want := []string{"path=/override"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("case-insensitive environment = %v, want %v", got, want)
+		}
+		return
+	}
+	if want := []string{"PATH=/usr/bin", "Path=/custom", "path=/override"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("case-sensitive environment = %v, want %v", got, want)
 	}
 }
 

@@ -235,7 +235,7 @@ func replaceEnvironment(env []string, name, value string) []string {
 	replaced := false
 	for _, entry := range env {
 		separator := strings.IndexByte(entry, '=')
-		if separator >= 0 && strings.EqualFold(entry[:separator], name) {
+		if separator >= 0 && environmentNameEqual(entry[:separator], name) {
 			if !replaced {
 				out = append(out, prefix+value)
 				replaced = true
@@ -253,7 +253,7 @@ func replaceEnvironment(env []string, name, value string) []string {
 func appendEnvDefault(env []string, name, value string) []string {
 	prefix := name + "="
 	for _, entry := range env {
-		if len(entry) >= len(prefix) && strings.EqualFold(entry[:len(prefix)], prefix) {
+		if separator := strings.IndexByte(entry, '='); separator >= 0 && environmentNameEqual(entry[:separator], name) {
 			return env
 		}
 	}
